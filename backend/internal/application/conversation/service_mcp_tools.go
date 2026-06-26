@@ -20,21 +20,26 @@ type selectedToolRuntime struct {
 	nameMap     map[string]string
 	mcpConfigs  map[string]mcp.CallConfig
 	schemas     map[string]json.RawMessage
+	prompt      string
 }
+
+const defaultMCPToolGuidancePrompt = `# tool_use
+- Tools are declared separately via the API schema; follow that schema exactly.
+- Use tools only for external, realtime, private, or explicitly requested data.
+- Use the fewest useful calls; each call must add new information.
+- Do not repeat an identical failed call. Adjust arguments, use another tool, or answer from available evidence.
+- If tools fail or lack enough data, state the gap in the final answer.
+- Do not expose raw tool JSON, internal fields, or tool logs unless the user asks.`
 
 func injectMCPToolGuidance(messages []llm.Message, runtime selectedToolRuntime) []llm.Message {
 	if len(runtime.definitions) == 0 {
 		return messages
 	}
 
-	var builder strings.Builder
-	builder.WriteString("# tool_use\n")
-	builder.WriteString("- Tools are declared separately via the API schema; follow that schema exactly.\n")
-	builder.WriteString("- Use tools only for external, realtime, private, or explicitly requested data.\n")
-	builder.WriteString("- Use the fewest useful calls; each call must add new information.\n")
-	builder.WriteString("- Do not repeat an identical failed call. Adjust arguments, use another tool, or answer from available evidence.\n")
-	builder.WriteString("- If tools fail or lack enough data, state the gap in the final answer.\n")
-	builder.WriteString("- Do not expose raw tool JSON, internal fields, or tool logs unless the user asks.\n")
+	prompt := strings.TrimSpace(runtime.prompt)
+	if prompt == "" {
+		prompt = defaultMCPToolGuidancePrompt
+	}
 
 	insertAt := 0
 	for insertAt < len(messages) && messages[insertAt].Role == "system" {
@@ -42,7 +47,7 @@ func injectMCPToolGuidance(messages []llm.Message, runtime selectedToolRuntime) 
 	}
 	next := make([]llm.Message, 0, len(messages)+1)
 	next = append(next, messages[:insertAt]...)
-	next = append(next, llm.Message{Role: "system", Content: strings.TrimSpace(builder.String())})
+	next = append(next, llm.Message{Role: "system", Content: prompt})
 	next = append(next, messages[insertAt:]...)
 	return next
 }
@@ -118,7 +123,8 @@ func schemaFieldType(prop map[string]interface{}) string {
 }
 
 func (s *Service) resolveSelectedToolRuntime(ctx context.Context, toolIDs []uint) selectedToolRuntime {
-	if s.mcpRepo == nil || len(toolIDs) == 0 || !s.cfg.Snapshot().MCPEnable {
+	cfg := s.cfg.Snapshot()
+	if s.mcpRepo == nil || len(toolIDs) == 0 || !cfg.MCPEnable {
 		return selectedToolRuntime{}
 	}
 	tools, err := s.mcpRepo.ListToolsByIDs(ctx, uniqueToolIDs(toolIDs))
@@ -126,12 +132,12 @@ func (s *Service) resolveSelectedToolRuntime(ctx context.Context, toolIDs []uint
 		return selectedToolRuntime{}
 	}
 
-	cfg := s.cfg.Snapshot()
 	result := selectedToolRuntime{
 		definitions: make([]llm.ToolDefinition, 0, len(tools)),
 		nameMap:     map[string]string{},
 		mcpConfigs:  map[string]mcp.CallConfig{},
 		schemas:     map[string]json.RawMessage{},
+		prompt:      strings.TrimSpace(cfg.MCPToolPrompt),
 	}
 	usedNames := map[string]int{}
 	serverCache := map[uint]*domainmcp.Server{}

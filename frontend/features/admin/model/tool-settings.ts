@@ -1,6 +1,6 @@
 import type { SettingsGrouped } from "@/shared/api/settings.types";
 
-export type ToolSettingsFieldType = "int" | "bool";
+export type ToolSettingsFieldType = "int" | "bool" | "textarea";
 
 export type ToolSettingsField = {
   namespace: "mcp";
@@ -11,11 +11,13 @@ export type ToolSettingsField = {
     | "mcp_max_concurrent_calls"
     | "mcp_max_selected_tools_per_message"
     | "mcp_max_llm_calls_per_run"
-    | "mcp_max_tool_calls_per_run";
+    | "mcp_max_tool_calls_per_run"
+    | "mcp_tool_prompt";
   labelKey: string;
   descriptionKey: string;
   type: ToolSettingsFieldType;
   placeholder?: string;
+  placeholderKey?: string;
 };
 
 export const TOOL_SETTINGS_FIELDS: ToolSettingsField[] = [
@@ -74,6 +76,14 @@ export const TOOL_SETTINGS_FIELDS: ToolSettingsField[] = [
     type: "int",
     placeholder: "0",
   },
+  {
+    namespace: "mcp",
+    key: "mcp_tool_prompt",
+    labelKey: "toolPrompt.label",
+    descriptionKey: "toolPrompt.description",
+    type: "textarea",
+    placeholderKey: "toolPrompt.placeholder",
+  },
 ];
 
 export function toolFieldID(field: ToolSettingsField): string {
@@ -98,6 +108,7 @@ export function applyToolSettingsDefaults(settings: Record<string, string>): Rec
     "mcp.mcp_max_concurrent_calls": settings["mcp.mcp_max_concurrent_calls"] || "8",
     "mcp.mcp_tool_timeout_seconds": settings["mcp.mcp_tool_timeout_seconds"] || "10",
     "mcp.mcp_tool_retry_count": settings["mcp.mcp_tool_retry_count"] || "0",
+    "mcp.mcp_tool_prompt": settings["mcp.mcp_tool_prompt"] || "",
   };
 }
 
@@ -110,6 +121,6 @@ export function toToolEditorField(
     label: translate(field.labelKey),
     description: translate(field.descriptionKey),
     type: field.type,
-    placeholder: field.placeholder,
+    placeholder: field.placeholderKey ? translate(field.placeholderKey) : field.placeholder,
   } as const;
 }

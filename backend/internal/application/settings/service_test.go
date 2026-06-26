@@ -2,6 +2,7 @@ package settings
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	domainsettings "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/settings"
@@ -280,6 +281,15 @@ func TestValidateMCPSelectedToolsSetting(t *testing.T) {
 	}
 	if err := validatePatchItem(PatchItem{Namespace: "mcp", Key: "mcp_max_selected_tools_per_message", Value: "129"}); err == nil {
 		t.Fatal("expected selected tool limit above safe maximum to fail")
+	}
+}
+
+func TestValidateMCPToolPromptSetting(t *testing.T) {
+	if err := validatePatchItem(PatchItem{Namespace: "mcp", Key: "mcp_tool_prompt", Value: "Use MCP tools when realtime data is needed."}); err != nil {
+		t.Fatalf("expected MCP tool prompt to pass, got %v", err)
+	}
+	if err := validatePatchItem(PatchItem{Namespace: "mcp", Key: "mcp_tool_prompt", Value: strings.Repeat("x", 20001)}); err == nil {
+		t.Fatal("expected oversized MCP tool prompt to fail")
 	}
 }
 

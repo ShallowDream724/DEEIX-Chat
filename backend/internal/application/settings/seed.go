@@ -176,6 +176,7 @@ func defaultSettings() []domainsettings.SystemSetting {
 		{Namespace: "mcp", Key: "mcp_max_selected_tools_per_message", Value: "32", ValueType: "int", Description: "单次消息最多可选择的 MCP 工具数量"},
 		{Namespace: "mcp", Key: "mcp_max_llm_calls_per_run", Value: "5", ValueType: "int", Description: "单次 MCP 工具运行最大 LLM 请求次数（最小 2，首次请求 + 工具后续请求 + 最终总结）"},
 		{Namespace: "mcp", Key: "mcp_max_tool_calls_per_run", Value: "8", ValueType: "int", Description: "单次 MCP 工具运行最大 MCP Tool Call 次数"},
+		{Namespace: "mcp", Key: "mcp_tool_prompt", Value: "", ValueType: "string", Description: "MCP Tool 提示词，空串使用内置默认值"},
 
 		// 熔断配置
 		{Namespace: "circuit", Key: "channel_failure_threshold", Value: "3", ValueType: "int", Description: "熔断触发次数"},

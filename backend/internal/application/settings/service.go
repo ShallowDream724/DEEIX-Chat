@@ -418,6 +418,8 @@ func validatePatchItem(item PatchItem) error {
 		return validateIntMinMax(value, 1, 120, key)
 	case "mcp:mcp_tool_retry_count":
 		return validateIntMinMax(value, 0, 5, key)
+	case "mcp:mcp_tool_prompt":
+		return validateStringMax(value, 20000, key)
 	}
 	return nil
 }

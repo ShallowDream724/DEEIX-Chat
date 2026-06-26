@@ -33,6 +33,11 @@
     "toolRetry": {
       "label": "MCP Tool 重试次数",
       "description": "MCP Tool Call 失败后的重试次数。默认 0。"
+    },
+    "toolPrompt": {
+      "label": "MCP Tool 提示词",
+      "description": "发送消息且选择 MCP 工具时注入给模型的工具使用规则；留空使用内置默认提示词。",
+      "placeholder": "留空使用内置默认提示词"
     }
   },
   "status": {

@@ -33,3 +33,26 @@ func TestInjectMCPToolGuidanceOnlyAddsPolicy(t *testing.T) {
 		}
 	}
 }
+
+func TestInjectMCPToolGuidanceUsesCustomPrompt(t *testing.T) {
+	messages := []llm.Message{{Role: "system", Content: "base"}, {Role: "user", Content: "查一下最新信息"}}
+	runtime := selectedToolRuntime{
+		definitions: []llm.ToolDefinition{{
+			Name:        "web_search",
+			Description: "搜索网页",
+			InputSchema: []byte(`{"type":"object","properties":{}}`),
+		}},
+		prompt: "自定义 MCP 工具调用规则",
+	}
+
+	result := injectMCPToolGuidance(messages, runtime)
+	if len(result) != 3 {
+		t.Fatalf("expected guidance message to be injected, got %#v", result)
+	}
+	if result[1].Role != "system" || result[1].Content != "自定义 MCP 工具调用规则" {
+		t.Fatalf("expected custom guidance after existing system messages, got %#v", result[1])
+	}
+	if strings.Contains(result[1].Content, "declared separately via the API schema") {
+		t.Fatalf("expected custom guidance to replace default guidance, got %q", result[1].Content)
+	}
+}

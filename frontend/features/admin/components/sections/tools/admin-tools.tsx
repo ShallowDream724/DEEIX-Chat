@@ -62,6 +62,7 @@ import { cn } from "@/lib/utils";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import { CopyActionButton } from "@/shared/components/copy-action";
 import {
+  SettingsFieldInset,
   SettingsFieldItem,
   SettingsFieldList,
   SettingsPage,
@@ -677,7 +678,6 @@ export function AdminToolsPage() {
           ) : null
         }
       >
-
         <SettingsFieldList>
           {mcpEnableField ? (
             <SettingsFieldItem key={mcpEnableFieldID} index={0}>
@@ -690,21 +690,26 @@ export function AdminToolsPage() {
               />
             </SettingsFieldItem>
           ) : null}
-          <CollapsibleMotionContent open={mcpEnabled}>
-            {mcpRuntimeFields.map((field, index) => {
-              const id = toolFieldID(field);
-              return (
-                <SettingsFieldItem key={id} index={index + 1}>
-                  <SettingsFieldEditor
-                    field={toToolEditorField(field, (key) => t(`fields.${key}`))}
-                    value={settingsMap[id] ?? ""}
-                    dirty={(settingsMap[id] ?? "") !== (savedMap[id] ?? "")}
-                    disabled={loading || saving}
-                    onChange={(value) => setSettingsMap((prev) => ({ ...prev, [id]: value }))}
-                  />
-                </SettingsFieldItem>
-              );
-            })}
+          <CollapsibleMotionContent open={mcpEnabled} contentClassName="p-px">
+            <SettingsFieldItem index={1}>
+              <SettingsFieldInset>
+                <SettingsFieldList className="gap-3 md:gap-4">
+                  {mcpRuntimeFields.map((field) => {
+                    const id = toolFieldID(field);
+                    return (
+                      <SettingsFieldEditor
+                        key={id}
+                        field={toToolEditorField(field, (key) => t(`fields.${key}`))}
+                        value={settingsMap[id] ?? ""}
+                        dirty={(settingsMap[id] ?? "") !== (savedMap[id] ?? "")}
+                        disabled={loading || saving}
+                        onChange={(value) => setSettingsMap((prev) => ({ ...prev, [id]: value }))}
+                      />
+                    );
+                  })}
+                </SettingsFieldList>
+              </SettingsFieldInset>
+            </SettingsFieldItem>
           </CollapsibleMotionContent>
         </SettingsFieldList>
 

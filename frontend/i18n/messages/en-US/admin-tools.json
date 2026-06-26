@@ -33,6 +33,11 @@
     "toolRetry": {
       "label": "MCP tool retries",
       "description": "Retry count after an MCP tool call fails. Default 0."
+    },
+    "toolPrompt": {
+      "label": "MCP tool prompt",
+      "description": "Tool-use instructions injected when a message has selected MCP tools. Leave empty to use the built-in default.",
+      "placeholder": "Leave empty to use the built-in default prompt"
     }
   },
   "status": {
