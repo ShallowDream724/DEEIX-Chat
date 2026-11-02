@@ -19,13 +19,13 @@ type NativeReadinessInput struct {
 }
 
 type NativeFileReadiness struct {
-	FileID   string `json:"fileID"`
-	Eligible bool   `json:"eligible"`
-	Reason   string `json:"reason,omitempty"`
+	FileID   string
+	Eligible bool
+	Reason   string
 }
 
 type NativeReadinessResult struct {
-	Files []NativeFileReadiness `json:"files"`
+	Files []NativeFileReadiness
 }
 
 // GetNativeReadiness is a read-only, conservative preview. Current files have

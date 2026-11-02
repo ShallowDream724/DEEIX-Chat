@@ -1,3 +1,4 @@
+import type { NativeReadinessRequest } from "@deeix/api-contract";
 import { authedFetch, authedRequest } from "@/shared/api/authed-client";
 import type {
   ChatFilePolicyDTO,
@@ -267,7 +268,7 @@ export async function getFileProcessingStatuses(
 
 export async function getFileNativeReadiness(
   accessToken: string,
-  params: { model: string; fileIDs: string[]; conversationID?: string },
+  params: NativeReadinessRequest,
   signal?: AbortSignal,
 ): Promise<FileNativeReadinessDTO> {
   return authedRequest<FileNativeReadinessDTO>(

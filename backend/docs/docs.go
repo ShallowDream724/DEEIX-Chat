@@ -13763,6 +13763,68 @@ const docTemplate = `{
                 }
             }
         },
+        "/files/native-readiness": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "summary": "查询本轮附件原生输入资格",
+                "parameters": [
+                    {
+                        "description": "模型与本轮全部附件",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/NativeReadinessRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/NativeReadinessResponseDoc"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/ConversationErrorDoc"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/ConversationErrorDoc"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/ConversationErrorDoc"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/ConversationErrorDoc"
+                        }
+                    }
+                }
+            }
+        },
         "/files/processing/statuses": {
             "post": {
                 "security": [
@@ -27606,6 +27668,83 @@ const docTemplate = `{
                     "type": "integer"
                 },
                 "updatedAt": {
+                    "type": "string"
+                }
+            }
+        },
+        "NativeFileReadinessResponse": {
+            "type": "object",
+            "required": [
+                "eligible",
+                "fileID"
+            ],
+            "properties": {
+                "eligible": {
+                    "type": "boolean"
+                },
+                "fileID": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string",
+                    "enum": [
+                        "unsupported",
+                        "budget_exceeded",
+                        "unavailable"
+                    ]
+                }
+            }
+        },
+        "NativeReadinessRequest": {
+            "type": "object",
+            "required": [
+                "fileIDs",
+                "model"
+            ],
+            "properties": {
+                "conversationID": {
+                    "type": "string",
+                    "maxLength": 32
+                },
+                "fileIDs": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "minItems": 1,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "model": {
+                    "type": "string",
+                    "maxLength": 128
+                }
+            }
+        },
+        "NativeReadinessResponse": {
+            "type": "object",
+            "required": [
+                "files"
+            ],
+            "properties": {
+                "files": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/NativeFileReadinessResponse"
+                    }
+                }
+            }
+        },
+        "NativeReadinessResponseDoc": {
+            "type": "object",
+            "required": [
+                "data",
+                "errorMsg"
+            ],
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/NativeReadinessResponse"
+                },
+                "errorMsg": {
                     "type": "string"
                 }
             }

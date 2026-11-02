@@ -11,12 +11,6 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type NativeReadinessRequest struct {
-	Model          string   `json:"model" binding:"max=128"`
-	FileIDs        []string `json:"fileIDs" binding:"required,min=1,max=100,dive,required,max=128"`
-	ConversationID string   `json:"conversationID,omitempty" binding:"omitempty,max=32"`
-}
-
 // GetNativeReadiness reports native file eligibility without choosing a billing
 // route or waiting for background extraction.
 // @Summary 查询本轮附件原生输入资格
@@ -25,7 +19,7 @@ type NativeReadinessRequest struct {
 // @Produce json
 // @Security BearerAuth
 // @Param request body NativeReadinessRequest true "模型与本轮全部附件"
-// @Success 200 {object} appconversation.NativeReadinessResult
+// @Success 200 {object} NativeReadinessResponseDoc
 // @Failure 400 {object} ErrorDoc
 // @Failure 403 {object} ErrorDoc
 // @Failure 404 {object} ErrorDoc
@@ -55,5 +49,5 @@ func (h *Handler) GetNativeReadiness(c *gin.Context) {
 		}
 		return
 	}
-	response.Success(c, result)
+	response.Success(c, toNativeReadinessResponse(result))
 }

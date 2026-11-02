@@ -2931,6 +2931,33 @@ export interface ModelVendorResponse {
   updatedAt: string;
 }
 
+export interface NativeFileReadinessResponse {
+  eligible: boolean;
+  fileID: string;
+  reason?: "unsupported" | "budget_exceeded" | "unavailable";
+}
+
+export interface NativeReadinessRequest {
+  /** @maxLength 32 */
+  conversationID?: string;
+  /**
+   * @maxItems 100
+   * @minItems 1
+   */
+  fileIDs: string[];
+  /** @maxLength 128 */
+  model: string;
+}
+
+export interface NativeReadinessResponse {
+  files: NativeFileReadinessResponse[];
+}
+
+export interface NativeReadinessResponseDoc {
+  data: NativeReadinessResponse;
+  errorMsg: string;
+}
+
 export interface NativeToolPricingRequest {
   billable?: boolean;
   priceLabel?: string;
@@ -10423,6 +10450,22 @@ export namespace Files {
     export type RequestBody = SubmitFileEmbeddingsRequest;
     export type RequestHeaders = {};
     export type ResponseBody = FileEmbeddingSubmissionResponseDoc;
+  }
+
+  /**
+   * No description
+   * @tags chat
+   * @name NativeReadinessCreate
+   * @summary 查询本轮附件原生输入资格
+   * @request POST:/files/native-readiness
+   * @secure
+   */
+  export namespace NativeReadinessCreate {
+    export type RequestParams = {};
+    export type RequestQuery = {};
+    export type RequestBody = NativeReadinessRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = NativeReadinessResponseDoc;
   }
 
   /**

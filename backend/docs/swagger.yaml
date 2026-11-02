@@ -6610,6 +6610,59 @@ definitions:
     - sortOrder
     - updatedAt
     type: object
+  NativeFileReadinessResponse:
+    properties:
+      eligible:
+        type: boolean
+      fileID:
+        type: string
+      reason:
+        enum:
+        - unsupported
+        - budget_exceeded
+        - unavailable
+        type: string
+    required:
+    - eligible
+    - fileID
+    type: object
+  NativeReadinessRequest:
+    properties:
+      conversationID:
+        maxLength: 32
+        type: string
+      fileIDs:
+        items:
+          type: string
+        maxItems: 100
+        minItems: 1
+        type: array
+      model:
+        maxLength: 128
+        type: string
+    required:
+    - fileIDs
+    - model
+    type: object
+  NativeReadinessResponse:
+    properties:
+      files:
+        items:
+          $ref: '#/definitions/NativeFileReadinessResponse'
+        type: array
+    required:
+    - files
+    type: object
+  NativeReadinessResponseDoc:
+    properties:
+      data:
+        $ref: '#/definitions/NativeReadinessResponse'
+      errorMsg:
+        type: string
+    required:
+    - data
+    - errorMsg
+    type: object
   NativeToolPricingRequest:
     properties:
       billable:
@@ -21033,6 +21086,45 @@ paths:
       security:
       - BearerAuth: []
       summary: 批量提交指定文件向量化
+      tags:
+      - chat
+  /files/native-readiness:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: 模型与本轮全部附件
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/NativeReadinessRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/NativeReadinessResponseDoc'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 查询本轮附件原生输入资格
       tags:
       - chat
   /files/processing/statuses:
