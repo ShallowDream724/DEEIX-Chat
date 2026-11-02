@@ -905,7 +905,7 @@ function ChatInputComponent({
                         </AttachmentTitle>
                         <AttachmentDescription className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] font-normal leading-none">
                           {nativeReady ? (
-                            <span className="shrink-0 rounded bg-emerald-500/10 px-1 py-0.5 font-normal text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-400">
+                            <span className="inline-flex h-3 shrink-0 items-center justify-center rounded bg-emerald-500/10 px-1 text-[10px] font-normal leading-none text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-400">
                               {tComposer("nativeAttachment")}
                             </span>
                           ) : backgroundProcessing ? (
