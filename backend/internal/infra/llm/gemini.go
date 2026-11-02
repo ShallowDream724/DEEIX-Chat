@@ -728,6 +728,9 @@ func (c *Client) generateGemini(
 	if err != nil {
 		return nil, err
 	}
+	if err := validateGeminiInlineRequestSize(len(payload)); err != nil {
+		return nil, err
+	}
 
 	requestCtx, cancel := context.WithTimeout(ctx, resolveReadTimeout(route.ReadTimeoutMS))
 	defer cancel()
@@ -1256,6 +1259,9 @@ func (c *Client) generateGeminiStream(
 	}
 	payload, err := json.Marshal(requestBody)
 	if err != nil {
+		return nil, err
+	}
+	if err := validateGeminiInlineRequestSize(len(payload)); err != nil {
 		return nil, err
 	}
 

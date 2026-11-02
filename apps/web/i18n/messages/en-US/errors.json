@@ -194,6 +194,7 @@
     "inUse": "This file is in use and cannot be deleted.",
     "notFound": "File not found.",
     "notReady": "File is not ready.",
+    "modelUnsupported": "The selected model cannot read this file. Choose a model that supports its file type.",
     "required": "File is required.",
     "tooLarge": "File is too large.",
     "tooLargeForContext": "File is too large for full-context injection.",

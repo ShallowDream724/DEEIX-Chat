@@ -194,6 +194,7 @@
     "inUse": "文件正在使用中，无法删除。",
     "notFound": "文件不存在。",
     "notReady": "文件尚未准备完成。",
+    "modelUnsupported": "所选模型无法读取此文件，请切换到支持该文件类型的模型。",
     "required": "请选择文件。",
     "tooLarge": "文件过大。",
     "tooLargeForContext": "文件过大，无法加入完整上下文。",

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"strings"
 	"testing"
 
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
@@ -31,7 +30,7 @@ func (r failedFileProcessingRepository) GetActiveFileObjectByID(context.Context,
 func scannedPDF() AttachmentInput {
 	return AttachmentInput{
 		FileID: "scan", FileName: "scan.pdf", Kind: "file", FileCategory: fileCategoryPDF, MimeType: "application/pdf",
-		StoragePath: "files/scan", FileSize: int64(len("%PDF-1.7 scan")), Current: true, MessageRole: "user",
+		StoragePath: "files/scan", FileSize: int64(len("%PDF-1.7 scan")), PageCount: 1, Current: true, MessageRole: "user",
 	}
 }
 
@@ -49,9 +48,16 @@ func failedPDFService(store *objectstorage.LocalStore) *Service {
 
 // 模型能直接阅读 PDF 时，本轮 PDF 提取失败不再拒绝发送；否则仍按「文件未准备完成」拒绝。
 func TestHydrateAttachmentsForSendKeepsFailedPDFForNativeReaders(t *testing.T) {
-	service := failedPDFService(objectstorage.NewLocal(t.TempDir()))
-
-	items, err := service.hydrateAttachmentsForSend(t.Context(), 1, []AttachmentInput{scannedPDF()}, nativeInputPolicy{PDF: true}, nil)
+	store := objectstorage.NewLocal(t.TempDir())
+	if _, err := store.Put(t.Context(), "files/scan", bytes.NewReader([]byte("%PDF-1.7 scan")), objectstorage.PutOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	service := failedPDFService(store)
+	attachment := scannedPDF()
+	attachment.ProcessingStatus = "failed"
+	attachment.ProcessingErrorCode = "extract_empty"
+	native := service.resolveNativeInputs(t.Context(), &channel.ResolvedRoute{Protocol: llm.AdapterAnthropicMessages, CatalogInputModalities: []string{"pdf"}}, []AttachmentInput{attachment}, nil)
+	items, err := service.hydrateAttachmentsForSend(t.Context(), 1, markNativeAttachments([]AttachmentInput{attachment}, native), nil)
 	if err != nil {
 		t.Fatalf("native PDF readers must accept a failed PDF: %v", err)
 	}
@@ -59,25 +65,28 @@ func TestHydrateAttachmentsForSendKeepsFailedPDFForNativeReaders(t *testing.T) {
 		t.Fatalf("expected the failure state to be kept for planning, got %#v", items)
 	}
 
-	if _, err = service.hydrateAttachmentsForSend(t.Context(), 1, []AttachmentInput{scannedPDF()}, nativeInputPolicy{}, nil); !errors.Is(err, ErrFileProcessingNotReady) {
+	if _, err = service.hydrateAttachmentsForSend(t.Context(), 1, []AttachmentInput{scannedPDF()}, nil); !errors.Is(err, ErrFileProcessingNotReady) {
 		t.Fatalf("models without native PDF input must still reject the file, got %v", err)
 	}
 
 	oversized := scannedPDF()
 	oversized.FileSize = maxNativePDFTotalBytes + 1
-	if _, err = service.hydrateAttachmentsForSend(t.Context(), 1, []AttachmentInput{oversized}, nativeInputPolicy{PDF: true}, nil); !errors.Is(err, ErrFileProcessingNotReady) {
+	if _, err = service.hydrateAttachmentsForSend(t.Context(), 1, []AttachmentInput{oversized}, nil); !errors.Is(err, ErrFileProcessingNotReady) {
 		t.Fatalf("PDFs over the native budget must still be rejected, got %v", err)
 	}
 }
 
-// 提取失败的 PDF 在支持 PDF 的路由上以原生文档发送；故障转移到不支持的路由时留「无法读取」说明。
+// 提取失败的 PDF 原生发送；故障转移到不能读取它的路由必须终止。
 func TestBuildMessageRoutePromptSendsFailedPDFNatively(t *testing.T) {
 	store := objectstorage.NewLocal(t.TempDir())
 	if _, err := store.Put(t.Context(), "files/scan", bytes.NewReader([]byte("%PDF-1.7 scan")), objectstorage.PutOptions{ContentType: "application/pdf"}); err != nil {
 		t.Fatalf("put pdf: %v", err)
 	}
 	service := failedPDFService(store)
-	hydrated, err := service.hydrateAttachmentsForSend(t.Context(), 1, []AttachmentInput{scannedPDF()}, nativeInputPolicy{PDF: true}, nil)
+	route := &channel.ResolvedRoute{Protocol: llm.AdapterAnthropicMessages, CatalogInputModalities: []string{"text", "image", "pdf"}}
+	raw := []AttachmentInput{scannedPDF()}
+	nativeInputs := service.resolveNativeInputs(t.Context(), route, raw, nil)
+	hydrated, err := service.hydrateAttachmentsForSend(t.Context(), 1, markNativeAttachments(raw, nativeInputs), nil)
 	if err != nil {
 		t.Fatalf("hydrate: %v", err)
 	}
@@ -98,14 +107,10 @@ func TestBuildMessageRoutePromptSendsFailedPDFNatively(t *testing.T) {
 		t.Fatalf("expected the failed PDF as a native document, got %#v", parts)
 	}
 
-	fallback, err := service.buildMessageRoutePrompt(t.Context(), &channel.ResolvedRoute{
+	_, err = service.buildMessageRoutePrompt(t.Context(), &channel.ResolvedRoute{
 		Protocol: llm.AdapterOpenAIChatCompletions, BaseURL: "https://relay.example.com/v1", CatalogInputModalities: []string{"text", "image", "pdf"},
 	}, input)
-	if err != nil {
-		t.Fatalf("build fallback prompt: %v", err)
-	}
-	documents, _ := turnParts(t, fallback.Messages[len(fallback.Messages)-1])
-	if !strings.Contains(documents, `<document source="scan.pdf" access="unavailable">`) {
-		t.Fatalf("routes without native PDF must explain the file is unreadable, got %q", documents)
+	if !errors.Is(err, ErrFileProcessingNotReady) {
+		t.Fatalf("failover must not omit an unreadable current file, got %v", err)
 	}
 }

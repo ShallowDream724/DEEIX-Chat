@@ -22,6 +22,12 @@ on:
     tags:
       - "v*.*.*"
   workflow_dispatch:
+    inputs:
+      architecture:
+        description: Image architecture
+        type: choice
+        options: [both, amd64, arm64]
+        default: both
 
 permissions:
   contents: read
@@ -30,17 +36,11 @@ permissions:
 jobs:
   build:
     name: Build (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ matrix.arch == 'amd64' && 'ubuntu-24.04' || 'ubuntu-24.04-arm' }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - arch: amd64
-            platform: linux/amd64
-            runner: ubuntu-24.04
-          - arch: arm64
-            platform: linux/arm64
-            runner: ubuntu-24.04-arm
+        arch: ${{ fromJSON(inputs.architecture == 'amd64' && '["amd64"]' || inputs.architecture == 'arm64' && '["arm64"]' || '["amd64","arm64"]') }}
 
     steps:
       - name: Checkout
@@ -133,7 +133,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          platforms: ${{ matrix.platform }}
+          platforms: linux/${{ matrix.arch }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -199,13 +199,15 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Create manifest lists
+        env:
+          IMAGE_ARCHITECTURE: ${{ inputs.architecture || 'both' }}
         run: |
           set -euo pipefail
           jq -cr '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON" | while read -r tag; do
-            docker buildx imagetools create \
-              -t "$tag" \
-              "${tag}-amd64" \
-              "${tag}-arm64"
+            sources=()
+            if [[ "$IMAGE_ARCHITECTURE" != "arm64" ]]; then sources+=("${tag}-amd64"); fi
+            if [[ "$IMAGE_ARCHITECTURE" != "amd64" ]]; then sources+=("${tag}-arm64"); fi
+            docker buildx imagetools create -t "$tag" "${sources[@]}"
           done
 
       - name: Inspect images

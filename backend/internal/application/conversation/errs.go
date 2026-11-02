@@ -53,6 +53,8 @@ var (
 	ErrDangerousMIMEType = apperr.NewMasked("file.type_blocked", "file type is not allowed", "dangerous file type not allowed")
 	// ErrFileProcessingNotReady 文件处理尚未就绪。
 	ErrFileProcessingNotReady = apperr.NewMasked("file.not_ready", "file processing is not ready", "file processing not ready")
+	// ErrFileUnsupportedByModel 本轮文件没有可用解析内容，且所选模型或协议无法读取原文件。
+	ErrFileUnsupportedByModel = apperr.New("file.model_unsupported", "The selected model cannot read this file. Choose a model that supports its file type.")
 	// ErrFileTooLargeForFullContext 文件过大，无法全文注入。
 	ErrFileTooLargeForFullContext = apperr.NewMasked("file.too_large_for_context", "file is too large for full context", "file too large for full context")
 	// ErrEmbeddingUnavailable 当前未配置可用 embedding，无法处理大文档 / RAG。

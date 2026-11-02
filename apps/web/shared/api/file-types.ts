@@ -13,6 +13,14 @@ export type FileObjectDTO = FileObjectResponse;
 export type FileProcessingStatusDTO = FileProcessingStatusResponse;
 export type FileEmbeddingSubmissionDTO = FileEmbeddingSubmissionResponse;
 
+export type FileNativeReadinessDTO = {
+  files: {
+    fileID: string;
+    eligible: boolean;
+    reason?: "unsupported" | "budget_exceeded" | "unavailable";
+  }[];
+};
+
 export type FileExtractDTO = {
   fileID: string;
   extractText: string;

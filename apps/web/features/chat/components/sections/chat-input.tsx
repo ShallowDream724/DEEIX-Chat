@@ -123,6 +123,7 @@ type ChatInputProps = {
   sendShortcut?: SendShortcut;
   inputHeight?: "compact" | "standard" | "loose";
   attachments: PendingAttachment[];
+  nativeEligibleFileIDs?: ReadonlySet<string>;
   uploadingAttachments: UploadingAttachment[];
   modelOptions: ChatModelOption[];
   billingDisplayCurrency: BillingDisplayCurrency;
@@ -221,6 +222,7 @@ function ChatInputComponent({
   sendShortcut = "enter",
   inputHeight = "standard",
   attachments,
+  nativeEligibleFileIDs,
   uploadingAttachments,
   modelOptions,
   billingDisplayCurrency,
@@ -873,8 +875,11 @@ function ChatInputComponent({
                 {attachments.map((item) => {
                   const badge = resolveFileProcessingBadge(item, (key, values) => tFileStatus(key, values));
                   const FileIcon = resolveFileIcon(item);
-                  const failed = badge.tone === "danger" || badge.tone === "warning";
-                  const backgroundProcessing = !failed && isFileProcessing(item);
+                  const nativeReady = !temporaryMode && item.fileCategory !== "image"
+                    && !(item.detectedMime || item.mimeType).startsWith("image/")
+                    && nativeEligibleFileIDs?.has(item.fileID);
+                  const failed = !nativeReady && (badge.tone === "danger" || badge.tone === "warning");
+                  const backgroundProcessing = !nativeReady && !failed && isFileProcessing(item);
                   const meta = formatAttachmentMeta(item.fileName, item.sizeBytes);
                   const statusDetail = failed || backgroundProcessing ? badge.detail : undefined;
                   const trigger = (
@@ -898,12 +903,16 @@ function ChatInputComponent({
                         <AttachmentTitle className="text-[12px] leading-4 text-foreground/90" title={item.fileName}>
                           {item.fileName}
                         </AttachmentTitle>
-                        <AttachmentDescription className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] leading-none">
-                          {backgroundProcessing ? (
+                        <AttachmentDescription className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] font-normal leading-none">
+                          {nativeReady ? (
+                            <span className="shrink-0 rounded bg-emerald-500/10 px-1 py-0.5 font-normal text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-400">
+                              {tComposer("nativeAttachment")}
+                            </span>
+                          ) : backgroundProcessing ? (
                             <LoaderCircle className="size-3 shrink-0 animate-spin" strokeWidth={1.8} />
                           ) : null}
                           <span className="min-w-0 shrink truncate">
-                            {failed || backgroundProcessing ? `${badge.label} · ${meta}` : meta}
+                            {nativeReady ? `· ${meta}` : failed || backgroundProcessing ? `${badge.label} · ${meta}` : meta}
                           </span>
                           {item.ragOptOut && item.fileCategory !== "image" ? (
                             <span

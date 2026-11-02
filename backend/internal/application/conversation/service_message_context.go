@@ -458,6 +458,9 @@ func (e *upstreamRequestError) Unwrap() []error {
 }
 
 func wrapUpstreamRequestError(cause error) error {
+	if errors.Is(cause, llm.ErrInputTooLarge) {
+		return ErrFileTooLarge
+	}
 	if cause == nil {
 		return ErrUpstreamRequestFailed
 	}

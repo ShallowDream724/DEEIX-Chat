@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 
@@ -49,7 +50,7 @@ func nativePDF(fileID string, size int64, pages int, current bool) AttachmentInp
 	}
 }
 
-// 预算内越新的文件越优先；走检索、助手生成、过大的文件不原生发送；扫描件（无提取文本）可以原生发送。
+// 预算内越新的文件越优先；RAG或全文上限不会阻止原生输入；助手生成和过大的文件不原生发送。
 func TestSelectNativeDocumentsPrefersNewestWithinBudget(t *testing.T) {
 	retrieval := nativePDF("retrieval", 1024, 2, false)
 	retrieval.ContextMode = fileContextModeRAG
@@ -73,8 +74,8 @@ func TestSelectNativeDocumentsPrefersNewestWithinBudget(t *testing.T) {
 	for _, att := range selected {
 		ids = append(ids, att.FileID)
 	}
-	// current(50 页)+recent(40 页)+scanned(3 页) 已占 93 页，oldest 的 10 页超出页数上限。
-	if got := strings.Join(ids, ","); got != "current,recent,scanned" {
+	// 原生输入与解析模式解耦；oldest 超出整体预算。
+	if got := strings.Join(ids, ","); got != "current,recent,too_long_text,scanned,retrieval" {
 		t.Fatalf("selected = %q", got)
 	}
 	if len(selectNativeInputs(attachments, nativeInputPolicy{})) != 0 {
@@ -310,7 +311,7 @@ func TestSelectNativeInputsSharesBudgetWithMedia(t *testing.T) {
 	}
 }
 
-// 端到端：Gemini 路由原生发送音频；不支持音频的路由在所属轮次留「不支持」说明，不发送内容块。
+// 端到端：Gemini 路由原生发送音频；本轮音频不支持时明确失败，历史附件保留原有说明。
 func TestBuildMessageRoutePromptSendsNativeAudioPerRoute(t *testing.T) {
 	store := objectstorage.NewLocal(t.TempDir())
 	if _, err := store.Put(t.Context(), "files/voice.mp3", bytes.NewReader([]byte("ID3 audio")), objectstorage.PutOptions{ContentType: "audio/mpeg"}); err != nil {
@@ -337,9 +338,15 @@ func TestBuildMessageRoutePromptSendsNativeAudioPerRoute(t *testing.T) {
 		t.Fatalf("expected a native note, got %q", parts[0].Text)
 	}
 
-	textOnly, err := service.buildMessageRoutePrompt(t.Context(), &channel.ResolvedRoute{
+	unsupported := &channel.ResolvedRoute{
 		Protocol: llm.AdapterAnthropicMessages, CatalogInputModalities: []string{"text", "audio"},
-	}, input)
+	}
+	if _, err := service.buildMessageRoutePrompt(t.Context(), unsupported, input); !errors.Is(err, ErrFileUnsupportedByModel) {
+		t.Fatalf("current unreadable audio must stop generation, got %v", err)
+	}
+	input.ConversationFiles[0].Current = false
+	input.DomainMessages[0].Attachments = `[{"file_id":"voice.mp3"}]`
+	textOnly, err := service.buildMessageRoutePrompt(t.Context(), unsupported, input)
 	if err != nil {
 		t.Fatalf("build fallback prompt: %v", err)
 	}

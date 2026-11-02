@@ -59,6 +59,27 @@ func (r *RouteResolver) ResolveRoute(ctx context.Context, input channel.ResolveR
 	})
 }
 
+// PreviewRoutes preserves the same personal-provider ownership and enabled-model
+// checks as actual sends. Personal resolution is read-only; platform previews
+// deliberately bypass key selection and circuit-probe acquisition.
+func (r *RouteResolver) PreviewRoutes(ctx context.Context, input channel.ResolveRouteInput) ([]*channel.ResolvedRoute, error) {
+	if domainpersonalprovider.IsModelRef(input.PlatformModelName) {
+		route, err := r.ResolveRoute(ctx, input)
+		if err != nil {
+			return nil, err
+		}
+		route.APIKey = ""
+		return []*channel.ResolvedRoute{route}, nil
+	}
+	previewer, ok := r.platform.(interface {
+		PreviewRoutes(context.Context, channel.ResolveRouteInput) ([]*channel.ResolvedRoute, error)
+	})
+	if !ok {
+		return nil, channel.ErrRouteNotFound
+	}
+	return previewer.PreviewRoutes(ctx, input)
+}
+
 // ResolveDefaultRoute 默认路由只来自平台。
 func (r *RouteResolver) ResolveDefaultRoute(ctx context.Context, input channel.ResolveRouteInput) (*channel.ResolvedRoute, error) {
 	return r.platform.ResolveDefaultRoute(ctx, input)

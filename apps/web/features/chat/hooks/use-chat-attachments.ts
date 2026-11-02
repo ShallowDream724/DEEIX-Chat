@@ -7,6 +7,7 @@ import type {
   PendingAttachment,
   UploadingAttachment,
 } from "@/features/chat/types/chat-runtime";
+import { useChatNativeReadiness } from "@/features/chat/hooks/use-chat-native-readiness";
 import {
   inferUploadCategory,
   normalizeUploadMime,
@@ -39,12 +40,16 @@ function revokeAttachmentPreview(item: PendingAttachment) {
 
 export function useChatAttachments({
   conversationKey,
+  conversationID,
+  model,
   attachments,
   setAttachments,
   appendAttachmentsForKey,
   temporary = false,
 }: {
   conversationKey: string;
+  conversationID?: string | null;
+  model: string;
   attachments: PendingAttachment[];
   setAttachments: React.Dispatch<React.SetStateAction<PendingAttachment[]>>;
   appendAttachmentsForKey: (conversationKey: string, items: PendingAttachment[]) => void;
@@ -64,6 +69,14 @@ export function useChatAttachments({
   const currentConversationKeyRef = React.useRef(conversationKey);
   const uploadingAttachments = uploadingByKey[conversationKey] ?? [];
   const uploading = uploadingAttachments.length > 0;
+  const { eligibleFileIDs: nativeEligibleFileIDs, pending: nativeReadinessPending } = useChatNativeReadiness({
+    attachments,
+    model,
+    conversationKey,
+    conversationID,
+    temporary,
+  });
+  const notifiedProcessingFailuresRef = React.useRef(new Set<string>());
   const processingFileIDs = React.useMemo(
     () => attachments
       .filter(isFileProcessing)
@@ -71,17 +84,26 @@ export function useChatAttachments({
     [attachments],
   );
 
-  // Processing runs in the background after the upload, so the chip alone is easy to miss
-  // and its reason is only a hover title. Announce each failure once, with the reason.
-  const notifyProcessingFailed = React.useCallback((items: PendingAttachment[]) => {
-    for (const item of items) {
+  // Extraction can fail while the original file remains usable by the model.
+  // Wait for current readiness before announcing a failure, once per composer file.
+  React.useEffect(() => {
+    if (nativeReadinessPending) {
+      return;
+    }
+    for (const item of attachments) {
+      const key = `${conversationKey}:${item.fileID}`;
+      if (!isFileProcessingFailed(item) || nativeEligibleFileIDs.has(item.fileID)
+        || notifiedProcessingFailuresRef.current.has(key)) {
+        continue;
+      }
+      notifiedProcessingFailuresRef.current.add(key);
       const badge = resolveFileProcessingBadge(item, (key, values) => tFileStatus(key, values));
       toast.error(t("processingFailed", { name: item.fileName }), {
         id: `attachment-processing-failed:${item.fileID}`,
         description: badge.detail,
       });
     }
-  }, [t, tFileStatus]);
+  }, [attachments, conversationKey, nativeEligibleFileIDs, nativeReadinessPending, t, tFileStatus]);
 
   const onProcessingResult = React.useCallback(({
     statuses,
@@ -89,19 +111,6 @@ export function useChatAttachments({
   }: FileStatusPollingResult<FileProcessingStatusDTO>) => {
     const statusesByID = new Map(statuses.map((status) => [status.fileID, status]));
     const missingFileIDSet = new Set(missingFileIDs);
-    const newlyFailed = attachmentsRef.current.flatMap((item) => {
-      const status = statusesByID.get(item.fileID);
-      if (!status || isFileProcessingFailed(item)) {
-        return [];
-      }
-      const next = {
-        ...item,
-        processingStatus: status.processingStatus,
-        processingErrorCode: status.errorCode,
-        processingErrorMessage: status.errorMessage,
-      };
-      return isFileProcessingFailed(next) ? [next] : [];
-    });
     setAttachments((current) => {
       let changed = false;
       const next: PendingAttachment[] = [];
@@ -149,8 +158,7 @@ export function useChatAttachments({
       }
       return changed ? next : current;
     });
-    notifyProcessingFailed(newlyFailed);
-  }, [notifyProcessingFailed, setAttachments]);
+  }, [setAttachments]);
 
   useFileProcessingStatusPolling({
     fileIDs: processingFileIDs,
@@ -380,7 +388,6 @@ export function useChatAttachments({
             return true;
           });
           appendAttachmentsForKey(targetConversationKey, nextUploaded);
-          notifyProcessingFailed(nextUploaded.filter(isFileProcessingFailed));
           if (currentConversationKeyRef.current !== targetConversationKey) {
             releaseAttachments(uploaded);
           }
@@ -423,7 +430,6 @@ export function useChatAttachments({
       chatFilePolicy,
       conversationKey,
       maxFilesPerMessage,
-      notifyProcessingFailed,
       releaseAttachments,
       resolveErrorMessage,
       t,
@@ -481,6 +487,7 @@ export function useChatAttachments({
     attachments,
     uploading,
     uploadingAttachments,
+    nativeEligibleFileIDs,
     maxFilesPerMessage,
     fileMode: temporary ? "full_context" : (chatFilePolicy?.fileMode ?? "auto"),
     ragAvailable: chatFilePolicy?.ragAvailable ?? null,

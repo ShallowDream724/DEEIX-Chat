@@ -111,6 +111,7 @@ var sendMessageErrorStatuses = []sendMessageErrorStatus{
 	{err: appconversation.ErrSkillNotFound, status: http.StatusNotFound},
 	{err: appconversation.ErrInvalidSkillUse, status: http.StatusBadRequest},
 	{err: appconversation.ErrFileProcessingNotReady, status: http.StatusBadRequest},
+	{err: appconversation.ErrFileUnsupportedByModel, status: http.StatusBadRequest},
 	{err: appconversation.ErrFileTooLargeForFullContext, status: http.StatusBadRequest},
 	{err: appconversation.ErrEmbeddingUnavailable, status: http.StatusBadRequest},
 	{err: appconversation.ErrInvalidKnowledgeBaseReference, status: http.StatusBadRequest},

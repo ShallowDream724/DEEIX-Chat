@@ -21,7 +21,8 @@ const (
 	fileContextModeRAG         = "rag"
 	fileContextModeRAGFallback = "rag_fallback_full_context"
 	fileContextModeSkipped     = "skipped"
-	// 以下两种只用于处理过程展示，表示与路由相关的最终决定，文件规划本身不会产生它们。
+	// NativeDocument 由实际原始文件读取决定，排除同文件的全文和RAG路径。
+	// Unsupported 仅用于处理过程展示。
 	fileContextModeNativeDocument = "native_document"
 	fileContextModeUnsupported    = "unsupported"
 )
@@ -64,6 +65,17 @@ func collectConversationFileIDs(messages []model.Message, currentFileIDs []strin
 		}
 	}
 	for _, fileID := range currentFileIDs {
+		// Current attachments take budget priority even when reused from history.
+		fileID = strings.TrimSpace(fileID)
+		if _, exists := seen[fileID]; exists {
+			for i, existing := range result {
+				if existing == fileID {
+					result = append(result[:i], result[i+1:]...)
+					break
+				}
+			}
+			delete(seen, fileID)
+		}
 		add(fileID)
 	}
 	return result
@@ -180,6 +192,10 @@ func buildConversationFileContextPlan(
 		Attachments: make([]AttachmentInput, 0, len(attachments)),
 	}
 	for _, item := range attachments {
+		if item.ContextMode == fileContextModeNativeDocument {
+			plan.Attachments = append(plan.Attachments, item)
+			continue
+		}
 		kind := normalizeAttachmentKind(item.Kind, item.DetectedMIME)
 		if kind == "image" && (item.Current || strings.EqualFold(strings.TrimSpace(item.MessageRole), "user")) {
 			item.ContextMode = fileContextModeDirectImage

@@ -49,12 +49,8 @@ func (s *Service) prepareMessageSendBranch(ctx context.Context, input *SendMessa
 		input.Content = branchState.ReuseUserMessage.Content
 		input.FileIDs = parseAttachmentSnapshotFileIDs(branchState.ReuseUserMessage.Attachments)
 	}
-	maxFiles := s.cfg.Snapshot().MaxMessageFiles
-	if maxFiles <= 0 {
-		maxFiles = 10
-	}
-	if len(input.FileIDs) > maxFiles {
-		return nil, ErrTooManyMessageFiles
+	if err := s.validateMessageFileCount(input.FileIDs); err != nil {
+		return nil, err
 	}
 
 	return &messageSendBranchPreparation{

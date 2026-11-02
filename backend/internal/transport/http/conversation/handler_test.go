@@ -193,6 +193,7 @@ func TestDescribeSendMessageErrorContract(t *testing.T) {
 		{appconversation.ErrSkillNotFound, http.StatusNotFound, "skill.not_found", "skill not found"},
 		{appconversation.ErrInvalidSkillUse, http.StatusBadRequest, "request.invalid_skill_use", "invalid skill use"},
 		{appconversation.ErrFileProcessingNotReady, http.StatusBadRequest, "file.not_ready", "file processing is not ready"},
+		{appconversation.ErrFileUnsupportedByModel, http.StatusBadRequest, "file.model_unsupported", "The selected model cannot read this file. Choose a model that supports its file type."},
 		{appconversation.ErrFileTooLargeForFullContext, http.StatusBadRequest, "file.too_large_for_context", "file is too large for full context"},
 		{appconversation.ErrEmbeddingUnavailable, http.StatusBadRequest, "file.embedding_unavailable", "embedding is unavailable for current file capability"},
 		{appconversation.ErrInvalidKnowledgeBaseReference, http.StatusBadRequest, "knowledge_base.invalid_reference", "invalid knowledge base reference"},

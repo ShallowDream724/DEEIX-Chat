@@ -76,6 +76,18 @@ func (s *Service) buildMessageRoutePrompt(ctx context.Context, route *channel.Re
 	})
 	// 原生输入按路由判断：故障转移到另一条路由时重新计算，不把原生内容块发给不支持它的协议。
 	native := s.resolveNativeInputs(ctx, route, input.ConversationFiles, input.NativeInputs)
+	if err := validateCurrentNativeReads(input.ConversationFiles, native); err != nil {
+		return PromptPlan{}, err
+	}
+	// A file that bypassed extraction on the initial route must remain readable
+	// after failover. Stop before calling the new upstream if it cannot carry it.
+	for _, att := range input.ConversationFiles {
+		if att.ContextMode == fileContextModeNativeDocument {
+			if _, ok := native.Parts[att.FileID]; !ok {
+				return PromptPlan{}, ErrFileProcessingNotReady
+			}
+		}
+	}
 	// 文件按所属轮次就位必须早于图片注入与同角色合并：二者都依赖未合并的历史下标。
 	documents := placeTurnDocuments(historyMessages, routeMessages, input.ConversationFiles, turnDocumentOptions{
 		Native:     native,

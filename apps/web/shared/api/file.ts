@@ -5,6 +5,7 @@ import type {
   FileEmbeddingSubmissionDTO,
   FileExtractDTO,
   FileListResult,
+  FileNativeReadinessDTO,
   FileObjectDTO,
   FileProcessingStatusDTO,
   UploadFileResult,
@@ -262,6 +263,18 @@ export async function getFileProcessingStatuses(
     ));
   }
   return (await Promise.all(requests)).flat();
+}
+
+export async function getFileNativeReadiness(
+  accessToken: string,
+  params: { model: string; fileIDs: string[]; conversationID?: string },
+  signal?: AbortSignal,
+): Promise<FileNativeReadinessDTO> {
+  return authedRequest<FileNativeReadinessDTO>(
+    "/api/v1/files/native-readiness",
+    { method: "POST", accessToken, body: params, signal },
+    true,
+  );
 }
 
 export async function submitFileEmbeddings(

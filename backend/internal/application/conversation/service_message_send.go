@@ -80,6 +80,7 @@ func routeConfigFromResolved(route *channel.ResolvedRoute, endpoint string, attr
 
 func canFailoverMessageRoute(attemptCount int, llmRequestCount int, maxLLMCalls int, visibleDeltaCount int, attemptHadSideEffect bool, cause error) bool {
 	return cause != nil &&
+		!errors.Is(cause, llm.ErrInputTooLarge) &&
 		attemptCount < maxRequestRouteAttempts &&
 		llmRequestCount < maxLLMCalls &&
 		visibleDeltaCount == 0 &&
@@ -521,7 +522,14 @@ func (s *Service) sendMessageInternal(
 		return nil, err
 	}
 	conversationAttachments = bindAttachmentMessageRoles(conversationAttachments, promptMessages)
-	conversationAttachments, err = s.hydrateAttachmentsForSend(ctx, input.UserID, conversationAttachments, resolveNativeInputPolicy(route), input.OnEvent)
+	nativeInputCache := newNativeInputCache()
+	initialNative := s.resolveNativeInputs(ctx, route, conversationAttachments, nativeInputCache)
+	if err = validateCurrentNativeReads(conversationAttachments, initialNative); err != nil {
+		retErr = err
+		return nil, err
+	}
+	conversationAttachments = markNativeAttachments(conversationAttachments, initialNative)
+	conversationAttachments, err = s.hydrateAttachmentsForSend(ctx, input.UserID, conversationAttachments, input.OnEvent)
 	if err != nil {
 		retErr = err
 		return nil, err
@@ -609,7 +617,6 @@ func (s *Service) sendMessageInternal(
 	}
 	// 文件上下文展示按本次路由的最终决定呈现（原生 PDF、模型不支持的图片），而不只是路由无关的文件规划；
 	// 原生文档在这里读取一次，路由提示词与故障转移共用同一份缓存，展示与实际请求一致。
-	nativeInputCache := newNativeInputCache()
 	fileTrace := attachmentRouteTrace{fileMode: fileMode, items: attachmentProcessTraceItems(fileContextPlan.Attachments), skipImages: imageAttachmentRoutingActive}
 	fileTrace.resolve(ctx, s, route, fileContextPlan.Attachments, nativeInputCache)
 	if traceRecorder != nil && fileTrace.visible() {
@@ -827,7 +834,7 @@ func (s *Service) sendMessageInternal(
 		}
 	}
 	if err != nil {
-		if !routeFailureRecorded {
+		if !routeFailureRecorded && !errors.Is(err, llm.ErrInputTooLarge) {
 			s.routeResolver.MarkRouteFailure(ctx, route, err)
 		}
 		retErr = wrapUpstreamRequestError(err)

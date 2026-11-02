@@ -28,31 +28,78 @@ const routeBookkeepingTimeout = 5 * time.Second
 // ResolveRoute 解析模型路由，应用权重随机负载均衡与两级熔断过滤。
 func (s *Service) ResolveRoute(ctx context.Context, input ResolveRouteInput) (*ResolvedRoute, error) {
 	breakerEnabled := s.cache != nil && s.loadBreakerDefaults(ctx).Enabled
-	platformModelName, err := normalizePlatformModelName(input.PlatformModelName)
-	if err != nil {
-		return nil, ErrModelNotFound
-	}
-	platformModel, err := s.repo.GetActiveModelByName(ctx, platformModelName)
+	platformModelName, err := s.authorizeRouteModel(ctx, input)
 	if err != nil {
 		return nil, err
-	}
-	if !routeScopeAllowsModelAccess(input.Scope, platformModel.AccessScope) {
-		return nil, ErrModelAccessDenied
-	}
-	if normalizeRouteScope(input.Scope) == RouteScopeUser && input.UserID > 0 {
-		accessible, err := s.isModelAccessible(ctx, platformModel.ID, input.UserID)
-		if err != nil {
-			return nil, err
-		}
-		if !accessible {
-			return nil, ErrModelAccessDenied
-		}
 	}
 
 	rows, err := s.repo.ListActiveRoutesByModel(ctx, platformModelName)
 	if err != nil {
 		return nil, err
 	}
+	return s.resolveAuthorizedRoute(ctx, input, rows, breakerEnabled)
+}
+
+// authorizeRouteModel is shared by actual routing and read-only previews.
+func (s *Service) authorizeRouteModel(ctx context.Context, input ResolveRouteInput) (string, error) {
+	platformModelName, err := normalizePlatformModelName(input.PlatformModelName)
+	if err != nil {
+		return "", ErrModelNotFound
+	}
+	platformModel, err := s.repo.GetActiveModelByName(ctx, platformModelName)
+	if err != nil {
+		return "", err
+	}
+	if !routeScopeAllowsModelAccess(input.Scope, platformModel.AccessScope) {
+		return "", ErrModelAccessDenied
+	}
+	if normalizeRouteScope(input.Scope) == RouteScopeUser && input.UserID > 0 {
+		accessible, err := s.isModelAccessible(ctx, platformModel.ID, input.UserID)
+		if err != nil {
+			return "", err
+		}
+		if !accessible {
+			return "", ErrModelAccessDenied
+		}
+	}
+	return platformModelName, nil
+}
+
+// PreviewRoutes returns every configured usable candidate without choosing an
+// API key, touching circuit probes, reserving budget, or calling an upstream.
+// Including temporarily unhealthy routes makes capability previews conservative
+// when those routes recover before the actual send.
+func (s *Service) PreviewRoutes(ctx context.Context, input ResolveRouteInput) ([]*ResolvedRoute, error) {
+	name, err := s.authorizeRouteModel(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.repo.ListActiveRoutesByModel(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	routes := make([]*ResolvedRoute, 0, len(rows))
+	for _, row := range rows {
+		if row.UpstreamModelID == 0 || strings.TrimSpace(row.BindingCode) == "" || strings.TrimSpace(row.UpstreamModelName) == "" || !IsRouteAllowedForTask(input.TaskType, row.ModelKindsJSON, row.Protocol) || !llm.IsImplementedAdapter(row.Protocol) {
+			continue
+		}
+		if s.validateUpstreamBaseURL(row.BaseURL) != nil {
+			continue
+		}
+		if _, err := s.parseAPIKeysConfig(row.APIKeysEnc); err != nil {
+			continue
+		}
+		route := buildResolvedRoute(row, "")
+		route.CatalogInputModalities = s.catalogInputModalitiesForRoute(route)
+		routes = append(routes, route)
+	}
+	if len(routes) == 0 {
+		return nil, ErrAllRoutesUnavailable
+	}
+	return routes, nil
+}
+
+func (s *Service) resolveAuthorizedRoute(ctx context.Context, input ResolveRouteInput, rows []repository.ChannelUpstreamRouteRow, breakerEnabled bool) (*ResolvedRoute, error) {
 	if len(rows) == 0 {
 		return nil, ErrRouteNotFound
 	}
@@ -73,6 +120,7 @@ func (s *Service) ResolveRoute(ctx context.Context, input ResolveRouteInput) (*R
 	}
 
 	var shortestRateLimitBackoff time.Duration
+	var err error
 	for start := 0; start < len(available); {
 		priority := available[start].RoutePriority
 		group := make([]routeCandidate, 0, 4)

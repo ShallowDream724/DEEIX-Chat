@@ -396,6 +396,7 @@ export function AppChatArea() {
   const {
     uploading,
     uploadingAttachments,
+    nativeEligibleFileIDs,
     maxFilesPerMessage,
     fileMode,
     ragAvailable,
@@ -407,6 +408,8 @@ export function AppChatArea() {
     onCaptureScreenshot,
   } = useChatAttachments({
     conversationKey,
+    conversationID,
+    model: selectedPlatformModelName,
     attachments,
     setAttachments,
     appendAttachmentsForKey,
@@ -773,6 +776,7 @@ export function AppChatArea() {
     inputHeight,
     attachments,
     uploadingAttachments,
+    nativeEligibleFileIDs,
     modelOptions,
     billingDisplayCurrency,
     billingDisplayUsdToCnyRate,

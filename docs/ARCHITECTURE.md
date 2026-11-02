@@ -81,6 +81,8 @@ apps/*  →  packages/core  →  packages/api-contract  →  backend/docs/swagge
 
 ## 4. 客户端与服务端的契约
 
+原生附件的只读预检、发送策略与客户端状态边界见 [原生附件发送与就绪状态](native-file-readiness.md)。
+
 所有客户端都是"连接用户自己部署的服务器"，因此：
 
 - **API 地址是运行时配置，不是构建期常量。** 优先级为"运行时覆盖 → 构建期变量 → 页面 origin"，由 `packages/core` 的 `resolveApiBaseUrl` 统一实现。桌面端在首次启动时让用户填写服务器地址，由 Rust 侧持久化；`apps/web/shared/platform/desktop-session.ts` 通过 `registerRuntimeApiBaseURLResolver(readServerOrigin)` 把它注入 API 客户端，Web 侧不在 localStorage 保存服务器地址。
