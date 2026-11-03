@@ -555,6 +555,8 @@ func (c *Client) adapterFor(route portllm.RouteConfig) (transportAdapter, error)
 }
 
 func newRouteHTTPClient(policy security.OutboundPolicy, redirectPolicy security.OutboundPolicy, trustedOrigin string, variant string) (outboundhttp.ManagedClient, error) {
+	fileDownload := strings.HasPrefix(variant, generatedFileDownloadVariant)
+	variant = strings.TrimPrefix(variant, generatedFileDownloadVariant)
 	connectTimeoutMS, err := strconv.Atoi(variant)
 	if err != nil || connectTimeoutMS <= 0 {
 		return outboundhttp.ManagedClient{}, fmt.Errorf("invalid LLM connect timeout %q", variant)
@@ -571,6 +573,9 @@ func newRouteHTTPClient(policy security.OutboundPolicy, redirectPolicy security.
 	}
 	if trustedOrigin != "" {
 		client.CheckRedirect = outboundhttp.NewRedirectPolicy(redirectPolicy, trustedOrigin, "model provider")
+	}
+	if fileDownload {
+		client.CheckRedirect = func(*http.Request, []*http.Request) error { return errGeneratedFileRedirect }
 	}
 	return outboundhttp.ManagedClient{Client: client, CloseIdleConnections: transport.CloseIdleConnections}, nil
 }

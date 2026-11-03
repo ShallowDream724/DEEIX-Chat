@@ -121,6 +121,8 @@ var (
 	ErrUpstreamRequestFailed = errors.New("upstream request failed")
 	// ErrGeneratedMediaArtifactUnavailable 上游已完成媒体生成，但结果制品暂时无法获取或校验。
 	ErrGeneratedMediaArtifactUnavailable = apperr.New(MessageErrorCodeMediaArtifactUnavailable, "generated media artifact is temporarily unavailable")
+	// ErrGeneratedFileDownloadFailed 上游已生成文件，但未能保存为当前用户的附件。
+	ErrGeneratedFileDownloadFailed = apperr.New("file.generated_download_failed", "Generated files could not be saved. Please retry generation.")
 	// ErrUpstreamEmptyResponse 上游返回空响应。
 	ErrUpstreamEmptyResponse = apperr.NewMasked(MessageErrorCodeUpstreamEmptyResponse, "model returned empty response", "upstream returned empty response")
 	// ErrToolRunFinalAnswerMissing 工具循环结束后上游仍未产出最终回答。

@@ -24,6 +24,8 @@ type persistMessageGenerationInput struct {
 	AssistantText             string
 	AssistantReasoningContent string
 	GeneratedImages           []llm.GeneratedImage
+	GeneratedFiles            []llm.GeneratedFile
+	ArtifactRoute             llm.RouteConfig
 	InputTokens               int64
 	CacheReadTokens           int64
 	CacheWriteTokens          int64
@@ -107,7 +109,7 @@ func (s *Service) persistSuccessfulMessageGeneration(ctx context.Context, input 
 		input.UserMessage.TokenUsage = input.InputTokens + input.CacheReadTokens + input.CacheWriteTokens
 	}
 
-	if completed, err := s.persistAssistantImagePayloadIfPresent(ctx, input); err != nil {
+	if completed, err := s.persistAssistantAttachmentsIfPresent(ctx, input); err != nil {
 		return err
 	} else if completed {
 		return s.finishSuccessfulMessageGeneration(ctx, input)
@@ -181,10 +183,26 @@ func assistantCompletionCacheWriteTokens(input persistMessageGenerationInput) in
 	return 0
 }
 
-// persistAssistantImagePayloadIfPresent 保存结构化图片或兼容旧文本图片载荷。
-func (s *Service) persistAssistantImagePayloadIfPresent(ctx context.Context, input persistMessageGenerationInput) (bool, error) {
+// persistAssistantAttachmentsIfPresent 复用同一事务保存生成图片和文件附件。
+func (s *Service) persistAssistantAttachmentsIfPresent(ctx context.Context, input persistMessageGenerationInput) (bool, error) {
+	files, err := s.saveAssistantGeneratedFiles(ctx, assistantGeneratedFilesInput{
+		UserID: input.SendInput.UserID, ConversationID: input.SendInput.ConversationID,
+		AssistantMessageID: input.AssistantMessage.ID, Route: input.ArtifactRoute,
+		Content: input.AssistantText, Files: input.GeneratedFiles,
+	})
+	if err != nil {
+		return false, err
+	}
+	committed := false
+	if files != nil {
+		defer func() {
+			if !committed {
+				s.cleanupGeneratedFiles(ctx, input.SendInput.UserID, files.CreatedFileIDs)
+			}
+		}()
+		input.AssistantText = files.Content
+	}
 	var normalized *assistantImageContentNormalization
-	var err error
 	if len(input.GeneratedImages) > 0 {
 		normalized, err = s.normalizeAssistantGeneratedImages(ctx, assistantGeneratedImagesInput{
 			UserID:             input.SendInput.UserID,
@@ -203,14 +221,25 @@ func (s *Service) persistAssistantImagePayloadIfPresent(ctx context.Context, inp
 			Content:            input.AssistantText,
 		})
 	}
-	if err != nil || normalized == nil {
+	if err != nil {
 		return false, err
 	}
-	contentType := "image"
-	content := normalized.Content
-	if len(input.GeneratedImages) > 0 && strings.TrimSpace(input.AssistantText) != "" {
-		contentType = "mixed"
-		content = strings.TrimSpace(input.AssistantText) + "\n\n" + normalized.Content
+	if normalized == nil && files == nil {
+		return false, nil
+	}
+	contentType, content := "markdown", input.AssistantText
+	if normalized != nil {
+		contentType, content = "image", normalized.Content
+		if len(input.GeneratedImages) > 0 && strings.TrimSpace(input.AssistantText) != "" {
+			contentType = "mixed"
+			content = strings.TrimSpace(input.AssistantText) + "\n\n" + normalized.Content
+		}
+	} else {
+		normalized = &assistantImageContentNormalization{}
+	}
+	if files != nil {
+		normalized.AttachmentRows = append(normalized.AttachmentRows, files.AttachmentRows...)
+		normalized.AttachmentSnapshots = append(normalized.AttachmentSnapshots, files.AttachmentSnapshots...)
 	}
 
 	if input.ReuseUserMessage {
@@ -262,6 +291,7 @@ func (s *Service) persistAssistantImagePayloadIfPresent(ctx context.Context, inp
 		}
 	}
 
+	committed = true
 	input.AssistantMessage.ContentType = contentType
 	input.AssistantMessage.Content = content
 	input.AssistantMessage.ReasoningContent = input.AssistantReasoningContent

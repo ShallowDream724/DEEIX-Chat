@@ -683,6 +683,7 @@ func mergeGenerateOutput(dst *portllm.GenerateOutput, src *portllm.GenerateOutpu
 	if len(src.GeneratedImages) > 0 {
 		dst.GeneratedImages = append(dst.GeneratedImages[:0], src.GeneratedImages...)
 	}
+	dst.GeneratedFiles = mergeGeneratedFiles(dst.GeneratedFiles, src.GeneratedFiles...)
 	if strings.TrimSpace(src.RawJSON) != "" {
 		dst.RawJSON = src.RawJSON
 	}

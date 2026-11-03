@@ -253,6 +253,7 @@ type GenerateOutput struct {
 	Citations           []string
 	GeneratedImages     []GeneratedImage
 	GeneratedVideos     []GeneratedVideo
+	GeneratedFiles      []GeneratedFile
 	RawJSON             string
 	Debug               *UpstreamDebugSnapshot `json:"-"`
 }

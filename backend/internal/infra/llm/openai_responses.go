@@ -342,6 +342,14 @@ func applyResponsesStreamEvent(
 	if eventType == "" {
 		eventType = strings.TrimSpace(eventName)
 	}
+	if adapter == portllm.AdapterOpenAIResponses {
+		switch eventType {
+		case "response.output_item.added", "response.output_item.in_progress", "response.output_item.done":
+			result.GeneratedFiles = mergeGeneratedFiles(result.GeneratedFiles, parseResponsesGeneratedFiles(asMap(parsed["item"]))...)
+		case "response.output_text.annotation.added":
+			result.GeneratedFiles = mergeGeneratedFiles(result.GeneratedFiles, parseResponsesGeneratedFiles(map[string]any{"text": parsed["text"], "annotations": []any{parsed["annotation"]}})...)
+		}
+	}
 
 	if call, ok := parseResponsesServerToolStatusEvent(eventType, parsed); ok {
 		appendUniqueToolCall(&result.ServerToolCalls, call)
@@ -583,6 +591,9 @@ func parseResponsesStreamErrorEvent(parsed map[string]any, rawBody string) error
 }
 
 func parseResponsesOutput(adapter string, parsed map[string]any, result *portllm.GenerateOutput) {
+	if adapter == portllm.AdapterOpenAIResponses {
+		result.GeneratedFiles = mergeGeneratedFiles(result.GeneratedFiles, parseResponsesGeneratedFiles(parsed)...)
+	}
 	result.Text = getString(parsed["output_text"])
 	outputItems := asSlice(parsed["output"])
 	textChunks := make([]string, 0, len(outputItems))

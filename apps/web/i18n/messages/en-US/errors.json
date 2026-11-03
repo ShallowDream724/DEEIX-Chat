@@ -185,6 +185,7 @@
     "tooManyFiles": "You can submit up to 100 files for vectorization at a time."
   },
   "file": {
+    "generatedDownloadFailed": "Generated files could not be saved. Please retry generation.",
     "embeddingUnavailable": "Embedding is unavailable for this file.",
     "extractNotReady": "File extraction is not ready.",
     "invalidId": "Invalid file ID.",

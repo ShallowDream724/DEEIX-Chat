@@ -203,6 +203,7 @@ func TestDescribeSendMessageErrorContract(t *testing.T) {
 		{appconversation.ErrModelAccessDenied, http.StatusForbidden, "llm.model_access_denied", "you do not have access to this model"},
 		{appconversation.ErrStorageQuotaExceeded, http.StatusConflict, "quota.exceeded", "quota exceeded"},
 		{appconversation.ErrGeneratedMediaArtifactUnavailable, http.StatusBadGateway, "media.artifact_unavailable", "generated media artifact is temporarily unavailable"},
+		{appconversation.ErrGeneratedFileDownloadFailed, http.StatusBadGateway, "file.generated_download_failed", "Generated files could not be saved. Please retry generation."},
 		{appconversation.ErrUpstreamEmptyResponse, http.StatusBadGateway, "llm.empty_response", "model returned empty response"},
 		{appconversation.ErrToolRunFinalAnswerMissing, http.StatusBadGateway, "tool_run.final_answer_missing", "tool run ended without a final answer"},
 		{appconversation.ErrMessageGenerationCanceled, http.StatusBadRequest, "conversation_run.canceled", "message generation canceled"},

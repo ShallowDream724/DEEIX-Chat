@@ -222,6 +222,7 @@ func (s *Service) sendMessageInternal(
 	var persistedToolCallKeys map[string]struct{}
 	var totalServerSideToolUsage map[string]int64
 	var totalMCPToolUsage []MCPToolUsageItem
+	var completedAssistantText string
 	// plan 在路由解析后固化本轮请求形状；在此之前中断时其零值即“尚无有效请求参数”。
 	var plan routeGenerationPlan
 	runner := &messageGenerationRunner{
@@ -263,7 +264,7 @@ func (s *Service) sendMessageInternal(
 				SendInput:                input,
 				UserMessage:              userMessage,
 				AssistantMessage:         assistantMessage,
-				AssistantText:            runner.streamedText.String(),
+				AssistantText:            textutil.FirstNonEmpty(completedAssistantText, runner.streamedText.String()),
 				AssistantReasoningText:   assistantReasoningText,
 				EstimatedInputTokens:     runner.usage.interruptedInputTokens(),
 				EstimatedOutputTokens:    estimatedOutputTokens,
@@ -851,6 +852,7 @@ func (s *Service) sendMessageInternal(
 	reasoningContentPassback = plan.reasoningContentPassback
 
 	assistantText := upstreamOutput.Text
+	generatedFiles := mergeAssistantGeneratedFiles(nil, upstreamOutput.GeneratedFiles)
 	nativeToolRows := upstreamServerToolCallRows(upstreamOutput, runID)
 	toolCallRows = append(toolCallRows, nativeToolRows...)
 	totalUsage := upstreamOutput.Usage
@@ -1006,6 +1008,7 @@ func (s *Service) sendMessageInternal(
 		totalUsage = mergeFollowUpUsage(totalUsage, nextOutput, runner.usage)
 		totalServerSideToolUsage = addServerSideToolUsage(totalServerSideToolUsage, nextOutput.ServerSideToolUsage)
 		upstreamOutput = nextOutput
+		generatedFiles = mergeAssistantGeneratedFiles(generatedFiles, nextOutput.GeneratedFiles)
 		llmCallCount = runner.llmRequestCount
 		assistantText = upstreamOutput.Text
 		nextNativeToolRows := upstreamServerToolCallRows(upstreamOutput, runID)
@@ -1036,6 +1039,7 @@ func (s *Service) sendMessageInternal(
 		totalUsage = mergeFollowUpUsage(totalUsage, nextOutput, runner.usage)
 		totalServerSideToolUsage = addServerSideToolUsage(totalServerSideToolUsage, nextOutput.ServerSideToolUsage)
 		upstreamOutput = nextOutput
+		generatedFiles = mergeAssistantGeneratedFiles(generatedFiles, nextOutput.GeneratedFiles)
 		llmCallCount++
 		assistantText = upstreamOutput.Text
 		nextNativeToolRows := upstreamServerToolCallRows(upstreamOutput, runID)
@@ -1049,7 +1053,7 @@ func (s *Service) sendMessageInternal(
 		retErr = ErrToolRunFinalAnswerMissing
 		return nil, retErr
 	}
-	if strings.TrimSpace(assistantText) == "" && len(upstreamOutput.GeneratedImages) == 0 {
+	if strings.TrimSpace(assistantText) == "" && len(upstreamOutput.GeneratedImages) == 0 && len(generatedFiles) == 0 {
 		retErr = ErrUpstreamEmptyResponse
 		return nil, retErr
 	}
@@ -1126,6 +1130,9 @@ func (s *Service) sendMessageInternal(
 			attribute.Int("conversation.tool_count", len(toolCallRows)),
 		),
 	)
+	// Preserve the completed text if downloading or saving an output file fails,
+	// including non-streaming calls whose streamedText buffer is empty.
+	completedAssistantText = assistantText
 	err = s.persistSuccessfulMessageGeneration(persistCtx, persistMessageGenerationInput{
 		SendInput:                 input,
 		Conversation:              conversation,
@@ -1134,6 +1141,8 @@ func (s *Service) sendMessageInternal(
 		AssistantText:             assistantText,
 		AssistantReasoningContent: assistantReasoningContent,
 		GeneratedImages:           upstreamOutput.GeneratedImages,
+		GeneratedFiles:            generatedFiles,
+		ArtifactRoute:             routeConfig,
 		InputTokens:               effectiveInputTokens,
 		CacheReadTokens:           totalUsage.CacheReadTokens,
 		CacheWriteTokens:          totalUsage.CacheWriteTokens,

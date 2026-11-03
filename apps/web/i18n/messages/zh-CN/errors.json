@@ -185,6 +185,7 @@
     "tooManyFiles": "单次最多提交 100 个文件进行向量化。"
   },
   "file": {
+    "generatedDownloadFailed": "生成的文件未能保存，请重试生成。",
     "embeddingUnavailable": "当前文件暂不支持向量处理。",
     "extractNotReady": "文件解析尚未完成。",
     "invalidId": "文件 ID 无效。",

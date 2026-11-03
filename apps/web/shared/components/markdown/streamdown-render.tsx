@@ -38,6 +38,8 @@ import {
   MarkdownImage,
   type MarkdownImageActions,
   MarkdownImageActionsContext,
+  type MarkdownFileActions,
+  MarkdownFileActionsContext,
   MarkdownLink,
   MarkdownOrderedList,
   MarkdownParagraph,
@@ -96,6 +98,7 @@ type StreamdownRenderProps = {
   sourcePositions?: boolean;
   autoExpandThinking?: boolean;
   imageActions?: MarkdownImageActions;
+  fileActions?: MarkdownFileActions;
   artifactActions?: MarkdownArtifactActions;
   // Persisted state of the interactive component blocks in this content; absent
   // when the surface has no conversation to restore from (share page, preview).
@@ -749,6 +752,7 @@ export const StreamdownRender = React.memo(function StreamdownRender({
   sourcePositions = false,
   autoExpandThinking = true,
   imageActions,
+  fileActions,
   artifactActions,
   uiBlockState,
 }: StreamdownRenderProps) {
@@ -849,6 +853,7 @@ export const StreamdownRender = React.memo(function StreamdownRender({
           {markdownSegments.map((segment, index) => (
             <MarkdownArtifactActionsContext.Provider key={`markdown-${index}`} value={artifactActions ?? null}>
               <MarkdownImageActionsContext.Provider value={imageActions ?? null}>
+                <MarkdownFileActionsContext.Provider value={fileActions ?? null}>
                 <UIWidgetCompletionProvider complete={completeWidgets}>
                 <UIBlockOpenProvider open={artifactActions?.onOpenUIBlock ?? null}>
                 <UIBlockStateHost uiBlockState={messageUIBlockState}>
@@ -883,6 +888,7 @@ export const StreamdownRender = React.memo(function StreamdownRender({
                 </UIBlockStateHost>
                 </UIBlockOpenProvider>
                 </UIWidgetCompletionProvider>
+                </MarkdownFileActionsContext.Provider>
               </MarkdownImageActionsContext.Provider>
             </MarkdownArtifactActionsContext.Provider>
           ))}

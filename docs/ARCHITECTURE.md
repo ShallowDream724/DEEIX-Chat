@@ -81,7 +81,7 @@ apps/*  →  packages/core  →  packages/api-contract  →  backend/docs/swagge
 
 ## 4. 客户端与服务端的契约
 
-原生附件的只读预检、发送策略与客户端状态边界见 [原生附件发送与就绪状态](native-file-readiness.md)。
+原生附件的只读预检、发送策略与客户端状态边界见 [原生附件发送与就绪状态](native-file-readiness.md)；生成文件的下载与存储边界见 [模型生成文件](generated-files.md)。
 
 所有客户端都是"连接用户自己部署的服务器"，因此：
 

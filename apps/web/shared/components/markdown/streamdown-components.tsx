@@ -76,6 +76,11 @@ export type MarkdownArtifactActions = {
   onOpenUIBlock?: (blockKey: string) => void;
 };
 
+export type MarkdownFileActions = {
+  resolveFileLink: (href: string) => { fileName: string; download: () => void } | null;
+  onInlineImageMount?: (src: string) => (() => void) | undefined;
+};
+
 type MarkdownParagraphProps = React.HTMLAttributes<HTMLParagraphElement> & {
   children?: React.ReactNode;
   node?: unknown;
@@ -103,6 +108,7 @@ type MarkdownHeadingProps = React.HTMLAttributes<HTMLHeadingElement> & {
 const StreamdownLinkContext = React.createContext(false);
 const FootnoteBackrefGroupContext = React.createContext(false);
 export const MarkdownImageActionsContext = React.createContext<MarkdownImageActions | null>(null);
+export const MarkdownFileActionsContext = React.createContext<MarkdownFileActions | null>(null);
 export const MarkdownArtifactActionsContext = React.createContext<MarkdownArtifactActions | null>(null);
 
 function resolveLinkKind(href: string): ResolvedLinkKind {
@@ -117,6 +123,7 @@ function resolveLinkKind(href: string): ResolvedLinkKind {
     if (
       targetURL.protocol === "javascript:" ||
       targetURL.protocol === "data:" ||
+      targetURL.protocol === "sandbox:" ||
       targetURL.protocol === "vbscript:"
     ) {
       return "invalid";
@@ -557,6 +564,7 @@ export function MarkdownCodePre({ children, node: _node, "data-markdown-source-l
 
 export function MarkdownLink({ children, className, href, onClick, style, ...props }: MarkdownLinkProps) {
   const t = useTranslations("chat.markdown");
+  const fileActions = React.useContext(MarkdownFileActionsContext);
   const insideFootnotes = React.useContext(MarkdownFootnotesContext);
   const [modalOpen, setModalOpen] = React.useState(false);
   const [pendingURL, setPendingURL] = React.useState("");
@@ -565,6 +573,7 @@ export function MarkdownLink({ children, className, href, onClick, style, ...pro
   const footnoteBackref =
     isFootnoteBackref(props, children) || (insideFootnotes && getReactNodeText(children).includes("↩"));
   const footnoteReference = isFootnoteReference(props);
+  const fileLink = href && !footnoteReference && !footnoteBackref ? fileActions?.resolveFileLink(href) : null;
   const normalizedChildren = React.useMemo(
     () => React.Children.toArray(children).filter((child) => !isEmptyReactNode(child)),
     [children],
@@ -589,6 +598,12 @@ export function MarkdownLink({ children, className, href, onClick, style, ...pro
         return;
       }
 
+      if (fileLink) {
+        event.preventDefault();
+        fileLink.download();
+        return;
+      }
+
       if (linkKind === "same-origin" && href.includes("#")) {
         event.preventDefault();
         const scope = event.currentTarget.closest<HTMLElement>("[data-chat-markdown-scope]");
@@ -604,7 +619,7 @@ export function MarkdownLink({ children, className, href, onClick, style, ...pro
       setPendingURL(href);
       setModalOpen(true);
     },
-    [href, incomplete, linkKind, onClick],
+    [fileLink, href, incomplete, linkKind, onClick],
   );
 
   const handleConfirm = React.useCallback(() => {
@@ -625,7 +640,12 @@ export function MarkdownLink({ children, className, href, onClick, style, ...pro
     }
     return (
       <span
-        className={cn("wrap-anywhere font-medium text-primary underline", className)}
+        className={cn(
+          href?.trim().toLowerCase().startsWith("sandbox:")
+            ? "wrap-anywhere"
+            : "wrap-anywhere font-medium text-primary underline",
+          className,
+        )}
         data-incomplete={incomplete || undefined}
         data-streamdown="link"
       >
@@ -648,11 +668,21 @@ export function MarkdownLink({ children, className, href, onClick, style, ...pro
         )}
         aria-label={footnoteBackref ? t("footnoteBackref") : props["aria-label"]}
         data-streamdown="link"
-        href={href}
+        href={fileLink ? undefined : href}
+        title={fileLink?.fileName ?? props.title}
+        role={fileLink ? "button" : props.role}
+        tabIndex={fileLink ? 0 : props.tabIndex}
         rel={linkKind === "external" ? "noreferrer" : props.rel}
         style={sanitizeHTMLStyle(style)}
-        target={linkKind === "external" ? "_blank" : undefined}
+        target={!fileLink && linkKind === "external" ? "_blank" : undefined}
         onClick={(event) => void handleClick(event)}
+        onKeyDown={(event) => {
+          props.onKeyDown?.(event);
+          if (fileLink && !event.defaultPrevented && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            fileLink.download();
+          }
+        }}
       >
         <StreamdownLinkContext.Provider value={true}>
           {footnoteBackref ? (
@@ -699,6 +729,8 @@ export function MarkdownImage({ alt, className, onError, onLoad, src: srcProp, .
   const t = useTranslations("chat.markdown");
   const insideLink = React.useContext(StreamdownLinkContext);
   const imageActions = React.useContext(MarkdownImageActionsContext);
+  const onInlineImageMount = React.useContext(MarkdownFileActionsContext)?.onInlineImageMount;
+  React.useEffect(() => src ? onInlineImageMount?.(src) : undefined, [onInlineImageMount, src]);
   const [previewOpen, setPreviewOpen] = React.useState(false);
   const { displaySrc, resolvedSrc, protectedSrc, fetchFailed } = useImageDisplaySource(src);
   // Keyed by the src they belong to, so a new src starts out neither loaded nor failed.

@@ -20,6 +20,7 @@ import { MessageAgentTrace, MessageProcessTrace } from "@/features/chat/componen
 import { UpstreamExchangeDetails } from "@/features/chat/components/message/message-upstream-debug";
 import { useChatInlineVideoSource } from "@/features/chat/hooks/use-chat-inline-video-source";
 import { useChatMessageTraceDetail } from "@/features/chat/hooks/use-chat-message-trace-detail";
+import { useChatMessageFileActions } from "@/features/chat/hooks/use-chat-message-file-actions";
 import { resolveLeadingImagePreview } from "@/features/chat/model/media-image-preview";
 import {
   clearLiveUpstreamThinkTrace,
@@ -274,12 +275,13 @@ export function ChatMessageBot({
         : null,
     [item.attachments, item.contentType, item.isStreaming],
   );
+  const markdownFileActions = useChatMessageFileActions(item.attachments, attachmentContentLoader, !readOnly);
   const visibleAttachments = React.useMemo(
     () =>
-      inlineVideoAttachment
-        ? (item.attachments ?? []).filter((attachment) => attachment.fileID !== inlineVideoAttachment.fileID)
-        : item.attachments ?? [],
-    [inlineVideoAttachment, item.attachments],
+      (item.attachments ?? []).filter(
+        (attachment) => attachment.fileID !== inlineVideoAttachment?.fileID && !markdownFileActions.inlineImageFileIDs.has(attachment.fileID),
+      ),
+    [inlineVideoAttachment, item.attachments, markdownFileActions.inlineImageFileIDs],
   );
   const extendableVideoAttachment =
     inlineVideoAttachment && isMP4VideoAttachment(inlineVideoAttachment)
@@ -448,6 +450,7 @@ export function ChatMessageBot({
                 streaming={Boolean(item.isStreaming)}
                 autoExpandThinking={autoExpandThinking}
                 imageActions={markdownImageActions}
+                fileActions={markdownFileActions}
                 artifactActions={artifactActions}
                 uiBlockState={uiBlockState}
               />
@@ -461,6 +464,7 @@ export function ChatMessageBot({
             streaming={Boolean(item.isStreaming)}
             autoExpandThinking={autoExpandThinking}
             imageActions={markdownImageActions}
+            fileActions={markdownFileActions}
             artifactActions={artifactActions}
             uiBlockState={uiBlockState}
           />

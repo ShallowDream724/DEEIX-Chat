@@ -78,19 +78,25 @@ export function MessageAttachmentRow({
   loadContent,
   allowDownload = true,
   align = "end",
+  onOpenAttachment,
 }: {
   attachments: MessageAttachment[];
   loadContent?: FileContentLoader;
   allowDownload?: boolean;
   align?: "start" | "end";
+  onOpenAttachment?: (attachment: MessageAttachment) => void;
 }) {
   const [activeAtt, setActiveAtt] = React.useState<MessageAttachment | null>(null);
   const [dialogOpen, setDialogOpen] = React.useState(false);
 
   const handleClick = React.useCallback((att: MessageAttachment) => {
+    if (onOpenAttachment) {
+      onOpenAttachment(att);
+      return;
+    }
     setActiveAtt(att);
     setDialogOpen(true);
-  }, []);
+  }, [onOpenAttachment]);
 
   const handleOpenChange = React.useCallback((v: boolean) => {
     setDialogOpen(v);
