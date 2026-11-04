@@ -296,21 +296,21 @@
       },
       "image_max_bytes": {
         "label": "图像大小上限",
-        "description": "用于设置单张图像附件的大小上限，页面单位为 MB；留空时使用默认大小上限。",
+        "description": "单张图像附件的大小上限，页面单位为 MB；留空时使用默认大小上限。",
         "placeholder": "留空使用默认值"
       },
       "doc_max_bytes": {
         "label": "文档大小上限",
-        "description": "用于设置单个文档附件的大小上限，页面单位为 MB；留空时使用默认大小上限。",
+        "description": "单个文档附件的大小上限，页面单位为 MB；留空时使用默认大小上限。",
         "placeholder": "留空使用默认值"
       },
       "audio_max_bytes": {
         "label": "音频大小上限",
-        "description": "用于设置单个音频附件的大小上限，页面单位为 MB；留空时使用默认大小上限。"
+        "description": "单个音频附件的大小上限，页面单位为 MB；留空时使用默认大小上限。"
       },
       "video_max_bytes": {
         "label": "视频大小上限",
-        "description": "用于设置单个视频附件的大小上限，页面单位为 MB；留空时使用默认大小上限。"
+        "description": "单个视频附件的大小上限，页面单位为 MB；留空时使用默认大小上限。"
       },
       "image_max_dimension": {
         "label": "发送图片最大边长",
