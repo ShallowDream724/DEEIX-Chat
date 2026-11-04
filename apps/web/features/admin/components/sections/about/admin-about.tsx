@@ -20,6 +20,7 @@ import {
 import { SettingsFieldEditor } from "@/features/admin/components/shared/settings-runtime-panel";
 import { AdminUpdateTooltipContent } from "@/features/admin/components/shared/update-tooltip-content";
 import { useAdminAboutDesktopDownload } from "@/features/admin/hooks/use-admin-about-desktop-download";
+import { DESKTOP_RELEASE_AVAILABLE } from "@/shared/platform/release-availability";
 import {
   buildDesktopDownloadSettingsFields,
   desktopDownloadFieldID,
@@ -213,7 +214,7 @@ export function AdminAboutPage() {
       versionActions={<AdminUpdateCheck />}
       extraSections={(
         <FeatureGate feature="desktopDownload">
-          <AdminAboutDesktopDownload />
+          {DESKTOP_RELEASE_AVAILABLE ? <AdminAboutDesktopDownload /> : null}
         </FeatureGate>
       )}
       labels={{

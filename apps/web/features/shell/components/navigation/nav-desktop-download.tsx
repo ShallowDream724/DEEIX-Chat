@@ -8,6 +8,7 @@ import { DropdownMenuItem, DropdownMenuItemIcon } from "@/components/ui/dropdown
 import { resolveDesktopDownloadURL } from "@/features/shell/model/desktop-download";
 import { useFeaturePolicy } from "@/shared/hooks/use-feature-policy";
 import { isDesktopApp } from "@/shared/platform";
+import { DESKTOP_RELEASE_AVAILABLE } from "@/shared/platform/release-availability";
 
 function subscribeNothing(): () => void {
   return () => {};
@@ -37,7 +38,7 @@ export function NavDesktopDownload({ onOpenPage }: { onOpenPage?: () => void }) 
   const isBrowserBuild = React.useSyncExternalStore(subscribeNothing, getIsBrowserBuild, getServerIsBrowserBuild);
   const downloadURL = loaded ? resolveDesktopDownloadURL(desktopDownloadEnabled, desktopDownloadURL) : null;
 
-  if (!isBrowserBuild || !downloadURL) return null;
+  if (!DESKTOP_RELEASE_AVAILABLE || !isBrowserBuild || !downloadURL) return null;
 
   return (
     <DropdownMenuItem asChild onSelect={() => onOpenPage?.()}>
