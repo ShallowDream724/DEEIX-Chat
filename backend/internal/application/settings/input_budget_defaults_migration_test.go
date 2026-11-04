@@ -53,3 +53,43 @@ func TestInputBudgetMigrationOnlyRaisesUntouchedZeroDefaults(t *testing.T) {
 		}
 	}
 }
+
+// The published 56b0e8db image had storage.max_message_files, but no
+// file.input_limits row. Exercise that upgrade rather than a fresh install.
+func TestUpgradePublishedNativeFilesImageSeedsInputBudgets(t *testing.T) {
+	created := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		stored string
+		count  int
+	}{{"10", 10}, {"24", 24}} {
+		t.Run(tc.stored, func(t *testing.T) {
+			repo := newSettingsSeedRepo(
+				domainsettings.SystemSetting{Namespace: "storage", Key: "max_message_files", Value: tc.stored},
+				domainsettings.SystemSetting{Namespace: "storage", Key: "max_upload_file_bytes", Value: "50000000", CreatedAt: created, UpdatedAt: created.Add(time.Hour)},
+				domainsettings.SystemSetting{Namespace: "file", Key: "full_context_max_tokens", Value: "272000", CreatedAt: created, UpdatedAt: created.Add(time.Hour)},
+			)
+			service := NewService(repo, nil)
+			want := inputlimits.Limits{
+				MessageFileCount: tc.count, RequestBytes: 100_000_000,
+				ImageCount: 20, ImageSingleBytes: 5_000_000, ImageBytes: 20_000_000,
+				NativeCount: 10, NativeBytes: 50_000_000, PDFSingleBytes: 50_000_000,
+				PDFBytes: 50_000_000, PDFPages: 200, NonPDFBytes: 50_000_000,
+			}
+			for range 2 {
+				if err := service.Seed(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+				item := repo.items["file:input_limits"]
+				if got := inputlimits.Resolve(item.Value, "", "", 0); got != want {
+					t.Fatalf("published image upgrade left incorrect budgets: %+v", got)
+				}
+				if got := inputlimits.Resolve(service.settingResponse(item).Value, "", "", 0); got != want {
+					t.Fatalf("admin response differs from effective budgets: %+v", got)
+				}
+				if repo.items["storage:max_upload_file_bytes"].Value != "50000000" || repo.items["file:full_context_max_tokens"].Value != "272000" {
+					t.Fatal("administrator's existing file settings were reset")
+				}
+			}
+		})
+	}
+}
