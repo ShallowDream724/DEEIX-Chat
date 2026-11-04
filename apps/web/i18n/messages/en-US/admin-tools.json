@@ -1,11 +1,19 @@
 {
   "title": "Tools",
+  "imageAttachments": {
+    "title": "Image attachment processing",
+    "description": "Limits image input size and the tool response text included in model requests for MCP tools with image attachment processing enabled. Set 0 for no limit."
+  },
   "sections": {
     "mcpTools": "MCP tools",
     "servers": "MCP servers",
     "tools": "MCP tools"
   },
   "fields": {
+    "unlimited": "Unlimited",
+    "imageInputLimit": { "label": "Total image size limit", "description": "Maximum total image size sent to the tool for one message, in MB." },
+    "imageAnalysisLimit": { "label": "Returned text per image", "description": "Maximum characters from each image's tool result passed to the model; excess text is omitted." },
+    "imageAnalysisTotalLimit": { "label": "Total returned text limit", "description": "Maximum characters from all image tool results for one message passed to the model; excess text is omitted." },
     "mcpEnable": {
       "label": "Enable MCP tools",
       "description": "Allow users to select enabled MCP tools in conversations."

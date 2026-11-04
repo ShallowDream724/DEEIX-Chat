@@ -1,9 +1,10 @@
-import type { SettingsGrouped } from "@/shared/api/settings-types";
+import type { PatchSettingItem, SettingsGrouped } from "@/shared/api/settings-types";
+import { denormalizeMBValue, normalizeMBValue } from "@/features/admin/model/files-size-values";
 
 export type ToolSettingsFieldType = "int" | "bool" | "textarea";
 
 export type ToolSettingsField = {
-  namespace: "mcp";
+  namespace: "mcp" | "file";
   key:
     | "mcp_enable"
     | "mcp_tool_timeout_seconds"
@@ -12,12 +13,17 @@ export type ToolSettingsField = {
     | "mcp_max_selected_tools_per_message"
     | "mcp_max_llm_calls_per_run"
     | "mcp_max_tool_calls_per_run"
-    | "mcp_tool_prompt";
+    | "mcp_tool_prompt"
+    | "image_attachment_processor_max_bytes"
+    | "image_attachment_analysis_max_chars"
+    | "image_attachment_analysis_total_max_chars";
   labelKey: string;
   descriptionKey: string;
   type: ToolSettingsFieldType;
   placeholder?: string;
   placeholderKey?: string;
+  valueUnit?: "mb";
+  zeroDisplayLabelKey?: string;
 };
 
 export const TOOL_SETTINGS_FIELDS: ToolSettingsField[] = [
@@ -84,6 +90,9 @@ export const TOOL_SETTINGS_FIELDS: ToolSettingsField[] = [
     type: "int",
     placeholder: "0",
   },
+  { namespace: "file", key: "image_attachment_processor_max_bytes", labelKey: "imageInputLimit.label", descriptionKey: "imageInputLimit.description", type: "int", valueUnit: "mb", zeroDisplayLabelKey: "unlimited" },
+  { namespace: "file", key: "image_attachment_analysis_max_chars", labelKey: "imageAnalysisLimit.label", descriptionKey: "imageAnalysisLimit.description", type: "int", zeroDisplayLabelKey: "unlimited" },
+  { namespace: "file", key: "image_attachment_analysis_total_max_chars", labelKey: "imageAnalysisTotalLimit.label", descriptionKey: "imageAnalysisTotalLimit.description", type: "int", zeroDisplayLabelKey: "unlimited" },
 ];
 
 export function toolFieldID(field: ToolSettingsField): string {
@@ -92,10 +101,20 @@ export function toolFieldID(field: ToolSettingsField): string {
 
 export function flattenToolSettings(grouped: SettingsGrouped): Record<string, string> {
   const result: Record<string, string> = {};
-  for (const item of grouped.mcp ?? []) {
-    result[`mcp.${item.key}`] = item.value ?? "";
+  for (const field of TOOL_SETTINGS_FIELDS) {
+    const item = grouped[field.namespace]?.find((entry) => entry.key === field.key);
+    const value = item?.value ?? "";
+    result[toolFieldID(field)] = field.valueUnit === "mb" ? normalizeMBValue(value) : value;
   }
   return applyToolSettingsDefaults(result);
+}
+
+export function buildToolSettingsPatch(settings: Record<string, string>, dirtyFieldIDs: ReadonlySet<string>): PatchSettingItem[] {
+  return TOOL_SETTINGS_FIELDS.filter((field) => dirtyFieldIDs.has(toolFieldID(field))).map((field) => ({
+    namespace: field.namespace,
+    key: field.key,
+    value: field.valueUnit === "mb" ? denormalizeMBValue(settings[toolFieldID(field)] ?? "") : settings[toolFieldID(field)] ?? "",
+  }));
 }
 
 export function applyToolSettingsDefaults(settings: Record<string, string>): Record<string, string> {
@@ -122,5 +141,8 @@ export function toToolEditorField(
     description: translate(field.descriptionKey),
     type: field.type,
     placeholder: field.placeholderKey ? translate(field.placeholderKey) : field.placeholder,
+    valueUnit: field.valueUnit,
+    valueSuffix: field.valueUnit === "mb" ? "MB" : undefined,
+    zeroDisplayLabel: field.zeroDisplayLabelKey ? translate(field.zeroDisplayLabelKey) : undefined,
   } as const;
 }

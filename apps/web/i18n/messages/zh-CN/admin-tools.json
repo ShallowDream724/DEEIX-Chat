@@ -1,11 +1,19 @@
 {
   "title": "工具",
+  "imageAttachments": {
+    "title": "图片附件处理",
+    "description": "适用于已启用图片附件处理的 MCP 工具。设置为 0 表示不限制。"
+  },
   "sections": {
     "mcpTools": "MCP 工具",
     "servers": "MCP 服务",
     "tools": "MCP 工具"
   },
   "fields": {
+    "unlimited": "不限制",
+    "imageInputLimit": { "label": "图片总大小上限", "description": "单条消息中发送至 MCP 工具的图片总大小上限，页面单位为 MB。" },
+    "imageAnalysisLimit": { "label": "单图返回文字上限", "description": "每张图片对应的工具返回文字上限，单位为字符；超出部分不发送给模型。" },
+    "imageAnalysisTotalLimit": { "label": "返回文字总上限", "description": "单条消息中全部图片的工具返回文字上限，单位为字符；超出部分不发送给模型。" },
     "mcpEnable": {
       "label": "启用 MCP 工具",
       "description": "允许用户在对话中选择已启用的 MCP 工具。"

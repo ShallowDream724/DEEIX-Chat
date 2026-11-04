@@ -51,6 +51,16 @@ export function useAdminToolsMCPServers() {
   const [syncingServerID, setSyncingServerID] = React.useState<number | null>(null);
   const [toolSyncConfirmation, setToolSyncConfirmation] = React.useState<ToolSyncConfirmation | null>(null);
   const [toolSaving, setToolSaving] = React.useState(false);
+  const [imageAttachmentServerIDs, setImageAttachmentServerIDs] = React.useState<Set<number>>(new Set());
+  const serverLoadRevision = React.useRef(0);
+  const updateImageAttachmentTools = React.useCallback((serverID: number, nextTools: MCPToolDTO[]) => {
+    setImageAttachmentServerIDs((current) => {
+      const next = new Set(current);
+      if (nextTools.some((tool) => tool.attachmentInputMode === "image")) next.add(serverID);
+      else next.delete(serverID);
+      return next;
+    });
+  }, []);
 
   const toolSheetServer = React.useMemo(
     () => servers.find((item) => item.id === toolSheetServerID) ?? null,
@@ -58,6 +68,7 @@ export function useAdminToolsMCPServers() {
   );
 
   const loadServers = React.useCallback(async () => {
+    const revision = ++serverLoadRevision.current;
     setServersLoading(true);
     try {
       const token = await resolveAccessToken();
@@ -66,12 +77,27 @@ export function useAdminToolsMCPServers() {
         return;
       }
       const items = await listAdminMCPServers(token);
+      if (revision !== serverLoadRevision.current) return;
       setServers(items);
       setToolSheetServerID((current) => (current && items.some((item) => item.id === current) ? current : null));
+      const toolLists = await Promise.allSettled(items.map((server) =>
+        server.toolCount > 0 ? listAdminMCPServerTools(token, server.id) : Promise.resolve([]),
+      ));
+      if (revision !== serverLoadRevision.current) return;
+      setImageAttachmentServerIDs((previous) => {
+        const next = new Set<number>();
+        items.forEach((server, index) => {
+          const result = toolLists[index];
+          if (result.status === "fulfilled" ? result.value.some((tool) => tool.attachmentInputMode === "image") : previous.has(server.id)) {
+            next.add(server.id);
+          }
+        });
+        return next;
+      });
     } catch (error) {
       toast.error(t("toast.serversLoadFailed"), { description: resolveAdminErrorMessage(error, t("toast.unknownError")) });
     } finally {
-      setServersLoading(false);
+      if (revision === serverLoadRevision.current) setServersLoading(false);
     }
   }, [t]);
 
@@ -84,14 +110,16 @@ export function useAdminToolsMCPServers() {
         toast.error(t("toast.sessionExpired"), { description: t("toast.sessionExpiredDescription") });
         return;
       }
-      setTools(await listAdminMCPServerTools(token, serverID));
+      const nextTools = await listAdminMCPServerTools(token, serverID);
+      setTools(nextTools);
+      updateImageAttachmentTools(serverID, nextTools);
     } catch (error) {
       setTools([]);
       toast.error(t("toast.toolsLoadFailed"), { description: resolveAdminErrorMessage(error, t("toast.unknownError")) });
     } finally {
       setToolsLoading(false);
     }
-  }, [t]);
+  }, [t, updateImageAttachmentTools]);
 
   React.useEffect(() => {
     void loadServers();
@@ -131,6 +159,7 @@ export function useAdminToolsMCPServers() {
         const nextTools = await syncAdminMCPServerTools(token, serverID, overwriteCustomizedMetadata);
         setToolSheetServerID(serverID);
         setTools(nextTools);
+        updateImageAttachmentTools(serverID, nextTools);
         toast.success(t("toast.toolsSynced"));
       } catch (error) {
         toast.error(t("toast.toolsSyncFailed"), { description: resolveAdminErrorMessage(error, t("toast.unknownError")) });
@@ -139,7 +168,7 @@ export function useAdminToolsMCPServers() {
         setSyncingServerID(null);
       }
     },
-    [loadServers, t],
+    [loadServers, t, updateImageAttachmentTools],
   );
 
   const requestToolSync = React.useCallback(
@@ -321,7 +350,9 @@ export function useAdminToolsMCPServers() {
         description: toolForm.description,
         ...attachmentConfig,
       });
-      setTools((items) => items.map((item) => (item.id === savedTool.id ? savedTool : item)));
+      const nextTools = tools.map((item) => (item.id === savedTool.id ? savedTool : item));
+      setTools(nextTools);
+      updateImageAttachmentTools(savedTool.serverID, nextTools);
       await loadServers();
       onSaved();
       toast.success(t("toast.toolUpdated"));
@@ -330,11 +361,12 @@ export function useAdminToolsMCPServers() {
     } finally {
       setToolSaving(false);
     }
-  }, [loadServers, t]);
+  }, [loadServers, t, tools, updateImageAttachmentTools]);
 
   // Applies the order saved in the MCP order sheet to both lists at once.
   const applyMCPOrder = React.useCallback((groups: AdminMCPOrderGroupDTO[]) => {
     setServers(groups.map((group) => group.server));
+    setImageAttachmentServerIDs(new Set(groups.filter((group) => group.tools.some((tool) => tool.attachmentInputMode === "image")).map((group) => group.server.id)));
     if (toolSheetServerID) {
       const currentGroup = groups.find((group) => group.server.id === toolSheetServerID);
       if (currentGroup) {
@@ -345,6 +377,7 @@ export function useAdminToolsMCPServers() {
 
   return {
     servers,
+    hasImageAttachmentTools: imageAttachmentServerIDs.size > 0,
     serversLoading,
     actionServerID,
     toolSheetServerID,

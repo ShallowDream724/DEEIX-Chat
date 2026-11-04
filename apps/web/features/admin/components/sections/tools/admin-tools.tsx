@@ -178,6 +178,7 @@ export function AdminToolsPage() {
   } = useAdminToolsSettings();
   const {
     servers,
+    hasImageAttachmentTools,
     serversLoading,
     actionServerID,
     toolSheetServerID,
@@ -232,7 +233,11 @@ export function AdminToolsPage() {
     [],
   );
   const mcpRuntimeFields = React.useMemo(
-    () => TOOL_SETTINGS_FIELDS.filter((field) => field.key !== "mcp_enable" && field.key !== "mcp_tool_prompt"),
+    () => TOOL_SETTINGS_FIELDS.filter((field) => field.namespace === "mcp" && field.key !== "mcp_enable" && field.key !== "mcp_tool_prompt"),
+    [],
+  );
+  const mcpImageFields = React.useMemo(
+    () => TOOL_SETTINGS_FIELDS.filter((field) => field.namespace === "file"),
     [],
   );
 
@@ -436,8 +441,8 @@ export function AdminToolsPage() {
       <SettingsSection
         title={t("sections.mcpTools")}
         actions={
-          dirtyFieldIDs.size > 0 ? (
-            <Button type="button" size="sm" disabled={loading || saving} onClick={() => void handleSaveMCPSettings()}>
+          [...dirtyFieldIDs].some((id) => id.startsWith("mcp.")) ? (
+            <Button type="button" size="sm" disabled={loading || saving} onClick={() => void handleSaveMCPSettings("mcp")}>
               <Save className="size-3.5 stroke-1" />
               {tActions("save")}
             </Button>
@@ -648,6 +653,36 @@ export function AdminToolsPage() {
           </Field>
         </CollapsibleMotionContent>
       </SettingsSection>
+
+      {mcpEnabled && hasImageAttachmentTools ? (
+        <SettingsSection
+          title={t("imageAttachments.title")}
+          actions={[...dirtyFieldIDs].some((id) => id.startsWith("file.")) ? (
+            <Button type="button" size="sm" disabled={loading || saving} onClick={() => void handleSaveMCPSettings("file")}>
+              <Save className="size-3.5 stroke-1" />
+              {tActions("save")}
+            </Button>
+          ) : null}
+        >
+          <p className="text-[11px] leading-5 text-muted-foreground">{t("imageAttachments.description")}</p>
+          <SettingsFieldList>
+            {mcpImageFields.map((field, index) => {
+              const id = toolFieldID(field);
+              return (
+                <SettingsFieldItem key={id} index={index}>
+                  <SettingsFieldEditor
+                    field={toToolEditorField(field, (key) => t(`fields.${key}`))}
+                    value={settingsMap[id] ?? ""}
+                    dirty={(settingsMap[id] ?? "") !== (savedMap[id] ?? "")}
+                    disabled={loading || saving}
+                    onChange={(value) => setSettingsMap((prev) => ({ ...prev, [id]: value }))}
+                  />
+                </SettingsFieldItem>
+              );
+            })}
+          </SettingsFieldList>
+        </SettingsSection>
+      ) : null}
 
       <Sheet open={Boolean(toolSheetServer)} onOpenChange={(open) => !open && setToolSheetServerID(null)}>
         <SheetContent className="flex flex-col sm:max-w-[720px]">

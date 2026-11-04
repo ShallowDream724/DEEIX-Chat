@@ -77,7 +77,7 @@ export type MarkdownArtifactActions = {
 };
 
 export type MarkdownFileActions = {
-  resolveFileLink: (href: string) => { fileName: string; download: () => void } | null;
+  resolveFileLink: (href: string) => { fileName: string; sizeLabel?: string; download: () => void } | null;
   onInlineImageMount?: (src: string) => (() => void) | undefined;
 };
 
@@ -692,6 +692,7 @@ export function MarkdownLink({ children, className, href, onClick, style, ...pro
           )}
         </StreamdownLinkContext.Provider>
       </a>
+      {fileLink?.sizeLabel ? <span className="ml-1 whitespace-nowrap text-[0.85em] font-normal text-muted-foreground">({fileLink.sizeLabel})</span> : null}
       <ExternalLinkSafetyDialog
         isOpen={modalOpen}
         onClose={handleClose}

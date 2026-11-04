@@ -496,6 +496,9 @@ export function ChatMessageBot({
             loadContent={attachmentContentLoader}
             allowDownload={!readOnly}
             align="start"
+            variant="list"
+            onDownloadAttachment={markdownFileActions.downloadAttachment}
+            downloadingFileIDs={markdownFileActions.downloadingFileIDs}
           />
         </div>
       ) : null}

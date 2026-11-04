@@ -5,12 +5,12 @@ import { toast } from "sonner";
 import { listAdminSettings, patchAdminSettings } from "@/features/admin/api";
 import {
   TOOL_SETTINGS_FIELDS,
+  buildToolSettingsPatch,
   applyToolSettingsDefaults,
   flattenToolSettings,
   toolFieldID,
 } from "@/features/admin/model/tool-settings";
 import { resolveAdminErrorMessage } from "@/features/admin/utils/admin-error";
-import type { PatchSettingItem } from "@/shared/api/settings-types";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 
 /** Loads and saves the MCP tool settings (enable switch, prompt, runtime limits). */
@@ -54,14 +54,8 @@ export function useAdminToolsSettings() {
     }
     return result;
   }, [savedMap, settingsMap]);
-  const handleSaveMCPSettings = React.useCallback(async () => {
-    const items: PatchSettingItem[] = TOOL_SETTINGS_FIELDS
-      .filter((field) => dirtyFieldIDs.has(toolFieldID(field)))
-      .map((field) => ({
-        namespace: field.namespace,
-        key: field.key,
-        value: settingsMap[toolFieldID(field)] ?? "",
-      }));
+  const handleSaveMCPSettings = React.useCallback(async (namespace?: "mcp" | "file") => {
+    const items = buildToolSettingsPatch(settingsMap, dirtyFieldIDs).filter((item) => !namespace || item.namespace === namespace);
     if (items.length === 0) {
       return;
     }
@@ -75,7 +69,14 @@ export function useAdminToolsSettings() {
       }
       const grouped = await patchAdminSettings(token, { items });
       const flattened = flattenToolSettings(grouped);
-      setSettingsMap(flattened);
+      const savedIDs = new Set(items.map((item) => `${item.namespace}.${item.key}`));
+      setSettingsMap((current) => {
+        const next = { ...flattened };
+        for (const id of dirtyFieldIDs) {
+          if (!savedIDs.has(id)) next[id] = current[id];
+        }
+        return next;
+      });
       setSavedMap(flattened);
       toast.success(t("toast.settingsUpdated"));
     } catch (error) {
