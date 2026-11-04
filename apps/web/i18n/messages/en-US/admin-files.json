@@ -1,6 +1,13 @@
 {
+  "zeroValues": {
+    "unlimited": "No limit",
+    "disabled": "Disabled",
+    "noResize": "No resizing",
+    "currentMessageOnly": "Current message only"
+  },
   "inputLimits": {
-    "inheritanceDescription": "Leave blank to use the default shown in gray; 0 adds no extra limit.",
+    "inheritanceDescription": "Leave blank to use the default limit; set 0 for no limit.",
+    "unlimited": "No limit",
     "title": "Model input budgets",
     "description": "Budgets apply to the complete model request, including conversation history. MB = 1,000,000 bytes. Set 0 for no additional limit; leave empty to inherit. Actual model input support still applies.",
     "scope": "Configuration scope",
@@ -307,7 +314,7 @@
       },
       "image_max_dimension": {
         "label": "Maximum image edge for sending",
-        "description": "Resize the sending copy proportionally when its longest edge exceeds this pixel count. Set 0 to disable local resizing; the stored original is preserved.",
+        "description": "Limits the longest edge of sent images, scaling larger images proportionally; set 0 for no resizing.",
         "placeholder": "1024"
       },
       "prepared_image_cache_max_entries": {

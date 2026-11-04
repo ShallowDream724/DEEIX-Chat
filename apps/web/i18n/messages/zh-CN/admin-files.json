@@ -1,6 +1,13 @@
 {
+  "zeroValues": {
+    "unlimited": "不限制",
+    "disabled": "禁用",
+    "noResize": "不缩放",
+    "currentMessageOnly": "仅当前消息"
+  },
   "inputLimits": {
-    "inheritanceDescription": "留空使用灰字所示默认值；0 表示不额外限制。",
+    "inheritanceDescription": "留空时使用默认上限；设置为 0 表示不限制。",
+    "unlimited": "不限制",
     "title": "模型输入预算",
     "description": "预算作用于包含历史消息的完整模型请求。MB = 1,000,000 字节。0 表示不设置额外上限，留空表示继承。实际输入仍需模型支持。",
     "scope": "配置范围",
@@ -307,7 +314,7 @@
       },
       "image_max_dimension": {
         "label": "发送图片最大边长",
-        "description": "图片最长边超过此像素值时，等比例缩小发送副本；0 表示不进行本地缩放，存储原图保持不变。",
+        "description": "用于限制发送图片的最长边，超出时等比例缩小；设置为 0 表示不缩放。",
         "placeholder": "1024"
       },
       "prepared_image_cache_max_entries": {

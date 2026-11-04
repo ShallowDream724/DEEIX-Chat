@@ -10,6 +10,7 @@ import { useAdminFilesSettings } from "@/features/admin/hooks/use-admin-files-se
 import {
   EMBEDDING_MODES,
   EXTRACT_ENGINE_POLICIES,
+  FILE_SETTING_ZERO_LABELS,
   isServiceDirty,
   mergeAllowedMIMETypes,
   resolveFieldID,
@@ -46,6 +47,7 @@ function resolveMinerUFileTypeOptionMeta(value: string, label: string, settingsM
 function toEditorField(field: SettingsField, translate: (key: string) => string, settingsMap: Record<string, string>) {
   const fieldKey = `fields.${field.namespace}.${field.key}`;
   const fieldID = resolveFieldID(field);
+  const zeroLabelKey = FILE_SETTING_ZERO_LABELS[fieldID];
   return {
     id: fieldID,
     label: translate(`${fieldKey}.label`),
@@ -56,6 +58,8 @@ function toEditorField(field: SettingsField, translate: (key: string) => string,
       : field.placeholder ? translate(`${fieldKey}.placeholder`) : undefined,
     valueUnit: field.valueUnit,
     valueSuffix: field.valueUnit === "mb" ? "MB" : field.key === "image_max_dimension" ? "px" : undefined,
+    zeroDisplayLabel: zeroLabelKey ? translate(`zeroValues.${zeroLabelKey}`)
+      : field.namespace === "file" && ["audio_max_bytes", "video_max_bytes"].includes(field.key) ? settingsMap["storage.max_upload_file_bytes"] : undefined,
     options: field.options?.map((option) => {
       const label = translate(`${fieldKey}.options.${option.value}`);
       const meta =

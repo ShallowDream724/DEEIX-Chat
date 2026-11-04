@@ -35,6 +35,21 @@ export type SettingsValueField = {
 
 export type SettingsField = SettingsValueField;
 
+export const FILE_SETTING_ZERO_LABELS: Record<string, "unlimited" | "disabled" | "noResize" | "currentMessageOnly"> = {
+  "storage.user_storage_quota_bytes": "unlimited",
+  "file.file_full_context_max_bytes": "unlimited",
+  "file.full_context_max_tokens": "unlimited",
+  "file.full_context_pdf_max_pages": "unlimited",
+  "file.image_attachment_processor_max_bytes": "unlimited",
+  "file.image_attachment_analysis_max_chars": "unlimited",
+  "file.image_attachment_analysis_total_max_chars": "unlimited",
+  "file.image_max_dimension": "noResize",
+  "file.prepared_image_cache_max_entries": "disabled",
+  "file.prepared_image_cache_max_bytes": "disabled",
+  "chat.rag_retrieval_cache_ttl_seconds": "disabled",
+  "chat.rag_query_history_turns": "currentMessageOnly",
+};
+
 export type SettingsGroup = {
   key: string;
   title: string;

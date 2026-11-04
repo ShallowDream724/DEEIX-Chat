@@ -9,7 +9,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Field, FieldDescription, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Spinner } from "@/components/ui/spinner";
 import { Switch } from "@/components/ui/switch";
@@ -18,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { JsonCodeEditor } from "@/shared/components/json-code-editor";
+import { SettingsValueInput } from "./settings-value-input";
 
 export type SettingsFieldType = "int" | "bool" | "string" | "password" | "textarea" | "json" | "select" | "tabs" | "multi-check" | "button";
 
@@ -44,6 +44,7 @@ export type SettingsFieldDefinition = {
   placeholder?: string;
   valueUnit?: "mb";
   valueSuffix?: string;
+  zeroDisplayLabel?: string;
   options?: SettingsFieldOption[];
   actions?: SettingsFieldAction[];
   statusBadge?: ServiceRuntimeStatusBadge;
@@ -578,8 +579,7 @@ export function SettingsFieldEditor({
                 </Select>
               ) : (
                 <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-1">
-                  <div className="relative min-w-0">
-                    <Input
+                    <SettingsValueInput
                       id={field.id}
                       type={field.type === "password" ? "password" : "text"}
                       value={value}
@@ -587,14 +587,10 @@ export function SettingsFieldEditor({
                       placeholder={field.type === "password" && configured && !value ? t("input.configuredPasswordPlaceholder") : field.placeholder}
                       inputMode={field.valueUnit === "mb" ? "decimal" : field.type === "int" ? "numeric" : "text"}
                       disabled={disabled}
-                      className={cn("min-w-0 text-left md:text-right", field.valueSuffix ? "pr-12" : "")}
+                      suffix={field.valueSuffix}
+                      zeroDisplayLabel={field.type === "int" ? field.zeroDisplayLabel : undefined}
+                      dirty={dirty}
                     />
-                    {field.valueSuffix ? (
-                      <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">
-                        {field.valueSuffix}
-                      </span>
-                    ) : null}
-                  </div>
                   {(inlineRuntimeActions ?? []).map((action) => {
                     const Icon = action.icon;
                     return (

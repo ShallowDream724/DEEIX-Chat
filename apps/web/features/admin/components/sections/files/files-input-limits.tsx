@@ -4,7 +4,7 @@ import { Loader2, Save } from "lucide-react";
 import { useTranslations } from "next-intl";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { SettingsValueInput } from "@/features/admin/components/shared/settings-value-input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useAdminFilesInputLimitsUpstreams } from "@/features/admin/hooks/use-admin-files-input-limits-upstreams";
 import {
@@ -41,6 +41,7 @@ export function FilesInputLimits({ value, defaultValue, savedValue, loading, sav
   const { upstreams, loading: upstreamsLoading, error: upstreamsError, retry: retryUpstreams } = useAdminFilesInputLimitsUpstreams();
   const [drafts, setDrafts] = React.useState<Record<string, string>>({});
   const config = React.useMemo(() => parseInputLimits(value), [value]);
+  const savedConfig = React.useMemo(() => parseInputLimits(savedValue), [savedValue]);
   const defaults = React.useMemo(() => parseInputLimits(defaultValue), [defaultValue]);
   const disabled = loading || saving;
   const selectedUpstream = upstreams.find((item) => String(item.id) === upstream);
@@ -76,7 +77,6 @@ export function FilesInputLimits({ value, defaultValue, savedValue, loading, sav
         </Button>
       ) : null}
     >
-      <p className="text-[11px] leading-5 text-muted-foreground">{t("inheritanceDescription")}</p>
       <div className="grid min-w-0 gap-3 sm:grid-cols-2">
         <div className="min-w-0 space-y-1.5">
           <label htmlFor="input-limits-upstream" className="text-xs font-medium">{t("scope")}</label>
@@ -102,6 +102,7 @@ export function FilesInputLimits({ value, defaultValue, savedValue, loading, sav
           </Select>
         </div>
       </div>
+      <p className="text-[11px] leading-5 text-muted-foreground">{t("inheritanceDescription")}</p>
       {upstream ? (
         <SettingsFieldRow title={t("protocolScope")} description={t("protocolDescription")}>
           <Select value={protocol || "all"} disabled={disabled} onValueChange={(next) => setProtocol(next === "all" ? "" : next)}>
@@ -124,6 +125,7 @@ export function FilesInputLimits({ value, defaultValue, savedValue, loading, sav
             const bytes = field.unit === "mb";
             const base = config.profiles[selectedProfile]?.[field.key];
             const stored = upstream ? protocol ? config.upstreams[upstream]?.protocols?.[protocol]?.[field.key] : config.upstreams[upstream]?.[field.key] : base;
+            const saved = upstream ? protocol ? savedConfig?.upstreams[upstream]?.protocols?.[protocol]?.[field.key] : savedConfig?.upstreams[upstream]?.[field.key] : savedConfig?.profiles[selectedProfile]?.[field.key];
             const inherited = resolveInheritedInputLimit(config, defaults, selectedProfile, upstream, field.key, protocol);
             const draftKey = `${scope}:${field.key}`;
             const raw = drafts[draftKey] ?? formatInputLimit(stored, bytes);
@@ -132,8 +134,7 @@ export function FilesInputLimits({ value, defaultValue, savedValue, loading, sav
               <SettingsFieldItem key={field.key} index={index} className={index > 0 && INPUT_LIMIT_FIELDS[index - 1].group !== field.group ? "mt-3 border-t border-border/60 pt-4 md:pt-5" : undefined}>
                 <SettingsFieldRow title={t(`fields.${field.key}.label`)} description={t(`fields.${field.key}.description`)}>
                   <div className="w-full space-y-1">
-                    <div className="flex items-center gap-2">
-                      <Input
+                      <SettingsValueInput
                         id={`input-limit-${field.key}`}
                         aria-label={t(`fields.${field.key}.label`)}
                         value={raw}
@@ -141,7 +142,10 @@ export function FilesInputLimits({ value, defaultValue, savedValue, loading, sav
                         aria-invalid={invalid}
                         aria-describedby={invalid ? `input-limit-${field.key}-status` : undefined}
                         disabled={disabled}
-                        placeholder={formatInputLimit(inherited, bytes)}
+                        placeholder={inherited === 0 ? t("unlimited") : formatInputLimit(inherited, bytes)}
+                        suffix={t(`units.${field.unit}`)}
+                        zeroDisplayLabel={t("unlimited")}
+                        dirty={raw !== formatInputLimit(saved, bytes)}
                         className="tabular-nums"
                         onChange={(event) => {
                           const next = event.target.value;
@@ -150,8 +154,6 @@ export function FilesInputLimits({ value, defaultValue, savedValue, loading, sav
                           if (parsed !== undefined) onChange(JSON.stringify(setInputLimit(config, selectedProfile, upstream, field.key, parsed, protocol)));
                         }}
                       />
-                      <span className="w-7 shrink-0 text-[11px] text-muted-foreground">{t(`units.${field.unit}`)}</span>
-                    </div>
                     {invalid ? <p id={`input-limit-${field.key}-status`} className="text-[10px] leading-4 text-destructive">
                       {t("invalidValue")}
                     </p> : null}
