@@ -11,14 +11,13 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// GetNativeReadiness reports native file eligibility without choosing a billing
-// route or waiting for background extraction.
-// @Summary 查询本轮附件原生输入资格
+// GetNativeReadiness previews attachment limits and eligibility using trusted metadata.
+// @Summary 查询所选模型的附件输入限制与当前分支附件状态
 // @Tags chat
 // @Accept json
 // @Produce json
 // @Security BearerAuth
-// @Param request body NativeReadinessRequest true "模型与本轮全部附件"
+// @Param request body NativeReadinessRequest true "模型、当前分支父消息及本轮附件"
 // @Success 200 {object} NativeReadinessResponseDoc
 // @Failure 400 {object} ErrorDoc
 // @Failure 403 {object} ErrorDoc
@@ -33,6 +32,7 @@ func (h *Handler) GetNativeReadiness(c *gin.Context) {
 	}
 	result, err := h.service.GetNativeReadiness(c.Request.Context(), appconversation.NativeReadinessInput{
 		UserID: middleware.MustUserID(c), Model: req.Model, FileIDs: req.FileIDs, ConversationID: req.ConversationID,
+		ParentMessagePublicID: req.ParentMessagePublicID, SelectedToolIDs: req.SelectedToolIDs,
 	})
 	if err != nil {
 		switch {
@@ -42,7 +42,7 @@ func (h *Handler) GetNativeReadiness(c *gin.Context) {
 			response.ErrorFrom(c, http.StatusForbidden, err)
 		case errors.Is(err, appconversation.ErrConversationNotFound):
 			response.ErrorFrom(c, http.StatusNotFound, err)
-		case errors.Is(err, appconversation.ErrInvalidFileReference), errors.Is(err, appconversation.ErrTooManyMessageFiles), errors.Is(err, appconversation.ErrModelRouteNotConfigured):
+		case errors.Is(err, appconversation.ErrInvalidFileReference), errors.Is(err, appconversation.ErrInvalidMessageBranch), errors.Is(err, appconversation.ErrModelRouteNotConfigured):
 			response.ErrorFrom(c, http.StatusBadRequest, err)
 		default:
 			response.InternalError(c, err)

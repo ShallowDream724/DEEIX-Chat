@@ -464,89 +464,6 @@ func TestEstimateGenerateInputTokensIncludesToolCallsAndResults(t *testing.T) {
 	}
 }
 
-func TestMaxPromptTokenEstimateKeepsFullContextForStatefulContinuation(t *testing.T) {
-	fullContext := int64(96_000)
-	statefulDelta := int64(1_200)
-
-	if got := maxPromptTokenEstimate(statefulDelta, fullContext); got != fullContext {
-		t.Fatalf("expected full context estimate to win over stateful delta, got %d", got)
-	}
-}
-
-func TestFitGenerateInputToModelBudgetTrimsWholeOldestTurnsAfterFinalAssembly(t *testing.T) {
-	input := llm.GenerateInput{
-		Messages: []llm.Message{
-			{Role: "system", Content: "stable files, skills, and policy"},
-			{Role: "user", Content: strings.Repeat("old question ", 5_000)},
-			{Role: "assistant", Content: strings.Repeat("old answer ", 5_000)},
-			{Role: "user", Content: "recent question"},
-			{Role: "assistant", Content: "recent answer"},
-			{Role: "user", Content: "current question"},
-		},
-		Instructions: "native provider instructions",
-		Tools: []llm.ToolDefinition{{
-			Name:        "search_docs",
-			Description: "Search the configured knowledge sources",
-			InputSchema: []byte(`{"type":"object","properties":{"query":{"type":"string"}}}`),
-		}},
-	}
-	capabilities := `{"contextWindow":32000,"maxOutputTokens":4000}`
-
-	fitted, fit := fitGenerateInputToModelBudget(input, "custom-model", capabilities, 128_000, true)
-
-	if !fit.Trimmed || fit.Exceeded {
-		t.Fatalf("expected prompt to be trimmed within budget, got %#v", fit)
-	}
-	if fit.TokensAfter > fit.Budget {
-		t.Fatalf("expected final request shape within budget, got %d > %d", fit.TokensAfter, fit.Budget)
-	}
-	if len(fitted.Messages) != 4 {
-		t.Fatalf("expected the oldest complete turn to be removed, got %#v", fitted.Messages)
-	}
-	if fitted.Messages[0].Role != "system" || fitted.Messages[1].Content != "recent question" || fitted.Messages[3].Content != "current question" {
-		t.Fatalf("expected system prefix and complete recent/current turns, got %#v", fitted.Messages)
-	}
-	if fitted.Instructions != input.Instructions || len(fitted.Tools) != 1 {
-		t.Fatalf("expected fixed request content to remain intact, got %#v", fitted)
-	}
-}
-
-func TestFitGenerateInputToModelBudgetReportsRequiredContentOverflow(t *testing.T) {
-	input := llm.GenerateInput{Messages: []llm.Message{
-		{Role: "system", Content: strings.Repeat("required policy ", 5_000)},
-		{Role: "user", Content: strings.Repeat("current input ", 5_000)},
-	}}
-
-	fitted, fit := fitGenerateInputToModelBudget(
-		input,
-		"custom-model",
-		`{"contextWindow":4096,"maxOutputTokens":1}`,
-		128_000,
-		true,
-	)
-
-	if fit.Trimmed || !fit.Exceeded {
-		t.Fatalf("expected required-only overflow without destructive trimming, got %#v", fit)
-	}
-	if len(fitted.Messages) != len(input.Messages) {
-		t.Fatalf("expected required messages to remain intact, got %#v", fitted.Messages)
-	}
-}
-
-func TestFitGenerateInputToModelBudgetCanBeDisabled(t *testing.T) {
-	input := llm.GenerateInput{Messages: []llm.Message{
-		{Role: "user", Content: strings.Repeat("history ", 10_000)},
-		{Role: "assistant", Content: strings.Repeat("answer ", 10_000)},
-		{Role: "user", Content: "current"},
-	}}
-
-	fitted, fit := fitGenerateInputToModelBudget(input, "custom-model", `{"contextWindow":4096}`, 128_000, false)
-
-	if fit.Trimmed || fit.Exceeded || fit.Budget != 0 || len(fitted.Messages) != len(input.Messages) {
-		t.Fatalf("expected disabled budget fitting to preserve input, got %#v %#v", fit, fitted.Messages)
-	}
-}
-
 func TestResolveToolResultTokenBudgetUsesRemainingModelContext(t *testing.T) {
 	generateInput := llm.GenerateInput{
 		Tools: []llm.ToolDefinition{{
@@ -599,8 +516,8 @@ func TestResolveToolResultTokenBudgetUsesRemainingModelContext(t *testing.T) {
 		capabilities,
 		128_000,
 	)
-	if withOldHistoryBudget != shortBudget {
-		t.Fatalf("expected old history to be reclaimable for the current tool result, got %d want %d", withOldHistoryBudget, shortBudget)
+	if withOldHistoryBudget >= shortBudget {
+		t.Fatalf("expected retained history to consume tool result budget, got %d >= %d", withOldHistoryBudget, shortBudget)
 	}
 }
 
@@ -745,33 +662,6 @@ func TestRebalanceToolFollowUpResultsFitsCurrentRoundWithinContext(t *testing.T)
 	}
 	if messages[3].ToolResults[0].OutputJSON != firstOutput || messages[5].ToolResults[0].OutputJSON != secondOutput {
 		t.Fatal("expected rebalancing to leave the source messages unchanged")
-	}
-}
-
-func TestTrimToolFollowUpHistoryRemovesOldCompleteTurns(t *testing.T) {
-	capabilities := `{"contextWindow":32000,"maxOutputTokens":4000}`
-	messages := []llm.Message{
-		{Role: "system", Content: "policy"},
-		{Role: "user", Content: strings.Repeat("old history ", 20_000)},
-		{Role: "assistant", Content: "old answer"},
-		{Role: "user", Content: "summarize this video"},
-		{Role: "assistant", ToolCalls: []llm.ToolCall{{ToolCallID: "call_1", ToolName: "fetch_transcript"}}},
-		{Role: "tool", ToolResults: []llm.ToolResult{{
-			ToolCallID: "call_1",
-			ToolName:   "fetch_transcript",
-			OutputJSON: strings.Repeat("subtitle ", 2000),
-		}}},
-	}
-	trimmed, changed := trimToolFollowUpHistory(llm.GenerateInput{}, messages, "custom-model", capabilities, 128_000)
-	if !changed {
-		t.Fatal("expected oversized follow-up context to trim old history")
-	}
-	if len(trimmed) != 4 || trimmed[0].Role != "system" || trimmed[1].Content != "summarize this video" {
-		t.Fatalf("expected system prefix and current turn only, got %#v", trimmed)
-	}
-	if tokens := estimateToolFollowUpInputTokens(llm.GenerateInput{}, trimmed); tokens >
-		int64(domainchannel.EffectiveContextBudgetFromCapabilitiesWithFallback("custom-model", capabilities, config.DefaultContextWindowFallbackTokens)) {
-		t.Fatalf("expected trimmed follow-up within effective model budget, got %d tokens", tokens)
 	}
 }
 

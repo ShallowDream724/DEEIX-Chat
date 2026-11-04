@@ -759,12 +759,14 @@ func (s *Service) injectConversationImageContext(
 		if !loaded {
 			att, ok := attachmentByFileID[ref.fileID]
 			if !ok || strings.TrimSpace(att.StoragePath) == "" {
-				return nil, fmt.Errorf("%w: historical image %s", ErrInvalidFileReference, ref.fileID)
+				att.Current = false
+				return nil, attachmentInputError(att, ErrInvalidFileReference)
 			}
 			var err error
 			part, err = s.prepareConversationImage(ctx, &store, cache, att, maxDim, limits)
 			if err != nil {
-				return nil, err
+				att.Current = false
+				return nil, attachmentInputErrorWithReason(att, err, attachmentInputReadFailed)
 			}
 			loadedByFileID[ref.fileID] = part
 		}
@@ -907,7 +909,7 @@ func (s *Service) prepareUserContextImages(ctx context.Context, attachments []At
 		}
 		part, err := s.prepareConversationImage(ctx, &store, cache, att, cfg.ImageMaxDimension, limits)
 		if err != nil {
-			return nil, err
+			return nil, attachmentInputErrorWithReason(att, err, attachmentInputReadFailed)
 		}
 		part.Dynamic = !att.Current
 		parts = append(parts, part)

@@ -110,7 +110,7 @@ func stageUploadedFile(
 	detectedMaxBytes func(string) int64,
 ) (stagedUpload, error) {
 	if maxUploadBytes <= 0 {
-		maxUploadBytes = 20 * 1024 * 1024
+		maxUploadBytes = defaultUploadBytes
 	}
 	tmpFile, err := os.CreateTemp("", fileID+"_*.upload")
 	if err != nil {

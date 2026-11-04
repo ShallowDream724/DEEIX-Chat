@@ -35,11 +35,11 @@ func TestContextEstimatorEditedMiddleTurnUsesPreviousAncestorMeasurement(t *test
 	// are absent from this ancestor path, even if they have newer observations.
 	path := []model.Message{{ID: 1, Role: "user"}, {ID: 2, Role: "assistant"}, {ID: 5, Role: "user"}}
 	scope := buildPromptScope(path, nil, contextCompactionPolicy{})
-	estimate := service.contextInputEstimator(t.Context(), scope.historicalMessageScope(7, 1, 5), "route")
+	meter := contextInputMeter{identity: "route", prior: service.contextInputBaselines(t.Context(), scope.historicalMessageScope(7, 1, 5))}
 	current := previous
 	current.Messages = append(append([]llm.Message(nil), previous.Messages...), llm.Message{Role: "assistant", Content: "retained prior reply"}, llm.Message{Role: "user", Content: "edited middle question"})
 	want := int64(1000) + estimateGenerateInputTokens(current) - estimateGenerateInputTokens(previous)
-	if got := estimate(current); got != want {
+	if got := meter.estimate(current); got != want {
 		t.Fatalf("edited input = %d want %d", got, want)
 	}
 	if repo.filter.Scope.LeafMessageID != 5 || repo.filter.Scope.ExcludeThroughMessageID != 0 {
@@ -143,7 +143,7 @@ func (g *contextToolLoopGateway) Generate(_ context.Context, _ llm.RouteConfig, 
 
 func TestMeasuredPDFRemainsInActualLocalToolFollowUpRequest(t *testing.T) {
 	gateway := &contextToolLoopGateway{}
-	runner := &messageGenerationRunner{service: &Service{llmClient: gateway}, usage: &messageUsageAccumulator{}, contextIdentity: "route", maxLLMCalls: 5}
+	runner := &messageGenerationRunner{service: &Service{llmClient: gateway}, usage: &messageUsageAccumulator{}, contextMeter: contextInputMeter{identity: "route"}, maxLLMCalls: 5}
 	input := llm.GenerateInput{Messages: []llm.Message{
 		{Role: "user", Parts: []llm.ContentPart{{Kind: llm.ContentPartDocument, MimeType: "application/pdf", FileName: "source.pdf", Data: []byte("original pdf bytes"), PageCount: 100, SourceFileIDs: []string{"pdf"}}}},
 		{Role: "assistant", Content: "prior answer"},
@@ -152,63 +152,28 @@ func TestMeasuredPDFRemainsInActualLocalToolFollowUpRequest(t *testing.T) {
 	if _, err := runner.generate(t.Context(), input, input.Messages); err != nil {
 		t.Fatal(err)
 	}
+	if !canRetainStatefulToolContext(gateway.requests[0].Messages) {
+		t.Fatal("regular turn should remain eligible for cross-turn Responses reuse")
+	}
 	assistant := llm.Message{Role: "assistant", ToolCalls: []llm.ToolCall{{ToolCallID: "call", ToolName: "local", ArgumentsJSON: "{}"}}}
 	full := append(cloneLLMMessages(input.Messages), assistant, llm.Message{Role: "tool", ToolResults: []llm.ToolResult{{ToolCallID: "call", ToolName: "local", OutputJSON: `{"result":"found"}`}}})
 	const capabilities = `{"contextWindow":32000,"maxOutputTokens":4000}`
-	if budget := resolveToolResultTokenBudget(input, input.Messages, assistant, "custom-model", capabilities, 2000, runner.estimateContextInput); budget < 1000 {
+	if budget := resolveToolResultTokenBudget(input, input.Messages, assistant, "custom-model", capabilities, 2000, runner.contextMeter.estimate); budget < 1000 {
 		t.Fatalf("observed PDF should leave tool room, got %d", budget)
 	}
-	trimmed, changed := trimToolFollowUpHistory(input, full, "custom-model", capabilities, 2000, runner.estimateContextInput)
-	if changed {
-		t.Fatal("measured-small PDF caused history trimming")
-	}
-	trimmed, changed = rebalanceToolFollowUpResults(input, trimmed, "custom-model", capabilities, 2000, runner.estimateContextInput)
+	retained, changed := rebalanceToolFollowUpResults(input, full, "custom-model", capabilities, 2000, runner.contextMeter.estimate)
 	if changed {
 		t.Fatal("measured-small PDF caused tool truncation")
 	}
-	input.Messages = trimmed
-	if _, err := runner.generate(t.Context(), input, trimmed); err != nil {
+	input.Messages = retained
+	if _, err := runner.generate(t.Context(), input, retained); err != nil {
 		t.Fatal(err)
 	}
 	if len(gateway.requests) != 2 || string(gateway.requests[1].Messages[0].Parts[0].Data) != "original pdf bytes" {
 		t.Fatalf("second actual request lost PDF: %#v", gateway.requests)
 	}
-}
+	if canRetainStatefulToolContext(gateway.requests[1].Messages) {
+		t.Fatal("next turn cannot rebuild the local tool result kept in provider state")
+	}
 
-func TestInitialBudgetFitUsesMeasuredPDFAndRechecksCandidates(t *testing.T) {
-	input := llm.GenerateInput{Messages: []llm.Message{
-		{Role: "user", Parts: []llm.ContentPart{{Kind: llm.ContentPartDocument, Data: []byte("pdf"), PageCount: 100}}},
-		{Role: "assistant", Content: "answer"},
-		{Role: "user", Content: "second question"},
-		{Role: "assistant", Content: "answer"},
-		{Role: "user", Content: "current question"},
-	}}
-	observed := describeContextInput("route", input, nil)
-	observed.InputTokens = 100
-	runner := &messageGenerationRunner{contextIdentity: "route", contextObservations: []contextInputObservation{observed}}
-	_, fit := fitGenerateInputToModelBudget(input, "custom-model", "", 2000, true, runner.estimateContextInput)
-	if fit.Trimmed || fit.TokensBefore != 100 {
-		t.Fatalf("measured PDF must fit unchanged: %#v", fit)
-	}
-	_, fallback := fitGenerateInputToModelBudget(input, "custom-model", "", 2000, true)
-	if !fallback.Trimmed {
-		t.Fatalf("no observation must use conservative PDF fallback: %#v", fallback)
-	}
-	// Removing the PDF invalidates its baseline; the remaining request can still
-	// exceed budget. The fitter must test that candidate instead of assuming the
-	// raw PDF estimate was freed from the measured total.
-	estimate := func(candidate llm.GenerateInput) int64 {
-		switch len(candidate.Messages) {
-		case 5:
-			return 300000
-		case 3:
-			return 250000
-		default:
-			return 100
-		}
-	}
-	result, fit := fitGenerateInputToModelBudget(input, "custom-model", "", 2000, true, estimate)
-	if len(result.Messages) != 1 || fit.Exceeded || fit.TokensAfter != 100 {
-		t.Fatalf("candidate was not re-estimated: count=%d fit=%#v", len(result.Messages), fit)
-	}
 }

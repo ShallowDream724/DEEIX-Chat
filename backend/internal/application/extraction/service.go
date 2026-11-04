@@ -227,6 +227,9 @@ func (s *Service) extractLocalFile(ctx context.Context, input ExtractInput, absP
 	pageCount := 0
 	if input.File.FileCategory == "pdf" {
 		pageCount = s.detectPDFPageCount(absPath)
+		if input.PDFMaxPages > 0 && pageCount > input.PDFMaxPages {
+			return Result{PageCount: pageCount}, NewError("pdf_page_limit_exceeded", fmt.Errorf("%d pages exceed %d", pageCount, input.PDFMaxPages))
+		}
 	}
 	if input.File.FileCategory == "image" {
 		if !input.ImageOCREnabled {
@@ -872,9 +875,17 @@ func (s *Service) extractPDFWithSelectiveOCR(
 	if native.PageCount > 0 {
 		pageCount = native.PageCount
 	}
+	if pageCount > len(native.Pages) {
+		return Result{PageCount: pageCount, Engine: nativeEngineName}, NewError("pdf_extract_incomplete", errors.New("PDF extraction did not cover every page"))
+	}
 
 	nativeText := joinBuiltinPDFPages(native.Pages, nil)
 	if !input.PDFOCRFallbackEnabled {
+		for _, page := range native.Pages {
+			if page.ExtractFailed {
+				return Result{PageCount: pageCount, Engine: nativeEngineName}, NewError("pdf_extract_incomplete", fmt.Errorf("PDF page %d could not be extracted", page.PageNumber))
+			}
+		}
 		if strings.TrimSpace(nativeText) != "" {
 			return Result{
 				Text:      nativeText,
@@ -919,6 +930,12 @@ func (s *Service) extractPDFWithSelectiveOCR(
 		}, NewOCRError(input.OCREngine, "ocr_invalid_response", nil)
 	}
 
+	for _, page := range native.Pages {
+		if _, covered := ocrPages[page.PageNumber]; page.ExtractFailed && !covered {
+			return Result{PageCount: pageCount, Engine: ocrResult.Engine, OCRUsed: true},
+				NewError("pdf_extract_incomplete", fmt.Errorf("PDF page %d could not be extracted", page.PageNumber))
+		}
+	}
 	merged := joinBuiltinPDFPages(native.Pages, ocrPages)
 	if strings.TrimSpace(merged) == "" {
 		return Result{

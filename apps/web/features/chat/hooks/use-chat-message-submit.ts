@@ -1,5 +1,8 @@
 "use client";
 
+import type { RestoreSubmittedDraft } from "@/features/chat/hooks/use-chat-composer-state";
+import { getInputLimitReasons, type InputLimitReason } from "@/shared/lib/input-limit";
+
 import { useTranslations } from "next-intl";
 import * as React from "react";
 import { toast } from "sonner";
@@ -86,7 +89,9 @@ export function useChatMessageSubmit({
   options,
   draft,
   attachments,
-  maxFilesPerMessage,
+  getComposerRevision,
+  restoreSubmittedDraft,
+  onInputLimit,
   uploading,
   restoreDraftOnFailure,
   autoGenerateLabels,
@@ -140,7 +145,9 @@ export function useChatMessageSubmit({
   options: ConversationOptions;
   draft: string;
   attachments: PendingAttachment[];
-  maxFilesPerMessage: number;
+  getComposerRevision: () => number;
+  restoreSubmittedDraft: RestoreSubmittedDraft;
+  onInputLimit: (reasons: readonly InputLimitReason[]) => void;
   uploading: boolean;
   restoreDraftOnFailure: boolean;
   autoGenerateLabels: boolean;
@@ -292,8 +299,10 @@ export function useChatMessageSubmit({
       branchReason,
       queuedSubmission,
       optionsOverride,
+      originalDraft,
     }: {
       content: string;
+      originalDraft?: string;
       currentAttachments: PendingAttachment[];
       resetComposer: boolean;
       parentMessagePublicID?: string | null;
@@ -312,7 +321,6 @@ export function useChatMessageSubmit({
         optionsOverride,
         attachmentFallbackContent: t("attachmentOnlyContent"),
         uploading,
-        maxFilesPerMessage,
         modelOptions,
         selectedPlatformModelName,
         options,
@@ -327,19 +335,25 @@ export function useChatMessageSubmit({
         combinedMessages,
         activeStreams: Array.from(activeStreamsRef.current.values()),
       });
-      if (planResult.attachmentsTruncated) {
-        toast(t("attachmentsTruncated"), {
-          description: t("attachmentsTruncatedDescription", { count: maxFilesPerMessage }),
-        });
-      }
       if (!planResult.ok) {
         const { block } = planResult;
+        const queuedVisible = !queuedSubmission || branchRunIsVisible(
+          queuedSubmission,
+          queuedSubmission.clientRunID,
+          conversationScopeKeyRef.current,
+          visibleBranchScopePathRef.current,
+          visibleMessagesRef.current,
+        );
+        if (queuedSubmission) {
+          const revision = queuedSubmission.composerRevision;
+          const restored = queuedVisible && revision !== undefined && restoreDraftOnFailure
+            && restoreSubmittedDraft(revision, queuedSubmission.originalDraft ?? content, currentAttachments, queuedSubmission.conversationPublicID);
+          if (!restored) releaseAttachments(currentAttachments);
+        }
         if (block.kind === "concurrent_limit") {
           toast.error(t("concurrentGenerationLimit", { count: MAX_CONCURRENT_RUNS }));
-        } else if (block.kind === "media_unsupported") {
-          toast.error(t("mediaInputUnsupported"), {
-            description: resolveSubmitBlockDescription(block.reason, t),
-          });
+        } else if (block.kind === "media_unsupported" && queuedVisible) {
+          onInputLimit([{ dimension: "modelTaskUnsupported", description: resolveSubmitBlockDescription(block.reason, t) }]);
         } else if (block.kind === "no_model") {
           toast.error(t("noModel"), { description: t("selectModelFirst") });
         }
@@ -396,6 +410,7 @@ export function useChatMessageSubmit({
         transferAttachments(currentAttachments);
         setAttachments([]);
       }
+      const composerRevision = resetComposer ? getComposerRevision() : queuedSubmission?.composerRevision;
       startStream(exchangeKey, clientRunID);
       setPendingExchanges((current) => ({
         ...current,
@@ -701,22 +716,16 @@ export function useChatMessageSubmit({
         const errorDetails = resolveErrorDetails(error);
         const errorSummary = resolveErrorSummary(error, t("retryLater"));
         shouldKeepConversationLayout = true;
-        const shouldRestoreAttachments =
-          resetComposer &&
-          restoreDraftOnFailure &&
-          branchRunIsVisible(
-            targetBranchScope,
-            clientRunID,
-            conversationScopeKeyRef.current,
-            visibleBranchScopePathRef.current,
-            visibleMessagesRef.current,
-          );
-        if (shouldRestoreAttachments) {
-          setDraft(content);
-          setAttachments(currentAttachments);
-        } else {
-          releaseAttachments(currentAttachments);
-        }
+        const runVisible = branchRunIsVisible(
+          targetBranchScope,
+          clientRunID,
+          conversationScopeKeyRef.current,
+          visibleBranchScopePathRef.current,
+          visibleMessagesRef.current,
+        );
+        const restored = composerRevision !== undefined && restoreDraftOnFailure && runVisible
+          && restoreSubmittedDraft(composerRevision, originalDraft ?? queuedSubmission?.originalDraft ?? content, currentAttachments, targetConversationID);
+        if (!restored) releaseAttachments(currentAttachments);
         updatePendingExchange(exchangeKey, (current) =>
           failPendingExchange(current, {
             clientRunID,
@@ -726,7 +735,12 @@ export function useChatMessageSubmit({
             errorDetails,
           }),
         );
-        toast.error(t("sendFailed"), { description: errorSummary });
+        const inputLimits = getInputLimitReasons(error);
+        if (inputLimits.length > 0) {
+          if (runVisible) onInputLimit(inputLimits);
+        } else {
+          toast.error(t("sendFailed"), { description: errorSummary });
+        }
         if (targetConversationID) {
           const failedConversationID = targetConversationID;
           void resolveAccessToken()
@@ -787,7 +801,9 @@ export function useChatMessageSubmit({
       flushStreamTextNow,
       flushUpstreamThinkNow,
       htmlVisualPromptEnabled,
-      maxFilesPerMessage,
+      getComposerRevision,
+      restoreSubmittedDraft,
+      onInputLimit,
       modelOptions,
       onConversationCreated,
       onConversationRunDetached,
@@ -871,6 +887,10 @@ export function useChatMessageSubmit({
       branchScopeRunID: targetBranchScopeRunID,
     };
     const clientRunID = createClientRunID();
+    setDraft("");
+    transferAttachments(currentAttachments);
+    setAttachments([]);
+    const composerRevision = getComposerRevision();
     setQueuedSubmissions((current) => {
       const previousQueuedSubmission = current
         .filter((item) => branchScopesEqual(item, targetBranchScope))
@@ -889,6 +909,8 @@ export function useChatMessageSubmit({
           conversation: targetConversation,
           parentMessagePublicID,
           content,
+          composerRevision,
+          originalDraft: draft,
           attachments: currentAttachments,
           platformModelName: selectedPlatformModelName,
           options: sanitizeConversationOptions(options),
@@ -900,9 +922,6 @@ export function useChatMessageSubmit({
         },
       ];
     });
-    setDraft("");
-    transferAttachments(currentAttachments);
-    setAttachments([]);
     return true;
   }, [
     attachments,
@@ -912,6 +931,7 @@ export function useChatMessageSubmit({
     currentLeafMessage?.runID,
     currentLeafMessage?.status,
     draft,
+    getComposerRevision,
     htmlVisualPromptEnabled,
     options,
     selectedPlatformModelName,
@@ -950,6 +970,7 @@ export function useChatMessageSubmit({
       content,
       currentAttachments: attachments,
       resetComposer: true,
+      originalDraft: draft,
       parentMessagePublicID,
       branchReason: "default",
     });

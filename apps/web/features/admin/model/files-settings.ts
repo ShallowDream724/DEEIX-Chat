@@ -40,12 +40,7 @@ export const FILE_SETTING_ZERO_LABELS: Record<string, "unlimited" | "disabled" |
   "file.file_full_context_max_bytes": "unlimited",
   "file.full_context_max_tokens": "unlimited",
   "file.full_context_pdf_max_pages": "unlimited",
-  "file.image_attachment_processor_max_bytes": "unlimited",
-  "file.image_attachment_analysis_max_chars": "unlimited",
-  "file.image_attachment_analysis_total_max_chars": "unlimited",
   "file.image_max_dimension": "noResize",
-  "file.prepared_image_cache_max_entries": "disabled",
-  "file.prepared_image_cache_max_bytes": "disabled",
   "chat.rag_retrieval_cache_ttl_seconds": "disabled",
   "chat.rag_query_history_turns": "currentMessageOnly",
 };
@@ -216,14 +211,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     title: "Upload limits",
     description: "Controls attachment count, MIME allowlist, and file size limits for chat messages.",
     fields: [
-      {
-        namespace: "storage",
-        key: "max_message_files",
-        label: "Attachment limit",
-        description: "Maximum number of attachments allowed in one chat message.",
-        type: "int",
-        placeholder: "Enter a count"
-      },
+      { namespace: "file", key: "temporary_chat_max_attachments", label: "Temporary chat attachment limit", description: "Maximum attachments in one temporary chat request, including history.", type: "int" },
       {
         namespace: "file",
         key: "allowed_mime_types",
@@ -298,39 +286,11 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         namespace: "file",
         key: "image_max_dimension",
         label: "Maximum image edge for sending",
-        description: "Resize the sending copy proportionally when its longest edge exceeds this pixel count. Set 0 to disable local resizing; the stored original is preserved.",
+        description: "Limits the longest edge of sent images, scaling larger images proportionally; set 0 for no resizing.",
         type: "int",
         placeholder: "1024",
       },
-      { namespace: "file", key: "prepared_image_cache_max_entries", label: "Cached image count", description: "Maximum prepared image cache entries; 0 disables caching.", type: "int", subgroupKey: "prepared_image_cache" },
-      { namespace: "file", key: "prepared_image_cache_max_bytes", label: "Prepared image cache size", description: "Maximum prepared image cache size; 0 disables caching.", type: "int", valueUnit: "mb", subgroupKey: "prepared_image_cache" },
-    ],
-  },
-  {
-    key: "temporaryAttachments",
-    title: "Temporary chat attachments",
-    description: "Limits for attachments and request bodies in temporary chats.",
-    fields: [
-      { namespace: "file", key: "temporary_chat_max_attachments", label: "Request attachment count", description: "Maximum total attachments in one temporary chat request. Per-message attachment limits still apply.", type: "int" },
-      { namespace: "file", key: "temporary_chat_request_max_bytes", label: "Base request budget", description: "Base JSON request budget. Multipart uploads additionally include the applicable attachment budget.", type: "int", valueUnit: "mb" },
-    ],
-  },
-  {
-    key: "imageTools",
-    title: "Image tools",
-    description: "Input and analysis limits for image tools.",
-    fields: [
-      { namespace: "file", key: "image_attachment_processor_max_bytes", label: "Total image tool input", description: "Combined size of prepared images sent to image tools; 0 adds no limit.", type: "int", valueUnit: "mb" },
-      { namespace: "file", key: "image_attachment_analysis_max_chars", label: "Single image analysis", description: "Maximum returned analysis characters per image; 0 adds no limit.", type: "int" },
-      { namespace: "file", key: "image_attachment_analysis_total_max_chars", label: "Total image analysis", description: "Maximum returned analysis characters across all images; 0 adds no limit.", type: "int" },
-    ],
-  },
-  {
-    key: "generatedFiles",
-    title: "Generated files",
-    description: "Storage limits for model-generated files.",
-    fields: [
-      { namespace: "file", key: "generated_image_max_bytes", label: "Generated image save limit", description: "Maximum downloaded size of one generated image saved to file storage.", type: "int", valueUnit: "mb" },
+      { namespace: "file", key: "generated_image_max_bytes", label: "Generated image save limit", description: "Maximum saved size of a single generated image, in MB.", type: "int", valueUnit: "mb" },
     ],
   },
   {
@@ -338,8 +298,6 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     title: "Content extraction",
     description: "Controls the primary extraction pipeline, shared OCR engine, and OCR activation scope.",
     fields: [
-      { namespace: "extract", key: "source_max_bytes", label: "Extraction source size", description: "Maximum source bytes read by content extraction services.", type: "int", valueUnit: "mb" },
-      { namespace: "extract", key: "response_max_bytes", label: "Extraction response size", description: "Maximum response bytes read from content extraction services.", type: "int", valueUnit: "mb" },
       {
         namespace: "extract",
         key: "engine",
@@ -454,8 +412,6 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         visibleWhen: { field: "extract.engine", equals: EXTRACT_ENGINE_POLICIES.MINERU },
         subgroupKey: "mineru",
       },
-      { namespace: "extract", key: "mineru_archive_max_bytes", label: "MinerU archive read limit", description: "Maximum downloaded result archive size.", type: "int", valueUnit: "mb", visibleWhen: { field: "extract.engine", equals: EXTRACT_ENGINE_POLICIES.MINERU }, subgroupKey: "mineru" },
-      { namespace: "extract", key: "mineru_text_max_bytes", label: "MinerU text read limit", description: "Maximum extracted result text size.", type: "int", valueUnit: "mb", visibleWhen: { field: "extract.engine", equals: EXTRACT_ENGINE_POLICIES.MINERU }, subgroupKey: "mineru" },
       {
         namespace: "extract",
         key: "tika_auth_token",
@@ -507,8 +463,6 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         ],
         visibleWhen: OCR_ENABLED_RULE,
       },
-      { namespace: "extract", key: "ocr_source_max_bytes", label: "OCR source size", description: "Maximum source bytes read by OCR services.", type: "int", valueUnit: "mb", visibleWhen: OCR_ENABLED_RULE },
-      { namespace: "extract", key: "ocr_response_max_bytes", label: "OCR response size", description: "Maximum response bytes read from OCR services.", type: "int", valueUnit: "mb", visibleWhen: OCR_ENABLED_RULE },
       {
         namespace: "extract",
         key: "tesseract_ocr_base_url",
@@ -802,7 +756,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         namespace: "file",
         key: "full_context_limit_enabled",
         label: "Full-text injection limits",
-        description: "Enable byte, token, and PDF page limits for full-text injection.",
+        description: "Limit extracted text size and tokens per file. The model context limit still applies.",
         type: "bool",
       },
       {
@@ -820,15 +774,6 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         key: "full_context_max_tokens",
         label: "Full-text token limit",
         description: "Maximum token budget allowed for full-context injection. Leave empty or use 0 for no token limit.",
-        type: "int",
-        placeholder: "Empty or 0 means unlimited",
-        visibleWhen: { field: "file.full_context_limit_enabled", equals: FULL_CONTEXT_LIMIT_MODES.ON },
-      },
-      {
-        namespace: "file",
-        key: "full_context_pdf_max_pages",
-        label: "Full-text page limit",
-        description: "Maximum PDF pages allowed for full-context injection. Leave empty or use 0 for no page limit.",
         type: "int",
         placeholder: "Empty or 0 means unlimited",
         visibleWhen: { field: "file.full_context_limit_enabled", equals: FULL_CONTEXT_LIMIT_MODES.ON },

@@ -11,13 +11,11 @@
     "title": "模型输入预算",
     "description": "预算作用于包含历史消息的完整模型请求。MB = 1,000,000 字节。0 表示不设置额外上限，留空表示继承。实际输入仍需模型支持。",
     "scope": "配置范围",
-    "profileDefaults": "渠道默认预算",
-    "profile": "渠道",
-    "inheritanceProfile": "继承预算预览",
-    "overrideDescription": "覆盖适用于此上游的所有模型。留空字段继承模型对应渠道的预算；选择渠道可预览继承值。",
-    "protocolScope": "协议与任务范围",
-    "protocolDescription": "渠道共同值适用于全部协议；协议特例优先于共同值，留空逐级继承。",
-    "allProtocols": "全部协议共同值",
+    "profileDefaults": "默认设置",
+    "profile": "默认规则",
+    "protocolScope": "调用方式",
+    "allProtocols": "全部调用方式",
+    "variesByProtocol": "按调用方式",
     "providerConditions": "供应商条件与预算来源",
     "providerSource": "官方文档 · 核对日期 2026-11-04",
     "conditions": {
@@ -32,7 +30,7 @@
       "openrouter_images": "图片编辑任务最多 16 张输入图；实际供应商和模型条件仍独立生效。"
     },
     "openSettings": "前往文件设置",
-    "summaryScope": "按已保存的聊天默认协议 {protocol} 显示运营预算；模型指定协议及供应商条件可能更严格。",
+    "summaryScope": "当前对话调用方式：{protocol}",
     "summaryFailed": "预算摘要加载失败，请前往文件设置查看。",
     "protocolOverride": "使用本渠道的协议特例",
     "upstreamOverride": "使用本渠道共同值",
@@ -66,6 +64,10 @@
       "openrouter_images": "OpenRouter Images"
     },
     "fields": {
+      "messageFileCount": {
+        "label": "单条消息附件数量",
+        "description": "所选渠道单条消息允许添加的附件总数，包含图片和文件。"
+      },
       "requestBytes": {
         "label": "最终请求体",
         "description": "序列化后请求体的上限，包含编码后的附件、文本、工具及其他参数。"
@@ -118,8 +120,8 @@
       "description": "设置临时会话的附件与基础请求预算。"
     },
     "imageTools": {
-      "title": "图片工具",
-      "description": "设置图片工具的输入与分析结果预算。"
+      "title": "图片分析与生成",
+      "description": "设置图片分析与生成图片的大小上限。"
     },
     "generatedFiles": {
       "title": "生成文件",
@@ -326,8 +328,8 @@
         "description": "图片处理结果缓存的总大小上限，单位为 MB；0 表示禁用缓存。"
       },
       "temporary_chat_max_attachments": {
-        "label": "临时请求附件总数",
-        "description": "单个临时会话请求可携带的附件总数；每条消息仍受上传设置的附件数量限制。"
+        "label": "临时会话附件数量上限",
+        "description": "用于限制单次临时会话请求的附件总数，包含历史消息中的附件。"
       },
       "temporary_chat_request_max_bytes": {
         "label": "基础请求预算",
@@ -347,11 +349,11 @@
       },
       "generated_image_max_bytes": {
         "label": "生成图片单文件保存上限",
-        "description": "从模型下载并保存到文件库的单张生成图片大小上限，单位为 MB。"
+        "description": "单张生成图片的保存上限，页面单位为 MB。"
       },
       "full_context_limit_enabled": {
         "label": "全文注入限制",
-        "description": "开启后按大小、Token 和 PDF 页数限制全文注入；关闭后不再限制全文注入阈值。"
+        "description": "限制单个文件提取文字的大小和 Token 数；模型的总上下文限制仍然生效。"
       },
       "file_full_context_max_bytes": {
         "label": "全文大小上限",

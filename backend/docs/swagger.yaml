@@ -602,6 +602,70 @@ definitions:
     required:
     - updatedAt
     type: object
+  AttachmentReadinessIssueResponse:
+    properties:
+      actual:
+        type: integer
+      dimension:
+        type: string
+      fileCategory:
+        enum:
+        - image
+        - pdf
+        - document
+        - audio
+        - video
+        - other
+        type: string
+      fileName:
+        type: string
+      limit:
+        type: integer
+      scope:
+        enum:
+        - current
+        - history
+        - context
+        type: string
+    required:
+    - actual
+    - dimension
+    - limit
+    type: object
+  AttachmentReadinessLimitsResponse:
+    properties:
+      imageBytes:
+        type: integer
+      imageCount:
+        type: integer
+      imageSingleBytes:
+        type: integer
+      nativeBytes:
+        type: integer
+      nativeCount:
+        type: integer
+      nonPDFBytes:
+        type: integer
+      pdfBytes:
+        type: integer
+      pdfPages:
+        type: integer
+      pdfSingleBytes:
+        type: integer
+      requestBytes:
+        type: integer
+    required:
+    - imageBytes
+    - imageCount
+    - imageSingleBytes
+    - nativeBytes
+    - nativeCount
+    - nonPDFBytes
+    - pdfBytes
+    - pdfPages
+    - pdfSingleBytes
+    - requestBytes
+    type: object
   AuditLogListResponseDoc:
     properties:
       data:
@@ -6661,15 +6725,18 @@ definitions:
       fileIDs:
         items:
           type: string
-        maxItems: 100
-        minItems: 1
         type: array
       model:
         maxLength: 128
         type: string
-    required:
-    - fileIDs
-    - model
+      parentMessagePublicID:
+        maxLength: 32
+        type: string
+      selectedToolIDs:
+        items:
+          type: integer
+        maxItems: 128
+        type: array
     type: object
   NativeReadinessResponse:
     properties:
@@ -6705,8 +6772,19 @@ definitions:
     type: object
   NativeToolPricingResponse:
     properties:
+      issues:
+        items:
+          $ref: '#/definitions/AttachmentReadinessIssueResponse'
+        type: array
+      limits:
+        $ref: '#/definitions/AttachmentReadinessLimitsResponse'
+      messageFileCount:
+        type: integer
       billable:
         type: boolean
+    - issues
+    - limits
+    - messageFileCount
       description:
         type: string
       label:
@@ -9036,7 +9114,6 @@ definitions:
       fileIDs:
         items:
           type: string
-        maxItems: 20
         type: array
       htmlVisualPrompt:
         type: boolean
@@ -9722,7 +9799,6 @@ definitions:
   TemporaryChatHistoryMessage:
     properties:
       content:
-        maxLength: 200000
         type: string
       role:
         enum:
@@ -9751,7 +9827,6 @@ definitions:
       messages:
         items:
           $ref: '#/definitions/TemporaryChatHistoryMessage'
-        maxItems: 100
         minItems: 1
         type: array
       model:
@@ -21120,7 +21195,7 @@ paths:
       consumes:
       - application/json
       parameters:
-      - description: 模型与本轮全部附件
+      - description: 模型、当前分支父消息及本轮附件
         in: body
         name: request
         required: true
@@ -21151,7 +21226,7 @@ paths:
             $ref: '#/definitions/ConversationErrorDoc'
       security:
       - BearerAuth: []
-      summary: 查询本轮附件原生输入资格
+      summary: 查询所选模型的附件输入限制与当前分支附件状态
       tags:
       - chat
   /files/processing/statuses:
@@ -23599,6 +23674,10 @@ paths:
     post:
       consumes:
       - application/json
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
       parameters:
       - description: 组件内容
         in: body

@@ -2,6 +2,7 @@
 
 import { Loader2, Save } from "lucide-react";
 import { useTranslations } from "next-intl";
+import { useSearchParams } from "next/navigation";
 import * as React from "react";
 import { Button } from "@/components/ui/button";
 import { SettingsValueInput } from "@/features/admin/components/shared/settings-value-input";
@@ -10,16 +11,11 @@ import { useAdminFilesInputLimitsUpstreams } from "@/features/admin/hooks/use-ad
 import {
   formatInputLimit,
   INPUT_LIMIT_FIELDS,
-  INPUT_LIMIT_PROFILES,
-  INPUT_LIMIT_PROTOCOLS,
-  type InputLimitProfile,
   parseInputLimits,
   parseInputLimitValue,
-  resolveInputLimitProfile,
   resolveInheritedInputLimit,
   setInputLimit,
 } from "@/features/admin/model/file-input-limits";
-import { resolveProtocolLabel } from "@/features/admin/utils/llm-display";
 import { SettingsFieldItem, SettingsFieldList, SettingsFieldRow, SettingsSection } from "@/shared/components/settings-layout";
 
 type Props = {
@@ -35,30 +31,36 @@ type Props = {
 export function FilesInputLimits({ value, defaultValue, savedValue, loading, saving, onChange, onSave }: Props) {
   const t = useTranslations("adminFiles.inputLimits");
   const tActions = useTranslations("common.actions");
-  const [profile, setProfile] = React.useState<InputLimitProfile>("openai");
+  const searchParams = useSearchParams();
+  const requestedUpstream = searchParams.get("inputLimitsUpstream") ?? "";
+  const scrollTarget = React.useRef<HTMLElement>(null);
+  const scrolledLink = React.useRef<string | null>(null);
   const [upstream, setUpstream] = React.useState("");
-  const [protocol, setProtocol] = React.useState("");
   const { upstreams, loading: upstreamsLoading, error: upstreamsError, retry: retryUpstreams } = useAdminFilesInputLimitsUpstreams();
   const [drafts, setDrafts] = React.useState<Record<string, string>>({});
   const config = React.useMemo(() => parseInputLimits(value), [value]);
   const savedConfig = React.useMemo(() => parseInputLimits(savedValue), [savedValue]);
   const defaults = React.useMemo(() => parseInputLimits(defaultValue), [defaultValue]);
   const disabled = loading || saving;
-  const selectedUpstream = upstreams.find((item) => String(item.id) === upstream);
-  const selectedProfile = upstream && protocol ? resolveInputLimitProfile(protocol, selectedUpstream?.baseURL ?? "") : profile;
-  const scope = upstream ? `upstream:${upstream}:${protocol}` : `profile:${profile}`;
+  const scope = upstream || "defaults";
   const hasInvalidDraft = Object.entries(drafts).some(([key, raw]) => {
     const field = INPUT_LIMIT_FIELDS.find((item) => key.endsWith(`:${item.key}`));
     return field && parseInputLimitValue(raw, field.unit === "mb") === undefined;
   });
 
   React.useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const requestedUpstream = params.get("inputLimitsUpstream");
-    if (requestedUpstream && /^[1-9]\d*$/.test(requestedUpstream)) setUpstream(requestedUpstream);
-    const requestedProtocol = params.get("inputLimitsProtocol");
-    if (INPUT_LIMIT_PROTOCOLS.some((item) => item === requestedProtocol)) setProtocol(requestedProtocol ?? "");
-  }, []);
+    setUpstream(/^[1-9]\d*$/.test(requestedUpstream) ? requestedUpstream : "");
+  }, [requestedUpstream]);
+
+  React.useEffect(() => {
+    if (loading || upstreamsLoading || window.location.hash !== "#model-input-budgets") return;
+    if (scrolledLink.current === requestedUpstream) return;
+    const frame = window.requestAnimationFrame(() => {
+      scrollTarget.current?.scrollIntoView({ block: "start" });
+      scrolledLink.current = requestedUpstream;
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [loading, upstreamsLoading, requestedUpstream]);
 
   React.useEffect(() => {
     // A successful save or reload establishes a new baseline for numeric drafts.
@@ -69,6 +71,8 @@ export function FilesInputLimits({ value, defaultValue, savedValue, loading, sav
   return (
     <SettingsSection
       id="model-input-budgets"
+      ref={scrollTarget}
+      className="scroll-mt-4"
       title={t("title")}
       actions={value !== savedValue ? (
         <Button size="sm" type="button" disabled={disabled || !config || hasInvalidDraft} onClick={onSave}>
@@ -77,56 +81,26 @@ export function FilesInputLimits({ value, defaultValue, savedValue, loading, sav
         </Button>
       ) : null}
     >
-      <div className="grid min-w-0 gap-3 sm:grid-cols-2">
-        <div className="min-w-0 space-y-1.5">
-          <label htmlFor="input-limits-upstream" className="text-xs font-medium">{t("scope")}</label>
-          <Select value={upstream || "profiles"} disabled={disabled || upstreamsLoading} onValueChange={(next) => {
-            setUpstream(next === "profiles" ? "" : next);
-            setProtocol("");
-          }}>
-            <SelectTrigger id="input-limits-upstream"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="profiles">{t("profileDefaults")}</SelectItem>
-              {upstreams.map((item) => <SelectItem key={item.id} value={String(item.id)}>{item.name}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="min-w-0 space-y-1.5">
-          <label htmlFor="input-limits-profile" className="text-xs font-medium">{t(upstream ? "inheritanceProfile" : "profile")}</label>
-          <Select value={selectedProfile} disabled={disabled || Boolean(upstream && protocol)} onValueChange={(next) => {
-            const selected = INPUT_LIMIT_PROFILES.find((item) => item === next);
-            if (selected) setProfile(selected);
-          }}>
-            <SelectTrigger id="input-limits-profile"><SelectValue /></SelectTrigger>
-            <SelectContent>{INPUT_LIMIT_PROFILES.map((item) => <SelectItem key={item} value={item}>{t(`profiles.${item}`)}</SelectItem>)}</SelectContent>
-          </Select>
-        </div>
-      </div>
-      <p className="text-[11px] leading-5 text-muted-foreground">{t("inheritanceDescription")}</p>
-      {upstream ? (
-        <SettingsFieldRow title={t("protocolScope")} description={t("protocolDescription")}>
-          <Select value={protocol || "all"} disabled={disabled} onValueChange={(next) => setProtocol(next === "all" ? "" : next)}>
-            <SelectTrigger aria-label={t("protocolScope")}><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="all">{t("allProtocols")}</SelectItem>
-              {INPUT_LIMIT_PROTOCOLS.map((item) => <SelectItem key={item} value={item}>{resolveProtocolLabel(item)}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </SettingsFieldRow>
-      ) : null}
+      <SettingsFieldRow title={t("scope")} description={t("inheritanceDescription")}>
+        <Select value={upstream || "defaults"} disabled={disabled || upstreamsLoading} onValueChange={(next) => setUpstream(next === "defaults" ? "" : next)}>
+          <SelectTrigger id="input-limits-upstream" aria-label={t("scope")}><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="defaults">{t("systemDefault")}</SelectItem>
+            {upstreams.map((item) => <SelectItem key={item.id} value={String(item.id)}>{item.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </SettingsFieldRow>
       {upstreamsLoading ? <p className="text-[11px] text-muted-foreground" role="status">{t("loadingUpstreams")}</p> : null}
       {upstreamsError ? <div className="flex items-center gap-2 text-[11px] text-destructive" role="alert">{t("upstreamsFailed")}<Button size="sm" variant="ghost" onClick={retryUpstreams}>{t("retry")}</Button></div> : null}
-      {upstream ? <p className="text-[11px] leading-5 text-muted-foreground">{t("overrideDescription")}</p> : null}
       {loading ? <p className="text-xs text-muted-foreground" role="status">{t("loading")}</p> : !config ? (
         <p className="text-xs text-destructive" role="alert">{t("invalidConfig")}</p>
       ) : (
         <SettingsFieldList>
           {INPUT_LIMIT_FIELDS.map((field, index) => {
             const bytes = field.unit === "mb";
-            const base = config.profiles[selectedProfile]?.[field.key];
-            const stored = upstream ? protocol ? config.upstreams[upstream]?.protocols?.[protocol]?.[field.key] : config.upstreams[upstream]?.[field.key] : base;
-            const saved = upstream ? protocol ? savedConfig?.upstreams[upstream]?.protocols?.[protocol]?.[field.key] : savedConfig?.upstreams[upstream]?.[field.key] : savedConfig?.profiles[selectedProfile]?.[field.key];
-            const inherited = resolveInheritedInputLimit(config, defaults, selectedProfile, upstream, field.key, protocol);
+            const stored = upstream ? config.upstreams[upstream]?.[field.key] : config.defaults[field.key];
+            const saved = upstream ? savedConfig?.upstreams[upstream]?.[field.key] : savedConfig?.defaults[field.key];
+            const inherited = resolveInheritedInputLimit(config, defaults, upstream, field.key);
             const draftKey = `${scope}:${field.key}`;
             const raw = drafts[draftKey] ?? formatInputLimit(stored, bytes);
             const invalid = parseInputLimitValue(raw, bytes) === undefined;
@@ -151,7 +125,7 @@ export function FilesInputLimits({ value, defaultValue, savedValue, loading, sav
                           const next = event.target.value;
                           setDrafts((current) => ({ ...current, [draftKey]: next }));
                           const parsed = parseInputLimitValue(next, bytes);
-                          if (parsed !== undefined) onChange(JSON.stringify(setInputLimit(config, selectedProfile, upstream, field.key, parsed, protocol)));
+                          if (parsed !== undefined) onChange(JSON.stringify(setInputLimit(config, upstream, field.key, parsed)));
                         }}
                       />
                     {invalid ? <p id={`input-limit-${field.key}-status`} className="text-[10px] leading-4 text-destructive">

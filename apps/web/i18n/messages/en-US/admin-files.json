@@ -10,14 +10,12 @@
     "unlimited": "No limit",
     "title": "Model input budgets",
     "description": "Budgets apply to the complete model request, including conversation history. MB = 1,000,000 bytes. Set 0 for no additional limit; leave empty to inherit. Actual model input support still applies.",
-    "scope": "Configuration scope",
-    "profileDefaults": "Channel defaults",
-    "profile": "Channel",
-    "inheritanceProfile": "Inherited budget preview",
-    "overrideDescription": "Overrides apply to every model on this upstream. Empty fields inherit the model's channel budget; select a channel to preview its values.",
-    "protocolScope": "Protocol and task scope",
-    "protocolDescription": "Shared upstream values apply to all protocols. Protocol-specific values take precedence; empty fields inherit the next level.",
-    "allProtocols": "Shared across all protocols",
+    "scope": "Scope",
+    "profileDefaults": "Default settings",
+    "profile": "Default rule",
+    "protocolScope": "API",
+    "allProtocols": "All APIs",
+    "variesByProtocol": "Varies by API",
     "providerConditions": "Provider conditions and budget sources",
     "providerSource": "Official documentation · checked November 4, 2026",
     "conditions": {
@@ -32,7 +30,7 @@
       "openrouter_images": "Image editing accepts at most 16 input images. Provider and model conditions still apply independently."
     },
     "openSettings": "Open file settings",
-    "summaryScope": "Operating budgets for the saved default chat protocol, {protocol}. Model-specific protocols and provider conditions may be stricter.",
+    "summaryScope": "Current chat API: {protocol}",
     "summaryFailed": "Could not load budget summary. Open file settings to inspect it.",
     "protocolOverride": "Using this upstream's protocol-specific value",
     "upstreamOverride": "Using this upstream's shared value",
@@ -66,6 +64,10 @@
       "openrouter_images": "OpenRouter Images"
     },
     "fields": {
+      "messageFileCount": {
+        "label": "Attachments per message",
+        "description": "Maximum attachments per message on this channel, including images and files."
+      },
       "requestBytes": {
         "label": "Final request payload",
         "description": "Maximum serialized request body, including encoded attachments, text, tools and other parameters."
@@ -118,8 +120,8 @@
       "description": "Attachment and base request limits for temporary chats."
     },
     "imageTools": {
-      "title": "Image tools",
-      "description": "Input and analysis budgets for image tools."
+      "title": "Image analysis and generation",
+      "description": "Limits for image analysis and generated images."
     },
     "generatedFiles": {
       "title": "Generated files",
@@ -326,8 +328,8 @@
         "description": "Maximum total image processing cache size, in MB; 0 disables caching."
       },
       "temporary_chat_max_attachments": {
-        "label": "Request attachment count",
-        "description": "Maximum attachments across one temporary chat request. Per-message upload attachment limits still apply."
+        "label": "Temporary chat attachment limit",
+        "description": "Maximum attachments in one temporary chat request, including conversation history."
       },
       "temporary_chat_request_max_bytes": {
         "label": "Base request budget",
@@ -347,11 +349,11 @@
       },
       "generated_image_max_bytes": {
         "label": "Generated image save limit",
-        "description": "Maximum downloaded size of one generated image saved to file storage, in MB."
+        "description": "Maximum saved size of a single generated image, in MB."
       },
       "full_context_limit_enabled": {
         "label": "Full-text injection limits",
-        "description": "When enabled, full-text injection is limited by size in MB, token budget, and PDF pages. When disabled, these limits are ignored."
+        "description": "Limit extracted text size and tokens per file. The model's total context limit still applies."
       },
       "file_full_context_max_bytes": {
         "label": "Full-text size limit",

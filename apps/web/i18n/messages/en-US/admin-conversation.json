@@ -44,7 +44,7 @@
     },
     "contextTokenBudget": {
       "label": "Token budget protection",
-      "description": "Automatically trim history that exceeds the model context budget."
+      "description": "Check the model context budget before sending and stop requests that exceed it. If automatic compression is enabled, try compressing history first."
     },
     "contextMaxTurns": {
       "label": "Compression trigger turns",

@@ -60,7 +60,7 @@ export function useChatSubmissionQueue({
 
   const onEditQueuedMessage = React.useCallback((id: string, content: string) => {
     setQueuedSubmissions((current) =>
-      current.map((item) => (item.id === id ? { ...item, content: content.trim() } : item)),
+      current.map((item) => (item.id === id ? { ...item, content: content.trim(), originalDraft: content } : item)),
     );
   }, []);
 

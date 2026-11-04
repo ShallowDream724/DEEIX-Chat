@@ -50,8 +50,7 @@ func nativePDF(fileID string, size int64, pages int, current bool) AttachmentInp
 	}
 }
 
-// 预算内越新的文件越优先；RAG或全文上限不会阻止原生输入；助手生成和过大的文件不原生发送。
-func TestSelectNativeDocumentsPrefersNewestWithinBudget(t *testing.T) {
+func TestSelectNativeDocumentsDoesNotDropOlderFiles(t *testing.T) {
 	retrieval := nativePDF("retrieval", 1024, 2, false)
 	retrieval.ContextMode = fileContextModeRAG
 	assistant := nativePDF("assistant", 1024, 2, false)
@@ -60,26 +59,16 @@ func TestSelectNativeDocumentsPrefersNewestWithinBudget(t *testing.T) {
 	scanned.ContextMode, scanned.ExtractedText = fileContextModeSkipped, ""
 	tooLong := nativePDF("too_long_text", 1024, 3, false)
 	tooLong.ContextMode = fileContextModeSkipped
-	attachments := []AttachmentInput{
-		nativePDF("oldest", 4*1024*1024, 10, false),
-		retrieval, assistant, scanned, tooLong,
-		nativePDF("huge", maxNativePDFTotalBytes+1, 1, false),
-		nativePDF("recent", 3*1024*1024, 40, false),
-		nativePDF("current", 2*1024*1024, 50, true),
+	policy := nativeInputPolicy{PDF: true, budgetConfigured: true, Budget: nativeInputBudget{Count: 3}}
+	files := []AttachmentInput{retrieval, assistant, scanned, tooLong}
+	if selected := selectNativeInputs(files, policy); len(selected) != 3 || selected[0].FileID != retrieval.FileID {
+		t.Fatalf("all historical user PDFs should fit and the assistant output should be excluded: %#v", selected)
 	}
-
-	selected := selectNativeInputs(attachments, nativeInputPolicy{PDF: true})
-
-	ids := make([]string, 0, len(selected))
-	for _, att := range selected {
-		ids = append(ids, att.FileID)
-	}
-	// 原生输入与解析模式解耦；oldest 超出整体预算。
-	if got := strings.Join(ids, ","); got != "current,recent,too_long_text,scanned,retrieval" {
-		t.Fatalf("selected = %q", got)
-	}
-	if len(selectNativeInputs(attachments, nativeInputPolicy{})) != 0 {
-		t.Fatal("no native documents without PDF support")
+	files = append(files, nativePDF("current", 1024, 1, true))
+	selected, rejected := selectNativeInputsWithRejections(files, policy)
+	err := validateRequiredNativeInputs(files, nativeInputs{Policy: policy, Rejected: rejected})
+	if detail := llm.InputLimitDetails(err); len(selected) != 0 || detail == nil || detail.Dimension != "nativeCount" || detail.Actual != 4 {
+		t.Fatalf("all four user files are required: selected=%#v, err=%v", selected, err)
 	}
 }
 
@@ -91,6 +80,7 @@ func TestBuildMessageRoutePromptSendsNativePDFPerRoute(t *testing.T) {
 	}
 	service := &Service{storeProvider: &conversationTestStoreProvider{store: store}}
 	report := nativePDF("report", int64(len("%PDF-1.7 report")), 2, true)
+	report.ContextMode = fileContextModeNativeDocument
 	input := messageRoutePromptInput{
 		DomainMessages:    []model.Message{{Role: "user", Content: "总结这份报告"}},
 		ConversationFiles: []AttachmentInput{report},
@@ -133,30 +123,23 @@ func TestBuildMessageRoutePromptSendsNativePDFPerRoute(t *testing.T) {
 	}
 }
 
-// 纯文本模型：图片不再以图片内容块发送，所属轮次留「不支持」说明，模型能如实告知用户。
-func TestBuildMessageRoutePromptExplainsImagesForTextOnlyModels(t *testing.T) {
+func TestBuildMessageRoutePromptRejectsUserImagesForTextOnlyModels(t *testing.T) {
 	service := &Service{}
 	image := AttachmentInput{FileID: "photo", FileName: "photo.png", Kind: "image", MimeType: "image/png", StoragePath: "images/photo",
 		ContextMode: fileContextModeDirectImage, Current: true, MessageRole: "user"}
-	plan, err := service.buildMessageRoutePrompt(t.Context(), &channel.ResolvedRoute{
+	route := &channel.ResolvedRoute{
 		Protocol: llm.AdapterOpenAIChatCompletions, CatalogInputModalities: []string{"text"},
-	}, messageRoutePromptInput{
-		DomainMessages:    []model.Message{{Role: "user", Content: "图里是什么"}},
-		ConversationFiles: []AttachmentInput{image},
-		DynamicContext:    userContextInput{Attachments: []AttachmentInput{image}},
-	})
-	if err != nil {
-		t.Fatalf("build prompt: %v", err)
 	}
-	latest := plan.Messages[len(plan.Messages)-1]
-	for _, part := range latest.Parts {
-		if part.Kind == llm.ContentPartImage {
-			t.Fatalf("text-only models must not receive image parts, got %#v", latest.Parts)
+	for _, scope := range []string{"current", "history"} {
+		image.Current = scope == "current"
+		_, err := service.buildMessageRoutePrompt(t.Context(), route, messageRoutePromptInput{
+			DomainMessages:    []model.Message{{Role: "user", Content: "图里是什么"}},
+			ConversationFiles: []AttachmentInput{image},
+		})
+		if detail := AttachmentInputErrorDetails(err); !errors.Is(err, ErrFileUnsupportedByModel) ||
+			detail == nil || detail.FileName != "photo.png" || detail.Scope != scope {
+			t.Fatalf("expected an unsupported %s image error with its name, got %v (%#v)", scope, err, detail)
 		}
-	}
-	documents, question := turnParts(t, latest)
-	if !strings.Contains(documents, `<document source="photo.png" access="unsupported">`) || question != "图里是什么" {
-		t.Fatalf("expected an unsupported note before the question, got %#v", latest)
 	}
 }
 
@@ -301,17 +284,14 @@ func TestSelectNativeInputsSharesBudgetWithMedia(t *testing.T) {
 		nativePDF("report", 4*1024*1024, 10, false),
 		nativeMedia("voice.mp3", "audio/mpeg", 5*1024*1024),
 	}
-	ids := make([]string, 0)
-	for _, att := range selectNativeInputs(attachments, policy) {
-		ids = append(ids, att.FileID)
-	}
-	// voice(5MB)+report(4MB) 后只剩 5MB，old.mp4(6MB) 超出总预算。
-	if got := strings.Join(ids, ","); got != "voice.mp3,report" {
-		t.Fatalf("selected = %q", got)
+	selected, rejected := selectNativeInputsWithRejections(attachments, policy)
+	err := validateRequiredNativeInputs(attachments, nativeInputs{Policy: policy, Rejected: rejected})
+	if detail := llm.InputLimitDetails(err); len(selected) != 0 || detail == nil || detail.Dimension != "nativeBytes" || detail.Actual != 15*1024*1024 {
+		t.Fatalf("all user media must be budgeted together; assistant output is excluded: selected=%#v, err=%v", selected, err)
 	}
 }
 
-// 端到端：Gemini 路由原生发送音频；本轮音频不支持时明确失败，历史附件保留原有说明。
+// Gemini 原生发送音频；本轮或历史音频不支持时拒绝发送。
 func TestBuildMessageRoutePromptSendsNativeAudioPerRoute(t *testing.T) {
 	store := objectstorage.NewLocal(t.TempDir())
 	if _, err := store.Put(t.Context(), "files/voice.mp3", bytes.NewReader([]byte("ID3 audio")), objectstorage.PutOptions{ContentType: "audio/mpeg"}); err != nil {
@@ -346,17 +326,8 @@ func TestBuildMessageRoutePromptSendsNativeAudioPerRoute(t *testing.T) {
 	}
 	input.ConversationFiles[0].Current = false
 	input.DomainMessages[0].Attachments = `[{"file_id":"voice.mp3"}]`
-	textOnly, err := service.buildMessageRoutePrompt(t.Context(), unsupported, input)
-	if err != nil {
-		t.Fatalf("build fallback prompt: %v", err)
-	}
-	latest := textOnly.Messages[len(textOnly.Messages)-1]
-	for _, part := range latest.Parts {
-		if part.Kind == llm.ContentPartAudio {
-			t.Fatalf("routes without audio input must not receive audio, got %#v", part)
-		}
-	}
-	if documents, _ := turnParts(t, latest); !strings.Contains(documents, `<document source="voice.mp3" access="unsupported">`) {
-		t.Fatalf("expected an unsupported note, got %q", documents)
+	_, err = service.buildMessageRoutePrompt(t.Context(), unsupported, input)
+	if detail := AttachmentInputErrorDetails(err); !errors.Is(err, ErrFileUnsupportedByModel) || detail == nil || detail.Scope != "history" {
+		t.Fatalf("historical unreadable audio must stop generation, got %v (%#v)", err, detail)
 	}
 }

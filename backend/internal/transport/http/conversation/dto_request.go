@@ -120,7 +120,7 @@ type SendMessageRequest struct {
 	// Controls 为模型控件选择 {控件 id: 取值}，取值为字符串、布尔或数值；未知控件与无效取值被忽略。
 	Controls                map[string]any `json:"controls,omitempty"`
 	ClientRunID             string         `json:"clientRunID,omitempty" binding:"omitempty,max=64"`
-	FileIDs                 []string       `json:"fileIDs,omitempty" binding:"max=20"`
+	FileIDs                 []string       `json:"fileIDs,omitempty" binding:"omitempty,dive,min=1,max=128"`
 	SelectedToolIDs         []uint         `json:"selectedToolIDs,omitempty" binding:"max=128"`
 	SkillIDs                []uint         `json:"skillIDs,omitempty" binding:"max=128"`
 	KnowledgeBaseIDs        []string       `json:"knowledgeBaseIDs,omitempty" binding:"max=8,dive,required,max=32"`
@@ -163,7 +163,7 @@ type TemporaryChatMessageRequest struct {
 	SkillIDs         []uint                        `json:"skillIDs,omitempty" binding:"max=128"`
 	KnowledgeBaseIDs []string                      `json:"knowledgeBaseIDs,omitempty" binding:"omitempty,max=8,dive,max=32"`
 	HTMLVisualPrompt bool                          `json:"htmlVisualPrompt,omitempty"`
-	Messages         []TemporaryChatHistoryMessage `json:"messages" binding:"required,min=1,max=100,dive"`
+	Messages         []TemporaryChatHistoryMessage `json:"messages" binding:"required,min=1,dive"`
 
 	// UIComponentIDs 是本次会话勾选的交互式组件。
 	UIComponentIDs []uint `json:"uiComponentIDs,omitempty" binding:"max=32"`
@@ -187,7 +187,7 @@ type TemporaryChatUIStateRequest struct {
 // TemporaryChatHistoryMessage 是临时对话可提交的消息。
 type TemporaryChatHistoryMessage struct {
 	Role    string `json:"role" binding:"required,oneof=user assistant"`
-	Content string `json:"content" binding:"max=200000"`
+	Content string `json:"content"`
 }
 
 // MediaImageRequest 图片生成/编辑请求。

@@ -2,15 +2,18 @@ package conversation
 
 import (
 	"context"
-	domainuicomponent "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/uicomponent"
+	"encoding/json"
+	"strings"
 
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
+	domainuicomponent "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/uicomponent"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 )
 
 type messageRoutePromptInput struct {
+	UserID                   uint
 	UserContent              string
 	ProjectSystemPrompt      string
 	HTMLVisualPromptEnabled  bool
@@ -62,6 +65,7 @@ func (s *Service) planRoutePrompt(
 	route *channel.ResolvedRoute,
 ) (PromptPlan, bool, error) {
 	passbackEnabled := s.reasoningContentPassbackEnabled(ctx, userID, route)
+	base.UserID = userID
 	base.ReasoningContentPassback = passbackEnabled
 	plan, err := s.buildMessageRoutePrompt(ctx, route, base)
 	return plan, passbackEnabled, err
@@ -71,38 +75,60 @@ func (s *Service) buildMessageRoutePrompt(ctx context.Context, route *channel.Re
 	// 模型上下文预算在最终 GenerateInput 完整组装后统一执行。这里保留完整活跃
 	// 分支，避免先按历史消息耗尽预算，再遗漏文件、RAG、Skill 与工具定义开销。
 	routeMessages := input.DomainMessages
+	if len(routeMessages) == 0 && len(input.ConversationFiles) > 0 {
+		routeMessages = []model.Message{{Role: "user", Content: input.UserContent}}
+	}
 	historyMessages := historyMessagesFromDomain(routeMessages, historyMessageOptions{
 		ReasoningContentPassback: input.ReasoningContentPassback,
 	})
 	// 原生输入按路由判断：故障转移到另一条路由时重新计算，不把原生内容块发给不支持它的协议。
 	native := s.resolveNativeInputs(ctx, route, input.ConversationFiles, input.NativeInputs, input.Config)
-	if err := validateCurrentNativeReads(input.ConversationFiles, native); err != nil {
+	if err := validateRequiredNativeInputs(input.ConversationFiles, native); err != nil {
 		return PromptPlan{}, err
 	}
-	// A file that bypassed extraction on the initial route must remain readable
-	// after failover. Stop before calling the new upstream if it cannot carry it.
-	for _, att := range input.ConversationFiles {
-		if att.ContextMode == fileContextModeNativeDocument {
-			if _, ok := native.Parts[att.FileID]; !ok {
-				return PromptPlan{}, ErrFileProcessingNotReady
-			}
+	files, err := s.resolveRouteParsedAttachments(ctx, input, native)
+	if err != nil {
+		return PromptPlan{}, err
+	}
+	if err := validatePlannedFileContext(files, input.Config); err != nil {
+		return PromptPlan{}, err
+	}
+	dynamicContext := input.DynamicContext
+	imageMessages := routeMessages
+	if input.SkipImageAttachments {
+		imageMessages, files, dynamicContext.Attachments = withoutProcessedRouteImages(imageMessages, files, dynamicContext)
+	}
+	for _, att := range files {
+		if att.ContextMode == fileContextModeDirectImage && native.Policy.ImageUnsupported {
+			return PromptPlan{}, attachmentInputError(att, ErrFileUnsupportedByModel)
 		}
 	}
 	// 文件按所属轮次就位必须早于图片注入与同角色合并：二者都依赖未合并的历史下标。
-	documents := placeTurnDocuments(historyMessages, routeMessages, input.ConversationFiles, turnDocumentOptions{
-		Native:     native,
-		SkipImages: input.SkipImageAttachments,
+	documents := placeTurnDocuments(historyMessages, routeMessages, files, turnDocumentOptions{
+		Native: native,
 	})
 	historyMessages = documents.Messages
-	dynamicContext := input.DynamicContext
-	if native.Policy.ImageUnsupported || input.SkipImageAttachments {
-		// 模型不支持图片输入：本轮图片与检索命中的图片都不发送，所属轮次已留说明。
+	if native.Policy.ImageUnsupported {
+		// 检索出的图片证据可以省略；用户附件已在上面检查。
 		dynamicContext.Attachments = nil
 		dynamicContext.PreparedImages = nil
 	}
-	if !input.SkipImageAttachments && !native.Policy.ImageUnsupported {
-		var err error
-		historyMessages, err = s.injectConversationImageContext(ctx, historyMessages, routeMessages, input.ConversationFiles, input.Config, native.Policy.InputLimits)
+	if !native.Policy.ImageUnsupported {
+		dynamicContext.Attachments = mergeCurrentRouteImages(dynamicContext.Attachments, files)
+		limits := native.Policy.InputLimits
+		if limits.ImageCount > 0 {
+			historicalCount := len(conversationImageRefs(imageMessages, files))
+			count := historicalCount + len(dynamicContext.Attachments)
+			if count > limits.ImageCount {
+				return PromptPlan{}, attachmentInputError(AttachmentInput{Current: historicalCount <= limits.ImageCount},
+					llm.NewInputLimitError("imageCount", int64(count), int64(limits.ImageCount)))
+			}
+		}
+		// Per-file byte checks apply during reads. Aggregate bytes are measured
+		// after both historical and current images have been prepared.
+		readLimits := limits
+		readLimits.ImageCount, readLimits.ImageBytes = 0, 0
+		historyMessages, err = s.injectConversationImageContext(ctx, historyMessages, imageMessages, files, input.Config, readLimits)
 		if err != nil {
 			return PromptPlan{}, err
 		}
@@ -114,7 +140,8 @@ func (s *Service) buildMessageRoutePrompt(ctx context.Context, route *channel.Re
 		// share one budget, including dynamically retrieved images.
 		imageMessages := append(cloneLLMMessages(historyMessages), llm.Message{Parts: dynamicContext.PreparedImages})
 		if err := validateConversationImageBudget(imageMessages, native.Policy.InputLimits); err != nil {
-			return PromptPlan{}, err
+			historyFits := validateConversationImageBudget(historyMessages, limits) == nil
+			return PromptPlan{}, attachmentInputError(AttachmentInput{Current: historyFits}, err)
 		}
 	}
 	// 图片注入按「过滤后的历史下标」对齐，必须在注入之后合并，避免下标错位。
@@ -147,4 +174,81 @@ func (s *Service) buildMessageRoutePrompt(ctx context.Context, route *channel.Re
 		Config:         input.Config,
 		StoreProvider:  s.storeProvider,
 	}), nil
+}
+
+func mergeCurrentRouteImages(dynamic, files []AttachmentInput) []AttachmentInput {
+	seen := make(map[string]bool, len(dynamic))
+	for _, att := range dynamic {
+		seen[strings.TrimSpace(att.FileID)] = true
+	}
+	var missing []AttachmentInput
+	for _, att := range files {
+		id := strings.TrimSpace(att.FileID)
+		if att.Current && att.ContextMode == fileContextModeDirectImage && !seen[id] {
+			missing = append(missing, att)
+			seen[id] = true
+		}
+	}
+	if len(missing) == 0 {
+		return dynamic
+	}
+	return append(append([]AttachmentInput(nil), dynamic...), missing...)
+}
+
+func (s *Service) resolveRouteParsedAttachments(ctx context.Context, input messageRoutePromptInput, native nativeInputs) ([]AttachmentInput, error) {
+	files := markNativeAttachments(input.ConversationFiles, native)
+	for i, att := range files {
+		if att.ContextMode != fileContextModeNativeDocument {
+			continue
+		}
+		if _, ok := native.Parts[strings.TrimSpace(att.FileID)]; ok {
+			continue
+		}
+		// The initial route read the original PDF and bypassed extraction.
+		// A text-only fallback can send the parsed document if it is available.
+		att.ContextMode = fileContextModeFull
+		if strings.TrimSpace(att.ExtractedText) == "" && s.processingSvc != nil && input.UserID != 0 {
+			hydrated, err := s.hydrateAttachmentsForSend(ctx, input.UserID, []AttachmentInput{att}, nil)
+			if err != nil {
+				return nil, err
+			}
+			att = hydrated[0]
+		}
+		files[i] = att
+	}
+	return files, nil
+}
+
+func withoutProcessedRouteImages(messages []model.Message, files []AttachmentInput, dynamic userContextInput) ([]model.Message, []AttachmentInput, []AttachmentInput) {
+	processed := make(map[string]bool)
+	for _, analysis := range dynamic.ImageAnalyses {
+		processed[strings.TrimSpace(analysis.FileID)] = true
+	}
+	if len(processed) == 0 {
+		return messages, files, dynamic.Attachments
+	}
+	filter := func(items []AttachmentInput) []AttachmentInput {
+		result := make([]AttachmentInput, 0, len(items))
+		for _, att := range items {
+			if !processed[strings.TrimSpace(att.FileID)] {
+				result = append(result, att)
+			}
+		}
+		return result
+	}
+	history := append([]model.Message(nil), messages...)
+	for i := range history {
+		refs := parseAttachmentSnapshotRefs(history[i].Attachments)
+		remaining := make([]attachmentSnapshotRef, 0, len(refs))
+		for _, ref := range refs {
+			if !processed[strings.TrimSpace(ref.FileID)] {
+				remaining = append(remaining, ref)
+			}
+		}
+		if len(remaining) != len(refs) {
+			encoded, _ := json.Marshal(remaining)
+			history[i].Attachments = string(encoded)
+		}
+	}
+	return history, filter(files), filter(dynamic.Attachments)
 }

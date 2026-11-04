@@ -103,6 +103,15 @@ func (s *Service) Seed(ctx context.Context) error {
 	if err := s.repo.UpsertWithDescription(ctx, items); err != nil {
 		return err
 	}
+	if err := s.migrateUntouchedSizeDefaults(ctx, existing); err != nil {
+		return err
+	}
+	if err := s.migrateInputLimitsShape(ctx, existing); err != nil {
+		return err
+	}
+	if err := s.migrateInputBudgetDefaults(ctx, existing); err != nil {
+		return err
+	}
 	// 先安装替代默认值再删除过时键，确保部分
 	// 启动失败时部署不会同时缺失两种配置。
 	for _, item := range obsoleteSettings() {

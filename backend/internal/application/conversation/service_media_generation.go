@@ -17,6 +17,7 @@ import (
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	domainbilling "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/billing"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/filetype"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/textutil"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
@@ -40,7 +41,7 @@ const (
 
 // maxGeneratedImageBytes 是单张生成图片的上限，独立于管理员配置的上传上限：
 // 上传上限约束用户提交的文件，而 4K PNG 输出通常就有 20 MiB 以上。
-const maxGeneratedImageBytes = 50 * 1024 * 1024
+const maxGeneratedImageBytes = config.DefaultGeneratedImageMaxBytes
 
 func (s *Service) generatedImageMaxBytes() int64 {
 	if s != nil && s.cfg != nil {

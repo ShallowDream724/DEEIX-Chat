@@ -29,7 +29,9 @@ export type QueuedChatSubmission = BranchScope & {
   conversationPublicID: string | null;
   conversation: ConversationDTO | null;
   parentMessagePublicID: string | null;
+  composerRevision?: number;
   content: string;
+  originalDraft?: string;
   attachments: PendingAttachment[];
   platformModelName: string;
   options: ConversationOptions;

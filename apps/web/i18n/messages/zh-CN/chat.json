@@ -368,17 +368,14 @@
   "attachments": {
     "limitReached": "附件数量已达上限",
     "maxUploadFiles": "单条消息最多上传 {count} 个文件。",
+    "maxUploadFilesInChannel": "所选渠道单条消息最多支持 {count} 个附件。",
     "policyRejected": "文件不符合当前聊天能力",
     "fileRejected": "{name}：{reason}",
-    "autoTruncated": "附件已自动截断",
-    "autoTruncatedDescription": "最多保留前 {max} 个附件，已忽略 {count} 个超出上限的文件。",
     "uploadFailed": "上传失败",
-    "processingFailed": "“{name}”处理失败",
     "uploadSignInRequired": "未登录，无法上传文件。",
     "dropTitle": "松开以添加附件",
     "duplicateReused": "检测到文件重复，已复用",
     "partialUploadFailed": "部分文件上传失败",
-    "temporaryVideoUnsupported": "临时对话当前支持图片和文档附件，不支持音频和视频附件",
     "retryFailedFiles": "请重试失败的文件。",
     "retryLater": "请稍后重试。",
     "screenshotUnsupported": "当前浏览器不支持屏幕截图",
@@ -392,8 +389,6 @@
   },
   "submit": {
     "attachmentOnlyContent": "请参考附件",
-    "attachmentsTruncated": "附件已自动截断",
-    "attachmentsTruncatedDescription": "单条消息最多发送 {count} 个文件，已自动忽略超出的附件。",
     "noModel": "暂无可用模型",
     "selectModelFirst": "请先选择一个模型。",
     "signInRequired": "未登录，无法发送消息",
@@ -496,6 +491,7 @@
     }
   },
   "composer": {
+    "inputIssueHint": "{count, plural, =1 {{title}} other {{title}，另有 # 项发送限制}}",
     "uploadFile": "上传文件",
     "screenshot": "屏幕截图",
     "openTools": "菜单",

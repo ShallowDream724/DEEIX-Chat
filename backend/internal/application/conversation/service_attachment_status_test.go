@@ -31,7 +31,7 @@ func attachmentStatusFiles() []AttachmentInput {
 	}
 }
 
-func retrieveAttachmentStatus(t *testing.T, embedErr error, candidates []model.FileChunkSearchResult) messageRAGRetrievalResult {
+func retrieveAttachmentStatus(t *testing.T, embedErr error, candidates []model.FileChunkSearchResult) (messageRAGRetrievalResult, error) {
 	t.Helper()
 	cfg := config.Config{RAGEnabled: true, EmbeddingEnabled: true, RAGModel: "embed", EmbeddingHost: "https://embedding.example.invalid", FileFullContextMaxTokens: 10}
 	service := &Service{
@@ -42,13 +42,9 @@ func retrieveAttachmentStatus(t *testing.T, embedErr error, candidates []model.F
 	if len(plan.RAGAttachments) != 4 {
 		t.Fatalf("expected every file to be retrieval-backed, got %#v", plan.RAGAttachments)
 	}
-	result, err := service.retrieveMessageRAGContext(t.Context(), messageRAGRetrievalInput{
+	return service.retrieveMessageRAGContext(t.Context(), messageRAGRetrievalInput{
 		cfg: cfg, query: "question", fileContextPlan: plan, contextAssembler: NewContextAssembler(0),
 	})
-	if err != nil {
-		t.Fatalf("attachment-only retrieval should continue: %v", err)
-	}
-	return result
 }
 
 func unretrievedIDs(items []unretrievedAttachment) []string {
@@ -59,26 +55,19 @@ func unretrievedIDs(items []unretrievedAttachment) []string {
 	return ids
 }
 
-// 检索系统故障时，本轮与历史上传的用户附件都没拿到内容，都要告知模型；能回退全文的不报告。
-func TestAttachmentStatusReportsAllUserFilesOnRetrievalFailure(t *testing.T) {
+func TestAttachmentRetrievalRejectsSystemFailureWithoutCompleteFallback(t *testing.T) {
 	for _, test := range []struct {
-		name   string
-		err    error
-		reason string
+		name string
+		err  error
 	}{
-		{name: "error", err: errors.New("private provider error"), reason: "rag_error"},
-		{name: "timeout", err: context.DeadlineExceeded, reason: "rag_timeout"},
+		{name: "error", err: errors.New("private provider error")},
+		{name: "timeout", err: context.DeadlineExceeded},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			result := retrieveAttachmentStatus(t, test.err, nil)
-
-			got := strings.Join(unretrievedIDs(result.unretrieved), ",")
-			want := "current_large:" + test.reason + ",history_large:" + test.reason
-			if got != want {
-				t.Fatalf("unretrieved = %q, want %q", got, want)
-			}
-			if fallbacks := ragFallbackEvidenceAttachments(result.retrievalFallbacks); len(fallbacks) != 1 || fallbacks[0].FileID != "current_small" {
-				t.Fatalf("expected the small file to fall back to full text instead, got %#v", fallbacks)
+			_, err := retrieveAttachmentStatus(t, test.err, nil)
+			if detail := AttachmentInputErrorDetails(err); !errors.Is(err, ErrFileProcessingNotReady) ||
+				detail == nil || detail.FileName != "年度报告.pdf" {
+				t.Fatalf("expected retrieval failure to stop generation with file details, got %v (%#v)", err, detail)
 			}
 		})
 	}
@@ -95,7 +84,10 @@ func TestAttachmentStatusReportsOnlyCurrentFilesOnRelevanceMiss(t *testing.T) {
 		{name: "low score", candidates: []model.FileChunkSearchResult{{FileChunk: model.FileChunk{FileObjID: 1, Content: "irrelevant"}, Similarity: 0.01}}, reason: "rag_low_score"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			result := retrieveAttachmentStatus(t, nil, test.candidates)
+			result, err := retrieveAttachmentStatus(t, nil, test.candidates)
+			if err != nil {
+				t.Fatalf("a successful search with no match may continue: %v", err)
+			}
 
 			if got := strings.Join(unretrievedIDs(result.unretrieved), ","); got != "current_large:"+test.reason {
 				t.Fatalf("unretrieved = %q, want only the current large file", got)
@@ -106,10 +98,13 @@ func TestAttachmentStatusReportsOnlyCurrentFilesOnRelevanceMiss(t *testing.T) {
 
 // 部分命中时没有全文回退：本轮上传却没有片段的附件要报告，命中的与历史文件不报告。
 func TestAttachmentStatusReportsCurrentFilesMissedByPartialHit(t *testing.T) {
-	result := retrieveAttachmentStatus(t, nil, []model.FileChunkSearchResult{{
+	result, err := retrieveAttachmentStatus(t, nil, []model.FileChunkSearchResult{{
 		FileChunk:  model.FileChunk{FileObjID: 2, Content: "visible"},
 		Similarity: 0.99,
 	}})
+	if err != nil {
+		t.Fatalf("a partial search match may continue: %v", err)
+	}
 
 	if len(result.chunks) == 0 || result.chunks[0].FileID != "current_small" {
 		t.Fatalf("expected a hit on the small file, got %#v", result.chunks)

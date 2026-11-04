@@ -368,17 +368,14 @@
   "attachments": {
     "limitReached": "Attachment limit reached",
     "maxUploadFiles": "Each message can include up to {count} files.",
+    "maxUploadFilesInChannel": "The selected channel allows up to {count} attachments per message.",
     "policyRejected": "This file is not supported by the current chat capabilities.",
     "fileRejected": "{name}: {reason}",
-    "autoTruncated": "Attachments truncated automatically",
-    "autoTruncatedDescription": "Kept the first {max} attachments and ignored {count} files over the limit.",
     "uploadFailed": "Upload failed",
-    "processingFailed": "Couldn't process {name}",
     "uploadSignInRequired": "Sign in before uploading files.",
     "dropTitle": "Drop files to attach",
     "duplicateReused": "Duplicate file detected and reused",
     "partialUploadFailed": "Some files failed to upload",
-    "temporaryVideoUnsupported": "Temporary chats currently support image and document attachments, but not audio or video attachments.",
     "retryFailedFiles": "Please retry the failed files.",
     "retryLater": "Please try again later.",
     "screenshotUnsupported": "This browser does not support screenshots",
@@ -392,8 +389,6 @@
   },
   "submit": {
     "attachmentOnlyContent": "Please refer to the attachments.",
-    "attachmentsTruncated": "Attachments truncated automatically",
-    "attachmentsTruncatedDescription": "Each message can send up to {count} files. Extra attachments were ignored.",
     "noModel": "No model available",
     "selectModelFirst": "Select a model first.",
     "signInRequired": "Sign in before sending messages.",
@@ -496,6 +491,7 @@
     }
   },
   "composer": {
+    "inputIssueHint": "{count, plural, =1 {{title}} other {{title} · # issues to review}}",
     "uploadFile": "Upload file",
     "screenshot": "Screenshot",
     "openTools": "Menu",

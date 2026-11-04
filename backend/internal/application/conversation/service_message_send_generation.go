@@ -58,24 +58,24 @@ type routeGenerationPlan struct {
 	filteredOptions          map[string]any
 	// reasoningEffort 是本路由生效的规范推理档位；模型在该协议上没有推理能力时为空。
 	reasoningEffort string
-	// llmMessages 是预算裁剪后的完整上下文，工具回灌在其上追加；fullLLMMessages 是它在剥离
+	// llmMessages 是工具回灌追加前的完整上下文；fullLLMMessages 是它在剥离
 	// Responses instructions 与有状态续传裁剪之前的副本，用于续传指纹与账单输入估算。
 	llmMessages               []llm.Message
 	fullLLMMessages           []llm.Message
 	generateInput             llm.GenerateInput
 	estimatedPromptTokens     int64
-	fullContextPromptTokens   int64
+	contextBudget             contextBudgetPolicy
+	budgetDecision            contextBudgetDecision
 	statefulPrefixFingerprint string
 	statefulDecision          statefulResponseDecision
 	statefulContinuation      bool
 	promptMode                string
 	promptShape               promptShape
-	contextIdentity           string
-	contextInputEstimator     func(llm.GenerateInput) int64
+	contextMeter              contextInputMeter
 }
 
 // prepareRouteGeneration 把路由级提示词规划固化为一次上游调用的请求形状：过滤模型参数、配置提示词
-// 缓存、按模型上下文预算裁剪历史、剥离 Responses instructions，并计算有状态续传指纹。
+// 缓存、检查完整上下文预算、剥离 Responses instructions，并计算有状态续传指纹。
 // 首个路由额外决定是否沿用 previous_response_id；故障转移后的路由总是发送完整上下文。
 func (s *Service) prepareRouteGeneration(ctx context.Context, input routeGenerationPreparationInput) routeGenerationPlan {
 	gen := input.Generation
@@ -128,31 +128,18 @@ func (s *Service) prepareRouteGeneration(ctx context.Context, input routeGenerat
 		Options:                filteredOptions,
 		NativeToolKeys:         authorizedNativeToolKeys(route.Protocol, filteredOptions, route.ModelCapabilitiesJSON),
 	}
-	plan.contextIdentity = contextObservationRouteIdentity(route, gen.statefulContextConfig)
-	estimateContextInput := s.contextInputEstimator(ctx, gen.contextObservationScope, plan.contextIdentity)
-	plan.contextInputEstimator = estimateContextInput
-	generateInput, budgetFit := fitGenerateInputToModelBudget(
-		generateInput,
-		route.UpstreamModel,
-		route.ModelCapabilitiesJSON,
-		cfg.ContextWindowFallbackTokens,
-		cfg.ContextTokenBudgetEnabled,
-		estimateContextInput,
-	)
-	llmMessages = cloneLLMMessages(generateInput.Messages)
-	if budgetFit.Trimmed {
-		plan.promptPlan.applyMessages(llmMessages)
+	plan.contextMeter = contextInputMeter{
+		identity: contextObservationRouteIdentity(route, gen.statefulContextConfig),
+		prior:    s.contextInputBaselines(ctx, gen.contextObservationScope),
 	}
-	s.logPromptBudgetFit(ctx, route.UpstreamModel, budgetFit)
 	if supportsOpenAIResponsesBackgroundMode(route) {
 		generateInput.ResponsesBackground = true
 	}
 	fullLLMMessages := cloneLLMMessages(llmMessages)
 	applyOpenAIResponsesInstructions(route, plan.routeConfig.Endpoint, &generateInput)
-	plan.estimatedPromptTokens = estimateContextInput(generateInput)
-	// 有状态 Responses 续传只发送本轮增量，但压缩决策必须继续观察完整上下文；
-	// 同时保留预算裁剪前的规模，让被裁掉的历史在回复后及时进入滚动摘要。
-	plan.fullContextPromptTokens = maxPromptTokenEstimate(budgetFit.TokensBefore, plan.estimatedPromptTokens)
+	plan.estimatedPromptTokens = plan.contextMeter.estimate(generateInput)
+	plan.contextBudget = resolveContextBudgetPolicy(cfg, route.UpstreamModel, route.ModelCapabilitiesJSON)
+	plan.budgetDecision = plan.contextBudget.evaluate(generateInput, plan.estimatedPromptTokens)
 	plan.statefulPrefixFingerprint = buildPromptStateFingerprint(promptStateFingerprintInput{
 		Protocol:          route.Protocol,
 		Endpoint:          plan.routeConfig.Endpoint,
@@ -233,10 +220,9 @@ type messageGenerationRunner struct {
 	streamedText                strings.Builder
 	responsesBackgroundRecovery openAIResponsesBackgroundRecoveryState
 	lastAttemptObservation      *generationAttemptObservation
-	contextIdentity             string
+	contextBudget               contextBudgetPolicy
+	contextMeter                contextInputMeter
 	contextObservation          contextInputObservation
-	contextObservations         []contextInputObservation
-	contextInputEstimator       func(llm.GenerateInput) int64
 }
 
 // emitVisibleDelta 把一段可见增量交给客户端回调，并记录首字延迟与累计可见文本。
@@ -426,11 +412,13 @@ func (c *generationCall) handleStreamEvent(generationCtx context.Context, curren
 func (r *messageGenerationRunner) generate(ctx context.Context, currentInput llm.GenerateInput, fullMessages []llm.Message) (*llm.GenerateOutput, error) {
 	// The retained context shares the media budget even when Responses sends
 	// only a delta. Validate before recording an attempted upstream call.
-	mediaInput := fullContextObservationInput(currentInput, fullMessages)
-	if err := llm.ValidateInputMedia(llm.EffectiveInputMediaLimits(r.routeConfig), mediaInput); err != nil {
+	fullInput := fullContextObservationInput(currentInput, fullMessages)
+	if err := validateGenerationInputMedia(r.routeConfig, fullInput); err != nil {
 		return nil, err
 	}
-	if err := llm.ValidateProviderInput(r.routeConfig, mediaInput); err != nil {
+	current := describeContextInput(r.contextMeter.identity, fullInput, nil)
+	estimatedInputTokens := r.contextMeter.estimateDescribed(current)
+	if err := r.contextBudget.evaluate(fullInput, estimatedInputTokens).err(); err != nil {
 		return nil, err
 	}
 	call := &generationCall{
@@ -447,9 +435,8 @@ func (r *messageGenerationRunner) generate(ctx context.Context, currentInput llm
 	streamRequested := r.preferStream && r.onDelta != nil
 	streamSupported := llm.SupportsStreamingAdapter(r.routeConfig.Protocol)
 	callPromptShape := summarizePromptShape(callPromptMode, currentInput.Messages, currentInput.Messages, currentInput.PreviousResponseID)
-	estimatedInputTokens := r.estimateContextInput(fullContextObservationInput(currentInput, fullMessages))
 	r.usage.beginCall(estimatedInputTokens)
-	r.contextObservation = describeContextInput(r.contextIdentity, currentInput, fullMessages)
+	r.contextObservation = current
 	if currentInput.ResponsesBackground {
 		r.responsesBackgroundRecovery = openAIResponsesBackgroundRecoveryState{Enabled: true}
 	} else {
@@ -580,8 +567,8 @@ func (c *generationCall) recordPartialUsage(output *llm.GenerateOutput) {
 // 先放弃后台 Responses 模式，再放弃 previous_response_id 续传改发完整上下文。
 // 降级会写回 plan，使后续工具回灌沿用降级后的请求形状。
 func (r *messageGenerationRunner) runRouteAttempt(ctx context.Context, plan *routeGenerationPlan, sendSpan trace.Span) (*llm.GenerateOutput, error) {
-	r.contextIdentity = plan.contextIdentity
-	r.contextInputEstimator = plan.contextInputEstimator
+	r.contextBudget = plan.contextBudget
+	r.contextMeter = plan.contextMeter
 	output, attemptErr := r.generate(ctx, plan.generateInput, plan.fullLLMMessages)
 	if !r.attemptHadSideEffect && r.llmRequestCount < r.maxLLMCalls && plan.generateInput.ResponsesBackground &&
 		r.lastAttemptObservation.canRetry(attemptErr, shouldRetryWithoutResponsesBackground) {
@@ -597,7 +584,6 @@ func (r *messageGenerationRunner) runRouteAttempt(ctx context.Context, plan *rou
 		plan.generateInput.PreviousResponseID = ""
 		plan.generateInput.Messages = plan.fullLLMMessages
 		applyOpenAIResponsesInstructions(plan.route, plan.routeConfig.Endpoint, &plan.generateInput)
-		plan.estimatedPromptTokens = estimateGenerateInputTokens(plan.generateInput)
 		plan.promptShape = summarizePromptShape("full_retry", plan.generateInput.Messages, plan.fullLLMMessages, "")
 		if r.traceRecorder != nil {
 			r.traceRecorder.recordPromptTrace(buildMessagePromptTrace(messagePromptTraceInput{
@@ -623,10 +609,19 @@ func (c *generationCall) recordContextObservation(output *llm.GenerateOutput) {
 		usage = output.Usage
 	}
 	c.runner.usage.observeContextInput(usage)
-	if usage.HasObservedInput() {
-		c.runner.contextObservation.InputTokens = usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
-		c.runner.contextObservations = append(c.runner.contextObservations, c.runner.contextObservation)
+	c.runner.contextMeter.record(c.runner.contextObservation, usage)
+}
+
+// canRetainStatefulToolContext checks whether the next request can rebuild the
+// context kept by Responses. Local tool results belong to this run only and
+// are absent from the next branch's model messages.
+func canRetainStatefulToolContext(messages []llm.Message) bool {
+	for _, message := range messages {
+		if len(message.ToolResults) > 0 {
+			return false
+		}
 	}
+	return true
 }
 
 // mergeFollowUpUsage 把工具回灌后一次调用的用量并入本条消息累计：上游有观测值时以累计观测为准，

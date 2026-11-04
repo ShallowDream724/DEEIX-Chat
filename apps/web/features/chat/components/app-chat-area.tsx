@@ -53,12 +53,17 @@ import { useChatConversationDefaults } from "@/features/chat/hooks/use-chat-conv
 import { useChatTemporaryRuntime } from "@/features/chat/hooks/use-chat-temporary-runtime";
 import { useChatUIBlockStateRuntime } from "@/features/chat/hooks/use-chat-ui-block-state";
 import { filterAvailableMCPToolIDs } from "@/features/chat/model/chat-mcp-tool-defaults";
+import { resolveChatSubmitDecision } from "@/features/chat/model/chat-task";
+import { resolveDefaultSubmissionParentMessage, resolvePersistedPublicID } from "@/features/chat/model/message-submit";
+import { resolveSubmitBlockDescription } from "@/features/chat/model/message-submit-media";
+import { InputLimitDialog } from "@/shared/components/input-limit-dialog";
+import type { InputLimitReason } from "@/shared/lib/input-limit";
 import type { ChatAreaMessage, } from "@/features/chat/types/messages";
 import { useSettingsChatPreferences } from "@/features/settings";
 import { cn } from "@/lib/utils";
 import type { ConversationDTO, ConversationOptions } from "@/shared/api/conversation-types";
 import { useAuthSession } from "@/shared/auth/auth-session-context";
-import { DeleteFilesOption } from "@/entities/file";
+import { DeleteFilesOption, isFileProcessing } from "@/entities/file";
 import { hasMultipleImageAttachmentProcessors, normalizeImageAttachmentProcessorSelection } from "@/entities/mcp";
 import { resolveChatContentWidthClassName } from "@/entities/user-settings";
 
@@ -69,6 +74,7 @@ const TOP_LOAD_OLDER_MESSAGES_THRESHOLD_PX = 48;
 export function AppChatArea() {
   const t = useTranslations("chat");
   const tRecent = useTranslations("recent");
+  const tSubmit = useTranslations("chat.submit");
   const tScreenshot = useTranslations("chat.screenshot");
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -249,7 +255,11 @@ export function AppChatArea() {
     attachments,
     setDraft,
     setAttachments,
+    updateAttachmentStatuses,
     appendAttachmentsForKey,
+    getComposerRevision,
+    restoreSubmittedDraft,
+    carryDraftToNewConversation,
   } = useChatComposerState(conversationID, {
     preserveDrafts: preserveConversationDrafts,
     storageScope: user?.publicID ?? "",
@@ -392,11 +402,25 @@ export function AppChatArea() {
     applySelectedToolsChange(nextToolIDs);
   }, [applySelectedToolsChange, availableTools, t]);
   const htmlVisualPrompt = useChatVisualPrompt();
+  const composerSubmitDecision = React.useMemo(
+    () => resolveChatSubmitDecision(selectedModel, attachments, requestOptions),
+    [selectedModel, attachments, requestOptions],
+  );
+  const [preflightParent, setPreflightParent] = React.useState<{ conversationID: string; messageID: string } | null>(null);
+  const [inputLimitReasons, setInputLimitReasons] = React.useState<readonly InputLimitReason[]>(EMPTY_LIST);
+  const onInputLimit = React.useCallback((reasons: readonly InputLimitReason[]) => {
+    setInputLimitReasons((current) => current.length > 0 ? current : reasons);
+  }, []);
+  const closeInputLimit = React.useCallback(() => setInputLimitReasons(EMPTY_LIST), []);
 
   const {
     uploading,
     uploadingAttachments,
     nativeEligibleFileIDs,
+    nativeInputIssues,
+    nativeReadinessPending,
+    channelMaxFiles,
+    maxTemporaryAttachments,
     maxFilesPerMessage,
     fileMode,
     ragAvailable,
@@ -409,9 +433,12 @@ export function AppChatArea() {
   } = useChatAttachments({
     conversationKey,
     conversationID,
-    model: selectedPlatformModelName,
+    model: temporaryMode || composerSubmitDecision.task === "chat" ? selectedPlatformModelName : "",
+    parentMessagePublicID: preflightParent?.conversationID === conversationID ? preflightParent?.messageID : null,
+    selectedToolIDs,
     attachments,
     setAttachments,
+    updateAttachmentStatuses,
     appendAttachmentsForKey,
     temporary: temporaryMode,
   });
@@ -461,7 +488,9 @@ export function AppChatArea() {
     options: requestOptions,
     draft,
     attachments,
-    maxFilesPerMessage,
+    getComposerRevision,
+    restoreSubmittedDraft,
+    onInputLimit,
     uploading,
     restoreDraftOnFailure,
     autoGenerateLabels,
@@ -684,10 +713,81 @@ export function AppChatArea() {
     htmlVisualPromptEnabled: htmlVisualPrompt.enabled,
     attachments,
     onDraftChange: setDraft,
+    getComposerRevision,
+    restoreSubmittedDraft,
+    restoreDraftOnFailure,
+    onInputLimit,
+    maxTemporaryAttachments,
     onAttachmentsConsumed: onTemporaryAttachmentsConsumed,
     releaseAttachments,
     collectUIStates: uiBlockState.collectTurnUIStates,
   });
+  const parentMessageID = resolvePersistedPublicID(currentLeafMessage?.publicID)
+    ?? resolveDefaultSubmissionParentMessage(visibleMessages)?.publicID ?? null;
+  React.useLayoutEffect(() => {
+    if (!conversationID || !parentMessageID || messageDataConversationID !== conversationID) {
+      setPreflightParent(null);
+      return;
+    }
+    setPreflightParent({ conversationID, messageID: parentMessageID });
+  }, [conversationID, messageDataConversationID, parentMessageID]);
+
+  const inputIssues = React.useMemo(() => {
+    const issues = [...(temporaryMode ? temporaryRuntime.inputIssues : nativeInputIssues)];
+    for (const attachment of attachments) {
+      if (attachment.processingErrorCode === "file.not_found" && !issues.some((issue) =>
+        issue.dimension === "fileUnavailable" && issue.fileName === attachment.fileName)) {
+        issues.push({ dimension: "fileUnavailable", fileName: attachment.fileName, scope: "current" });
+      }
+    }
+    if (channelMaxFiles !== undefined && channelMaxFiles > 0 && attachments.length > channelMaxFiles
+      && !issues.some((issue) => issue.dimension === "messageFileCount")) {
+      issues.push({ dimension: "messageFileCount", actual: attachments.length, limit: channelMaxFiles, scope: "current" });
+    }
+    if (!temporaryMode) {
+      const taskRestriction = composerSubmitDecision.blockedReason;
+      if (taskRestriction && (draft.trim() || attachments.length > 0)) {
+        issues.push({ dimension: "modelTaskUnsupported", description: resolveSubmitBlockDescription(taskRestriction, tSubmit) });
+      }
+    } else if (selectedModel?.inputModalities.length) {
+      // Temporary PDF and document files can still use text extraction.
+      for (const kind of ["image", "audio", "video"] as const) {
+        if (selectedModel.inputModalities.includes(kind)) continue;
+        const matches = (attachment: { fileCategory?: string; mimeType?: string }) =>
+          attachment.fileCategory === kind || attachment.mimeType?.startsWith(`${kind}/`);
+        const currentFile = attachments.find(matches);
+        const historicalFile = temporaryRuntime.historyAttachments.find(matches);
+        if (currentFile) issues.push({ dimension: "fileUnsupported", scope: "current", fileCategory: kind, fileName: currentFile.fileName });
+        if (historicalFile) issues.push({ dimension: "fileUnsupported", scope: "history", fileCategory: kind, fileName: historicalFile.fileName });
+      }
+    }
+    return issues;
+  }, [attachments, channelMaxFiles, composerSubmitDecision.blockedReason, draft, nativeInputIssues, selectedModel, tSubmit,
+    temporaryMode, temporaryRuntime.historyAttachments, temporaryRuntime.inputIssues]);
+  const processingAttachments = !temporaryMode && composerSubmitDecision.task === "chat" && attachments.some((item) =>
+    !item.processingReady && !item.ragReady && isFileProcessing(item)
+    && (nativeReadinessPending || !nativeEligibleFileIDs.has(item.fileID)));
+  const sendTemporary = temporaryRuntime.send;
+  const startNewTemporary = temporaryRuntime.startNew;
+  const startNewFromInputLimit = React.useCallback(() => {
+    if (temporaryMode) {
+      startNewTemporary();
+      return;
+    }
+    carryDraftToNewConversation();
+    const projectID = currentConversation?.projectID ?? routeProjectID ?? "";
+    requestNewConversation({ projectID });
+    router.push(projectID ? `/chat?project_id=${encodeURIComponent(projectID)}` : "/chat");
+  }, [carryDraftToNewConversation, currentConversation?.projectID, requestNewConversation, routeProjectID,
+    router, startNewTemporary, temporaryMode]);
+  const handleSendComposer = React.useCallback(() => {
+    if (inputIssues.length > 0) {
+      onInputLimit(inputIssues);
+      return;
+    }
+    if (processingAttachments) return;
+    return temporaryMode ? sendTemporary() : onSendMessage();
+  }, [inputIssues, onInputLimit, onSendMessage, processingAttachments, sendTemporary, temporaryMode]);
   const displayMessages = temporaryMode ? temporaryRuntime.messages : messagesWithInlineError;
   const chatUIBlockState = React.useMemo(
     () => ({ store: uiBlockState.store, conversationPublicID: temporaryMode ? null : conversationID }),
@@ -777,6 +877,8 @@ export function AppChatArea() {
     attachments,
     uploadingAttachments,
     nativeEligibleFileIDs,
+    inputIssues,
+    processingAttachments,
     modelOptions,
     billingDisplayCurrency,
     billingDisplayUsdToCnyRate,
@@ -821,7 +923,7 @@ export function AppChatArea() {
     onUploadFiles,
     onCaptureScreenshot,
     onRemoveAttachment,
-    onSendMessage: temporaryMode ? temporaryRuntime.send : onSendMessage,
+    onSendMessage: handleSendComposer,
     onStopMessage: temporaryMode ? temporaryRuntime.stop : onStopActiveMessage,
     onDeleteQueuedMessage,
     onEditQueuedMessage,
@@ -836,6 +938,12 @@ export function AppChatArea() {
   return (
     <UIBlockRegistryProvider components={uiComponents}>
     <UIBlockActionsProvider actions={uiBlockActions}>
+    <InputLimitDialog
+      reasons={inputLimitReasons}
+      onClose={closeInputLimit}
+      onNewConversation={temporaryMode || conversationID ? startNewFromInputLimit : undefined}
+      temporary={temporaryMode}
+    />
     <div
       className="relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden md:overflow-visible"
       onDragEnter={onFileDragEnter}

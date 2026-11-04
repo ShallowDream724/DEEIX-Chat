@@ -980,7 +980,7 @@ func saveUploadedFile(ctx context.Context, input saveUploadedFileInput) (string,
 		normalizedUserID = "unknown_user"
 	}
 	if input.MaxUploadBytes <= 0 {
-		input.MaxUploadBytes = 20 * 1024 * 1024
+		input.MaxUploadBytes = defaultUploadBytes
 	}
 
 	staged, err := stageUploadedFile(input.Reader, input.FileID, input.FileName, input.MaxUploadBytes, input.DeclaredMIME, input.DetectedMaxBytes)

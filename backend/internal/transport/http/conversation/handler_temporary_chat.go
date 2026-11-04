@@ -12,6 +12,7 @@ import (
 
 	appconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/conversation"
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/background"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
@@ -29,6 +30,7 @@ import (
 // @Param body body TemporaryChatMessageRequest true "临时对话参数"
 // @Success 200 {string} string "NDJSON stream"
 // @Failure 400 {object} ErrorDoc
+// @Failure 413 {object} ErrorDoc
 // @Failure 500 {object} ErrorDoc
 // @Router /temporary-chat/messages/stream [post]
 func (h *Handler) StreamTemporaryChatMessage(c *gin.Context) {
@@ -66,7 +68,11 @@ func (h *Handler) StreamTemporaryChatMessage(c *gin.Context) {
 		})
 	}
 	if err := appconversation.ValidateTemporaryChatInput(input, appconversation.TemporaryChatAttachmentLimit(h.cfg.Snapshot())); err != nil {
-		response.ErrorFrom(c, http.StatusBadRequest, errInvalidTemporaryChatMessages)
+		if errors.Is(err, llm.ErrInputTooLarge) {
+			handleSendMessageError(c, err)
+		} else {
+			response.ErrorFrom(c, http.StatusBadRequest, errInvalidTemporaryChatMessages)
+		}
 		return
 	}
 
@@ -183,7 +189,7 @@ func (h *Handler) bindTemporaryChatRequest(c *gin.Context) (
 	payload := c.PostForm("payload")
 	if int64(len(payload)) > maxRequestBytes {
 		removeMultipartFiles()
-		writeTemporaryChatBindError(c, &http.MaxBytesError{Limit: maxRequestBytes})
+		writeTemporaryRequestLimitError(c, int64(len(payload)), maxRequestBytes)
 		return TemporaryChatMessageRequest{}, nil, noop, false
 	}
 	if err = json.Unmarshal([]byte(payload), &req); err != nil {
@@ -203,16 +209,16 @@ func (h *Handler) bindTemporaryChatRequest(c *gin.Context) (
 		return TemporaryChatMessageRequest{}, nil, noop, false
 	}
 	fileHeaders := c.Request.MultipartForm.File["attachments"]
-	if len(fileHeaders) == 0 || len(fileHeaders) != len(messageIndexes) || len(fileHeaders) > maxAttachments {
+	if len(fileHeaders) > maxAttachments {
+		removeMultipartFiles()
+		handleSendMessageError(c, errors.Join(appconversation.ErrTooManyMessageFiles, llm.NewInputLimitError("temporaryFileCount", int64(len(fileHeaders)), int64(maxAttachments))))
+		return TemporaryChatMessageRequest{}, nil, noop, false
+	}
+	if len(fileHeaders) == 0 || len(fileHeaders) != len(messageIndexes) {
 		removeMultipartFiles()
 		response.ErrorFrom(c, http.StatusBadRequest, errInvalidFileReference)
 		return TemporaryChatMessageRequest{}, nil, noop, false
 	}
-	maxFilesPerMessage := cfg.MaxMessageFiles
-	if maxFilesPerMessage <= 0 {
-		maxFilesPerMessage = 10
-	}
-	counts := make(map[int]int)
 	opened := make([]multipart.File, 0, len(fileHeaders))
 	var closeOnce sync.Once
 	closeAll := func() {
@@ -229,12 +235,6 @@ func (h *Handler) bindTemporaryChatRequest(c *gin.Context) (
 		if messageIndex < 0 || messageIndex >= len(req.Messages) || strings.TrimSpace(req.Messages[messageIndex].Role) != "user" {
 			closeAll()
 			response.ErrorFrom(c, http.StatusBadRequest, errInvalidFileReference)
-			return TemporaryChatMessageRequest{}, nil, noop, false
-		}
-		counts[messageIndex]++
-		if counts[messageIndex] > maxFilesPerMessage {
-			closeAll()
-			response.ErrorFrom(c, http.StatusBadRequest, errTooManyFilesInOneMessage)
 			return TemporaryChatMessageRequest{}, nil, noop, false
 		}
 		file, openErr := header.Open()
@@ -257,11 +257,21 @@ func (h *Handler) bindTemporaryChatRequest(c *gin.Context) (
 
 func writeTemporaryChatBindError(c *gin.Context, err error) {
 	var maxBytesErr *http.MaxBytesError
-	if errors.As(err, &maxBytesErr) || errors.Is(err, multipart.ErrMessageTooLarge) {
+	if errors.As(err, &maxBytesErr) {
+		// The bounded reader confirms the limit plus one byte. Do not drain
+		// the rejected body to measure its full length.
+		writeTemporaryRequestLimitError(c, maxBytesErr.Limit+1, maxBytesErr.Limit)
+		return
+	}
+	if errors.Is(err, multipart.ErrMessageTooLarge) {
 		response.ErrorFrom(c, http.StatusRequestEntityTooLarge, errTemporaryChatContextTooLarge)
 		return
 	}
 	response.InvalidRequestBody(c, err)
+}
+
+func writeTemporaryRequestLimitError(c *gin.Context, actual, limit int64) {
+	handleSendMessageError(c, errors.Join(errTemporaryChatContextTooLarge, llm.NewInputLimitError("temporaryRequestBytes", actual, limit)))
 }
 
 func (h *Handler) recordTemporaryChatAuditAsync(c *gin.Context, req TemporaryChatMessageRequest, attachmentCount int, status string) {

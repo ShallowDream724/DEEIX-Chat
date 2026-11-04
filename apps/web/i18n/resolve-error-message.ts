@@ -6,6 +6,7 @@ import { DEFAULT_LOCALE, LOCALE_COOKIE_NAME, normalizeAppLocale, resolveBrowserL
 import { disabledFeatureOf } from "@deeix/core";
 import { ApiError } from "@/shared/api/http-client";
 import { isRecord } from "@/shared/lib/type-guards";
+import { getInputLimitReasons, type InputLimitReason } from "@/shared/lib/input-limit";
 
 const ERROR_MESSAGES: Record<AppLocale, unknown> = {
   "en-US": enErrors,
@@ -578,8 +579,10 @@ export function resolveLocalizedErrorMessage(error: unknown, fallback?: string):
 export function resolveLocalizedErrorMessageWithoutReference(error: unknown, fallback?: string): string {
   const locale = readClientLocale();
   if (error instanceof ApiError && error.errorCode) {
-    const inputLimitMessage = resolveInputLimitMessage(error, locale);
-    if (inputLimitMessage) return inputLimitMessage;
+    const inputLimitReasons = getInputLimitReasons(error);
+    if (inputLimitReasons.length) {
+      return inputLimitReasons.map((reason) => resolveInputLimitPresentation(reason, locale).description).join(" ");
+    }
     const featureDisabledMessage = resolveFeatureDisabledMessage(error, locale);
     if (featureDisabledMessage) {
       return featureDisabledMessage;
@@ -622,29 +625,81 @@ export function resolveLocalizedErrorMessageWithoutReference(error: unknown, fal
   return fallback || FALLBACK_MESSAGES[locale];
 }
 
-function resolveInputLimitMessage(error: ApiError, locale: AppLocale): string | undefined {
-  if (error.errorCode !== "file.too_large" || !isRecord(error.details)) return undefined;
-  const { dimension, actual, limit } = error.details;
-  if (typeof dimension !== "string" || typeof actual !== "number" || typeof limit !== "number" || !Number.isSafeInteger(actual) || !Number.isSafeInteger(limit) || actual < -1 || limit <= 0) return undefined;
-  const labels: Record<string, [string, string]> = {
-    requestBytes: ["Encoded request size", "编码后的请求大小"],
-    imageSingleBytes: ["Single prepared image size", "单张处理后图片大小"],
-    imageCount: ["Image count", "图片数量"],
-    imageBytes: ["Total image size", "图片总大小"],
-    nativeCount: ["Native file count", "原生文件数量"],
-    nativeBytes: ["Total native file size", "原生文件总大小"],
-    pdfSingleBytes: ["Single PDF size", "单份 PDF 大小"],
-    pdfBytes: ["Total PDF size", "PDF 总大小"],
-    pdfPages: ["PDF page count", "PDF 页数"],
-    nonPDFBytes: ["Total audio/video size", "音视频总大小"],
-    imageEncodedBytes: ["Base64 image size", "图片 Base64 大小"],
-    imageWidth: ["Image width", "图片宽度"],
-    imageHeight: ["Image height", "图片高度"],
+export function resolveInputLimitPresentation(reason: InputLimitReason, locale: AppLocale) {
+  const text = (locale === "zh-CN" ? zhErrors : enErrors).inputLimit;
+  const { dimension, actual, limit, fileName, fileCategory, scope } = reason;
+  const format = (template: string, values: Record<string, string>) =>
+    template.replace(/\{(\w+)\}/g, (match, key: string) => values[key] ?? match);
+  const file = fileName ? format(text.namedFile, { name: fileName }) : text[fileCategory ?? "attachment"];
+  const titles: Partial<Record<InputLimitReason["dimension"], string>> = text.titles;
+  const labels: Partial<Record<InputLimitReason["dimension"], string>> = text.labels;
+  const title = titles[dimension] ?? "";
+  const history = scope === "history";
+  if (dimension === "modelTaskUnsupported") {
+    return { title, description: reason.description ?? title };
+  }
+  if (dimension === "fileUnsupported") {
+    return { title, description: format(history || scope === "mixed" ? text.unsupportedHistory : text.unsupportedCurrent, { file }) };
+  }
+  if (dimension === "fileUnavailable") {
+    return { title, description: format(history ? text.unavailableHistory : text.unavailableCurrent, { file }) };
+  }
+  if (dimension === "fileParseFailed" || dimension === "fileReadFailed") {
+    return { title, description: format(dimension === "fileParseFailed" ? text.parseFailed : text.readFailed, { file }) };
+  }
+
+  const label = labels[dimension] ?? text.title;
+  const temporary = dimension.startsWith("temporary");
+  const tokenEstimate = dimension.endsWith("Tokens");
+  const contextTokens = dimension === "contextTokens" || dimension === "currentTurnTokens";
+  const parsedLimit = dimension.startsWith("parsed");
+  const fileSize = dimension === "imageSingleBytes" || dimension === "pdfSingleBytes" || dimension === "uploadFileBytes";
+  const number = new Intl.NumberFormat(locale);
+  const measurement = (value: number) => {
+    if (dimension.endsWith("Bytes")) {
+      const [unit, scale]: [string, number] = value >= 1_000_000_000 ? ["GB", 1_000_000_000]
+        : value >= 1_000_000 ? ["MB", 1_000_000]
+        : value >= 1_000 ? ["KB", 1_000] : ["B", 1];
+      const formatted = new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(value / scale);
+      return `${formatted} ${unit}`;
+    }
+    if (tokenEstimate) return format(text.tokens, { count: number.format(value) });
+    if (dimension === "imageWidth" || dimension === "imageHeight") return `${number.format(value)} px`;
+    return number.format(value);
   };
-  const key = dimension.replace(/^provider\./, "");
-  const label = labels[key]?.[locale === "zh-CN" ? 1 : 0];
-  if (!label) return undefined;
-  const format = (value: number) => `${new Intl.NumberFormat(locale).format(value)}${key.endsWith("Bytes") ? (locale === "zh-CN" ? " 字节" : " bytes") : key === "imageWidth" || key === "imageHeight" ? " px" : ""}`;
-  if (actual < 0) return locale === "zh-CN" ? `无法确认${label}，上限为 ${format(limit)}。请减少附件或缩小文件后重试。` : `${label} could not be verified (limit: ${format(limit)}). Reduce attachments or file sizes and try again.`;
-  return locale === "zh-CN" ? `${label}为 ${format(actual)}，超过上限 ${format(limit)}。请减少附件或缩小文件后重试。` : `${label} is ${format(actual)}, exceeding the limit of ${format(limit)}. Reduce attachments or file sizes and try again.`;
+  const values = { label, actual: actual !== undefined && actual >= 0 ? measurement(actual) : "", limit: limit !== undefined ? measurement(limit) : "" };
+  if (dimension.endsWith("Bytes") && actual !== undefined && limit !== undefined
+    && actual !== limit && values.actual === values.limit) {
+    values.actual = `${number.format(actual)} B`;
+    values.limit = `${number.format(limit)} B`;
+  }
+  const template = contextTokens ? (actual !== undefined && actual >= 0 && limit !== undefined ? text.modelTokenEstimate : text.modelTokenLimit)
+    : limit === undefined ? text.summaryTemplate
+    : actual === -1 ? text.unknown
+    : actual === undefined ? text.channelLimit
+    : temporary ? text.temporaryValues
+    : dimension === "imageCount" ? (history || scope === "mixed" ? text.imagesWithHistory : text.images)
+    : dimension === "messageFileCount" ? text.messageFiles
+    : tokenEstimate ? text.estimate
+    : text.values;
+  const detail = parsedLimit
+    ? format(actual !== undefined && actual >= 0 && limit !== undefined
+      ? tokenEstimate ? text.parsedEstimate : text.parsedValues
+      : text.parsedLimit, values)
+    : format(template, values);
+  const advice = dimension === "temporarySingleTextLength" && !history ? text.currentAdvice
+    : temporary ? text.temporaryAdvice
+    : dimension === "contextTokens" ? text.contextAdvice
+    : history ? text.historyAdvice
+    : fileSize || dimension === "imageWidth" || dimension === "imageHeight" || parsedLimit ? text.singleAdvice
+    : dimension === "messageFileCount" || (scope === "current" && dimension !== "currentTurnTokens" && dimension !== "requestBytes")
+      ? text.reduceAttachmentsAdvice
+    : scope === "current" || dimension === "currentTurnTokens" ? text.currentAdvice
+    : text.mixedAdvice;
+  const description = fileName
+    ? fileSize && actual !== undefined && actual >= 0 && limit !== undefined
+      ? format(text.singleFileValues, { ...values, name: fileName })
+      : format(text.fileNamed, { name: fileName, message: detail })
+    : detail;
+  return { title: actual === -1 ? text.unknownTitle : title || format(text.titleTemplate, { label }), description: `${description} ${advice}` };
 }

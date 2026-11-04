@@ -26,6 +26,9 @@ func ExtractPDFText(absPath string, maxPages int) (string, error) {
 	}
 	parts := make([]string, 0, len(result.Pages))
 	for _, page := range result.Pages {
+		if page.ExtractFailed {
+			return "", fmt.Errorf("pdf_parse_failed: page %d could not be extracted", page.PageNumber)
+		}
 		value := strings.TrimSpace(page.Text)
 		if value == "" {
 			continue
@@ -51,13 +54,12 @@ func extractPDFPagesWithGXPDF(absPath string, maxPages int) (PDFTextResult, erro
 	if totalPages <= 0 {
 		return PDFTextResult{}, nil
 	}
-	limit := totalPages
-	if maxPages > 0 && limit > maxPages {
-		limit = maxPages
+	if maxPages > 0 && totalPages > maxPages {
+		return PDFTextResult{PageCount: totalPages}, fmt.Errorf("pdf_page_limit_exceeded: %d pages exceed %d", totalPages, maxPages)
 	}
 
-	pages := make([]PDFTextPage, 0, limit)
-	for pageNum := 1; pageNum <= limit; pageNum++ {
+	pages := make([]PDFTextPage, 0, totalPages)
+	for pageNum := 1; pageNum <= totalPages; pageNum++ {
 		text, extractErr := doc.ExtractTextFromPage(pageNum)
 		if extractErr != nil {
 			pages = append(pages, PDFTextPage{

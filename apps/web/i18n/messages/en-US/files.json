@@ -63,12 +63,12 @@
   },
   "deleteDialog": {
     "title": "Delete file",
-    "description": "Delete \"{name}\"? This action cannot be undone.",
+    "description": "Delete \"{name}\"? It will no longer be available to preview or download, and conversations referencing it may be unable to continue. This cannot be undone.",
     "fallbackName": "file"
   },
   "bulkDeleteDialog": {
     "title": "Delete files",
-    "description": "Delete the {count} selected files? This action cannot be undone.",
+    "description": "Delete the {count} selected files? They will no longer be available to preview or download, and conversations referencing them may be unable to continue. This cannot be undone.",
     "confirm": "Confirm delete"
   },
   "list": {

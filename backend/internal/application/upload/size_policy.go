@@ -6,7 +6,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 )
 
-const defaultUploadBytes int64 = 20 * 1024 * 1024
+const defaultUploadBytes int64 = config.DefaultMaxUploadFileBytes
 
 // EffectiveMaxBytes resolves a category override, falling back to the default.
 // Callers must use the detected content type for final file validation.

@@ -742,7 +742,12 @@ export function UpstreamSheet({
               </div>
             )}
 
-            {mode === "edit" && target ? <UpstreamsInputLimitsSummary upstream={target} onNavigate={() => onOpenChange(false)} /> : null}
+            {mode === "edit" && target ? (
+              <UpstreamsInputLimitsSummary
+                upstream={target}
+                onNavigate={() => onOpenChange(false)}
+              />
+            ) : null}
 
             <Accordion
               type="multiple"

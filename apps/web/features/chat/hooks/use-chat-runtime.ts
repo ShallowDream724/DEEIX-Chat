@@ -1,5 +1,8 @@
 "use client";
 
+import type { RestoreSubmittedDraft } from "@/features/chat/hooks/use-chat-composer-state";
+import type { InputLimitReason } from "@/shared/lib/input-limit";
+
 import * as React from "react";
 import { useChatBranchState } from "@/features/chat/hooks/use-chat-branch-state";
 import { useChatSubmitStream } from "@/features/chat/hooks/use-chat-submit-stream";
@@ -101,7 +104,9 @@ export function useChatRuntime({
   options,
   draft,
   attachments,
-  maxFilesPerMessage,
+  getComposerRevision,
+  restoreSubmittedDraft,
+  onInputLimit,
   uploading,
   restoreDraftOnFailure,
   autoGenerateLabels,
@@ -139,7 +144,9 @@ export function useChatRuntime({
   options: ConversationOptions;
   draft: string;
   attachments: PendingAttachment[];
-  maxFilesPerMessage: number;
+  getComposerRevision: () => number;
+  restoreSubmittedDraft: RestoreSubmittedDraft;
+  onInputLimit: (reasons: readonly InputLimitReason[]) => void;
   uploading: boolean;
   restoreDraftOnFailure: boolean;
   autoGenerateLabels: boolean;
@@ -220,7 +227,9 @@ export function useChatRuntime({
     options,
     draft,
     attachments,
-    maxFilesPerMessage,
+    getComposerRevision,
+  restoreSubmittedDraft,
+  onInputLimit,
     uploading,
     restoreDraftOnFailure,
     autoGenerateLabels,

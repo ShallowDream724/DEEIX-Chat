@@ -1,14 +1,11 @@
 package conversation
 
 import (
-	"context"
 	"strings"
 
 	domainchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/channel"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/tokenestimate"
-	"go.uber.org/zap"
 )
 
 // messageUsageAccumulator 汇总一条消息内多次 LLM 调用的用量。上报了用量的调用以观测值为准；
@@ -233,131 +230,6 @@ func estimateToolDefinitionTokens(tools []llm.ToolDefinition) int64 {
 	return tokens
 }
 
-func maxPromptTokenEstimate(values ...int64) int64 {
-	var result int64
-	for _, value := range values {
-		if value > result {
-			result = value
-		}
-	}
-	return result
-}
-
-type promptBudgetFit struct {
-	Budget         int64
-	TokensBefore   int64
-	TokensAfter    int64
-	MessagesBefore int
-	MessagesAfter  int
-	Trimmed        bool
-	Exceeded       bool
-}
-
-func (s *Service) logPromptBudgetFit(ctx context.Context, modelName string, fit promptBudgetFit) {
-	if s == nil || s.logger == nil {
-		return
-	}
-	fields := []zap.Field{
-		zap.String("trace_id", traceid.FromContext(ctx)),
-		zap.String("model", strings.TrimSpace(modelName)),
-		zap.Int64("effective_budget", fit.Budget),
-	}
-	if fit.Trimmed {
-		s.logger.Info("context_prompt_budget_trimmed", append(fields,
-			zap.Int64("tokens_before", fit.TokensBefore),
-			zap.Int64("tokens_after", fit.TokensAfter),
-			zap.Int("messages_before", fit.MessagesBefore),
-			zap.Int("messages_after", fit.MessagesAfter),
-		)...)
-	}
-	if fit.Exceeded {
-		s.logger.Warn("context_prompt_required_content_exceeds_budget", append(fields,
-			zap.Int64("estimated_tokens", fit.TokensAfter),
-		)...)
-	}
-}
-
-// fitGenerateInputToModelBudget 是初始请求的唯一硬预算入口。它在消息、原生
-// instructions 与工具定义全部确定后删除最早的完整历史轮次，保留系统前缀和
-// 当前用户轮次。必需内容本身超限时不会破坏当前输入，而是显式返回 Exceeded
-// 供调用方记录诊断信息。
-func fitGenerateInputToModelBudget(
-	input llm.GenerateInput,
-	modelName string,
-	capabilitiesJSON string,
-	fallbackContextWindow int,
-	enabled bool,
-	estimators ...func(llm.GenerateInput) int64,
-) (llm.GenerateInput, promptBudgetFit) {
-	estimate := estimateGenerateInputTokens
-	if len(estimators) > 0 && estimators[0] != nil {
-		estimate = estimators[0]
-	}
-	result := promptBudgetFit{
-		MessagesBefore: len(input.Messages),
-		MessagesAfter:  len(input.Messages),
-		TokensBefore:   estimate(input),
-	}
-	result.TokensAfter = result.TokensBefore
-	if !enabled {
-		return input, result
-	}
-
-	result.Budget = int64(domainchannel.EffectiveContextBudgetFromCapabilitiesWithFallback(
-		modelName,
-		capabilitiesJSON,
-		fallbackContextWindow,
-	))
-	if result.TokensBefore <= result.Budget {
-		return input, result
-	}
-
-	trimmedMessages, trimmed := trimOldestPromptHistory(input.Messages, result.TokensBefore, result.Budget, func(messages []llm.Message) int64 {
-		candidate := input
-		candidate.Messages = messages
-		return estimate(candidate)
-	})
-	if trimmed {
-		input.Messages = trimmedMessages
-		result.Trimmed = true
-		result.MessagesAfter = len(trimmedMessages)
-		result.TokensAfter = estimate(input)
-	}
-	result.Exceeded = result.TokensAfter > result.Budget
-	return input, result
-}
-
-// trimOldestPromptHistory 删除最早的完整对话轮次，并始终保留前导系统消息与
-// 当前用户轮次。传入的 totalTokens 已包含 tools/instructions 等固定开销。
-func trimOldestPromptHistory(messages []llm.Message, totalTokens int64, budget int64, estimators ...func([]llm.Message) int64) ([]llm.Message, bool) {
-	if totalTokens <= budget || len(messages) == 0 {
-		return messages, false
-	}
-	systemEnd, currentUserIndex := toolHistoryBounds(messages)
-	if currentUserIndex <= systemEnd {
-		return messages, false
-	}
-
-	remainingTokens := totalTokens
-	for cutFrom := systemEnd; cutFrom < currentUserIndex; cutFrom++ {
-		remainingTokens -= estimateMessageTokens(messages[cutFrom])
-		nextIndex := cutFrom + 1
-		if nextIndex < currentUserIndex && messages[nextIndex].Role != "user" {
-			continue
-		}
-		trimmed := make([]llm.Message, 0, systemEnd+len(messages)-nextIndex)
-		trimmed = append(trimmed, messages[:systemEnd]...)
-		trimmed = append(trimmed, messages[nextIndex:]...)
-		if len(estimators) > 0 && estimators[0] != nil {
-			remainingTokens = estimators[0](trimmed)
-		}
-		if remainingTokens <= budget || nextIndex == currentUserIndex {
-			return trimmed, true
-		}
-	}
-	return messages, false
-}
-
 // resolveToolResultTokenBudget 计算当前用户轮次的全部工具结果可使用的模型输入预算。
 // 新批次先使用该上限，回灌前再对同轮全部结果统一分配，不额外透支有效上下文。
 func resolveToolResultTokenBudget(
@@ -370,9 +242,6 @@ func resolveToolResultTokenBudget(
 	estimators ...func(llm.GenerateInput) int64,
 ) int64 {
 	budgetMessages := toolResultPayloadPlaceholders(messages)
-	if len(estimators) == 0 || estimators[0] == nil {
-		budgetMessages = toolResultPayloadPlaceholders(prioritizeCurrentToolMessages(messages))
-	}
 	placeholderResults := make([]llm.ToolResult, 0, len(pendingAssistant.ToolCalls))
 	for _, call := range pendingAssistant.ToolCalls {
 		placeholderResults = append(placeholderResults, llm.ToolResult{
@@ -474,40 +343,6 @@ func toolResultPayloadPlaceholders(messages []llm.Message) []llm.Message {
 	return result
 }
 
-// trimToolFollowUpHistory 仅在工具回灌请求超预算时删除最老的完整历史轮次。
-func trimToolFollowUpHistory(
-	generateInput llm.GenerateInput,
-	messages []llm.Message,
-	modelName string,
-	capabilitiesJSON string,
-	fallbackContextWindow int,
-	estimators ...func(llm.GenerateInput) int64,
-) ([]llm.Message, bool) {
-	effectiveBudget := int64(domainchannel.EffectiveContextBudgetFromCapabilitiesWithFallback(modelName, capabilitiesJSON, fallbackContextWindow))
-	estimatedTokens := estimateToolBudgetInput(generateInput, messages, estimators...)
-	if estimatedTokens <= effectiveBudget {
-		return messages, false
-	}
-
-	systemEnd, currentUserIndex := toolHistoryBounds(messages)
-	if currentUserIndex <= systemEnd {
-		return messages, false
-	}
-	for cutFrom := systemEnd; cutFrom < currentUserIndex; cutFrom++ {
-		nextIndex := cutFrom + 1
-		if nextIndex < currentUserIndex && messages[nextIndex].Role != "user" {
-			continue
-		}
-		trimmed := make([]llm.Message, 0, systemEnd+len(messages)-nextIndex)
-		trimmed = append(trimmed, messages[:systemEnd]...)
-		trimmed = append(trimmed, messages[nextIndex:]...)
-		if estimateToolBudgetInput(generateInput, trimmed, estimators...) <= effectiveBudget || nextIndex == currentUserIndex {
-			return trimmed, true
-		}
-	}
-	return messages, false
-}
-
 func estimateToolBudgetInput(input llm.GenerateInput, messages []llm.Message, estimators ...func(llm.GenerateInput) int64) int64 {
 	if len(estimators) == 0 || estimators[0] == nil {
 		return estimateToolFollowUpInputTokens(input, messages)
@@ -518,18 +353,6 @@ func estimateToolBudgetInput(input llm.GenerateInput, messages []llm.Message, es
 		_, input.Messages = extractOpenAIResponsesInstructions(input.Messages)
 	}
 	return estimators[0](input)
-}
-
-// prioritizeCurrentToolMessages 返回系统指令和当前用户轮次，供工具结果计算最大可用预算。
-func prioritizeCurrentToolMessages(messages []llm.Message) []llm.Message {
-	systemEnd, currentUserIndex := toolHistoryBounds(messages)
-	if currentUserIndex <= systemEnd {
-		return append([]llm.Message(nil), messages...)
-	}
-	result := make([]llm.Message, 0, systemEnd+len(messages)-currentUserIndex)
-	result = append(result, messages[:systemEnd]...)
-	result = append(result, messages[currentUserIndex:]...)
-	return result
 }
 
 // toolHistoryBounds 定位系统前缀结束位置和当前轮用户消息。

@@ -16,6 +16,7 @@ import (
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	domainbilling "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/billing"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/textutil"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
@@ -600,7 +601,7 @@ func (s *Service) readMediaVideoExtensionSource(ctx context.Context, userID uint
 		limit = cfg.MaxUploadFileBytes
 	}
 	if limit <= 0 {
-		limit = 20 * 1024 * 1024
+		limit = config.DefaultMaxUploadFileBytes
 	}
 	data, err := io.ReadAll(io.LimitReader(content.Reader, limit+1))
 	if err != nil {
@@ -664,7 +665,7 @@ func (s *Service) readGeneratedVideo(ctx context.Context, video llm.GeneratedVid
 	cfg := s.cfg.Snapshot()
 	limit := cfg.MaxUploadFileBytes
 	if limit <= 0 {
-		limit = 20 * 1024 * 1024
+		limit = config.DefaultMaxUploadFileBytes
 	}
 	data, downloadedMIME, err := downloader.DownloadVideo(ctx, url, source.endpoint, source.apiKey, limit)
 	if err != nil {

@@ -40,7 +40,7 @@ func TestNativeSelectionReportsExactRejectedBudget(t *testing.T) {
 				for _, att := range selected {
 					native.Parts[att.FileID] = llm.ContentPart{Kind: llm.ContentPartAudio}
 				}
-				err := validateCurrentNativeReads(attachments, native)
+				err := validateRequiredNativeInputs(attachments, native)
 				if !errors.Is(err, ErrFileTooLarge) || llm.InputLimitDetails(err) == nil {
 					t.Fatalf("typed reason lost before send: %v", err)
 				}

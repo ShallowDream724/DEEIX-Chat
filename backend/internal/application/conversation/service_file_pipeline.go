@@ -11,6 +11,7 @@ import (
 	appprocessing "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/processing"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/background"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/tokenestimate"
 	"go.uber.org/zap"
@@ -83,7 +84,7 @@ func (s *Service) GetChatFilePolicy(ctx context.Context, userID uint) (*ChatFile
 		}
 	}
 	return &ChatFilePolicyDTO{
-		MaxMessageFiles:              cfg.MaxMessageFiles,
+		MaxMessageFiles:              routeMessageFileCount(cfg, nil),
 		TemporaryChatMaxAttachments:  TemporaryChatAttachmentLimit(cfg),
 		TemporaryChatRequestMaxBytes: TemporaryChatRequestLimit(cfg),
 		MaxUploadFileBytes:           cfg.MaxUploadFileBytes,
@@ -178,6 +179,7 @@ func (s *Service) resolveConversationFileContext(
 	userID uint,
 	fileIDs []string,
 	currentFileIDs []string,
+	history ...[]model.Message,
 ) ([]AttachmentInput, error) {
 	normalizedIDs := make([]string, 0, len(fileIDs))
 	seen := make(map[string]struct{}, len(fileIDs))
@@ -214,11 +216,25 @@ func (s *Service) resolveConversationFileContext(
 	}
 
 	resolved := make([]AttachmentInput, 0, len(fileObjects))
+	historicalUserFiles := make(map[string]string)
+	for _, messages := range history {
+		for _, message := range messages {
+			if !strings.EqualFold(message.Role, "user") || !strings.EqualFold(message.Status, "success") {
+				continue
+			}
+			for _, ref := range parseAttachmentSnapshotRefs(message.Attachments) {
+				historicalUserFiles[strings.TrimSpace(ref.FileID)] = ref.FileName
+			}
+		}
+	}
 	for _, fileID := range normalizedIDs {
 		fileItem, ok := fileMap[fileID]
 		if !ok {
 			if _, required := current[fileID]; required {
-				return nil, ErrInvalidFileReference
+				return nil, attachmentInputError(AttachmentInput{Current: true, FileName: historicalUserFiles[fileID]}, ErrInvalidFileReference)
+			}
+			if name, required := historicalUserFiles[fileID]; required {
+				return nil, attachmentInputError(AttachmentInput{FileName: name}, ErrInvalidFileReference)
 			}
 			continue
 		}
@@ -295,12 +311,15 @@ func (s *Service) hydrateAttachmentsForSend(
 					"status": "streaming",
 				})
 			})
+			if err == nil && readyFile == nil {
+				err = ErrInvalidFileReference
+			}
 			if err != nil {
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					return err
 				}
-				// 历史文件与图片保留原有说明；本轮普通文件处理失败时拒绝发送。
-				if !att.Current || att.FileCategory == fileCategoryImage {
+				// 助手生成的文件可以缺少处理结果；用户文件必须有可用输入。
+				if !isUserSubmittedAttachment(att) {
 					if latestFile != nil {
 						items[i].ProcessingStatus = latestFile.ProcessingStatus
 						items[i].ProcessingReady = latestFile.ProcessingReady
@@ -311,7 +330,14 @@ func (s *Service) hydrateAttachmentsForSend(
 					}
 					return nil
 				}
-				return err
+				if errors.Is(err, appprocessing.ErrFileProcessingFailed) {
+					reason := ""
+					if latestFile != nil && strings.EqualFold(latestFile.ExtractStatus, "failed") {
+						reason = attachmentInputParseFailed
+					}
+					return attachmentInputErrorWithReason(att, errors.Join(ErrFileProcessingNotReady, err), reason)
+				}
+				return attachmentInputError(att, ErrInvalidFileReference)
 			}
 			items[i].FileObjID = readyFile.File.ID
 			items[i].DetectedMIME = readyFile.DetectedMIME
@@ -330,36 +356,33 @@ func (s *Service) hydrateAttachmentsForSend(
 	}
 
 	if err := g.Wait(); err != nil {
-		switch {
-		case errors.Is(err, appprocessing.ErrFileProcessingFailed):
-			return nil, errors.Join(ErrFileProcessingNotReady, err)
-		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-			return nil, err
-		default:
-			return nil, ErrInvalidFileReference
-		}
+		return nil, err
 	}
 	return items, nil
 }
 
 func canUseAttachmentFullContext(att AttachmentInput, cfg config.Config) bool {
-	if att.FileCategory == fileCategoryVideo || att.FileCategory == fileCategoryAudio {
-		return false
+	return checkAttachmentFullContext(att, cfg) == nil
+}
+
+func checkAttachmentFullContext(att AttachmentInput, cfg config.Config) error {
+	if isMediaAttachment(att) {
+		return ErrFileUnsupportedByModel
 	}
 	text := strings.TrimSpace(att.ExtractedText)
 	if text == "" {
-		return false
+		return ErrFileProcessingNotReady
 	}
-	if cfg.FileFullContextMaxBytes > 0 && int64(len([]byte(text))) > cfg.FileFullContextMaxBytes {
-		return false
+	if size := int64(len(text)); cfg.FileFullContextMaxBytes > 0 && size > cfg.FileFullContextMaxBytes {
+		return llm.NewInputLimitError("parsedTextBytes", size, cfg.FileFullContextMaxBytes)
 	}
-	if cfg.FileFullContextMaxTokens > 0 && tokenestimate.Estimate(text) > int64(cfg.FileFullContextMaxTokens) {
-		return false
+	if cfg.FileFullContextMaxTokens > 0 {
+		limit := int64(cfg.FileFullContextMaxTokens)
+		if tokens := tokenestimate.Estimate(text); tokens > limit {
+			return llm.NewInputLimitError("parsedTextTokens", tokens, limit)
+		}
 	}
-	if att.FileCategory == fileCategoryPDF && cfg.FileFullContextPDFMaxPages > 0 && att.PageCount > cfg.FileFullContextPDFMaxPages {
-		return false
-	}
-	return true
+	return nil
 }
 
 func buildFileAttachmentSnapshot(att AttachmentInput) map[string]any {

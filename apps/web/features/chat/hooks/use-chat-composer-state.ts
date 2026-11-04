@@ -40,6 +40,13 @@ type PersistedComposerEntry = {
 
 type PersistedComposerStore = Record<string, PersistedComposerEntry>;
 
+export type RestoreSubmittedDraft = (
+  revision: number,
+  draft: string,
+  attachments: PendingAttachment[],
+  conversationID?: string | null,
+) => boolean;
+
 type ComposerState = {
   conversationKey: string;
   draft: string;
@@ -292,6 +299,7 @@ export function useChatComposerState(
   const activeStorageKeyRef = React.useRef(storageKey);
   const persistenceTimerRef = React.useRef<number | null>(null);
   const pendingPersistenceRef = React.useRef<PendingComposerPersistence | null>(null);
+  const carryDraftRef = React.useRef<PendingComposerPersistence | null>(null);
 
   const flushPendingPersistence = React.useCallback(() => {
     if (persistenceTimerRef.current !== null) {
@@ -341,12 +349,18 @@ export function useChatComposerState(
     const previousStorageKey = activeStorageKeyRef.current;
     const storageAccountChanged = Boolean(previousStorageKey) && previousStorageKey !== storageKey;
     activeStorageKeyRef.current = storageKey;
+    const candidate = carryDraftRef.current;
+    if (candidate && (candidate.storageKey !== storageKey || transient
+      || conversationKey === NEW_CONVERSATION_COMPOSER_KEY)) carryDraftRef.current = null;
+    const carriedDraft = candidate?.storageKey === storageKey && conversationKey === NEW_CONVERSATION_COMPOSER_KEY
+      ? { conversationKey, draft: candidate.draft, attachments: candidate.attachments }
+      : null;
     if (!persistenceEnabled) {
       discardPendingPersistence(conversationKey);
       if (!transient && storageKey && !preserveDrafts) {
         ComposerStorageOps.removeEntry(storageKey, conversationKey);
       }
-      setState((prev) => (prev.conversationKey === conversationKey ? prev : createEmptyComposerState(conversationKey)));
+      setState((prev) => prev.conversationKey === conversationKey ? prev : carriedDraft ?? createEmptyComposerState(conversationKey));
       setHydratedConversationKey(conversationKey);
       setHydratedStorageKey(storageKey);
       return;
@@ -361,7 +375,7 @@ export function useChatComposerState(
       if (!nextHasContent && !prevHasContent) {
         return prevMatchesConversation && !storageAccountChanged
           ? prev
-          : createEmptyComposerState(conversationKey);
+          : carriedDraft ?? createEmptyComposerState(conversationKey);
       }
 
       if (
@@ -382,7 +396,7 @@ export function useChatComposerState(
         return prev;
       }
 
-      return nextHasContent ? nextState : createEmptyComposerState(conversationKey);
+      return nextHasContent ? nextState : carriedDraft ?? createEmptyComposerState(conversationKey);
     });
     setHydratedConversationKey(conversationKey);
     setHydratedStorageKey(storageKey);
@@ -423,8 +437,48 @@ export function useChatComposerState(
   ]);
 
   const visibleState = state.conversationKey === conversationKey ? state : createEmptyComposerState(conversationKey);
+  const composerRevisionRef = React.useRef(0);
+  const latestStateRef = React.useRef(visibleState);
+  useIsomorphicLayoutEffect(() => {
+    latestStateRef.current = visibleState;
+  }, [visibleState]);
+  useIsomorphicLayoutEffect(() => {
+    composerRevisionRef.current++;
+  }, [storageKey, transient]);
+  const getComposerRevision = React.useCallback(() => composerRevisionRef.current, []);
+  const carryDraftToNewConversation = React.useCallback(() => {
+    const current = latestStateRef.current;
+    if (current.conversationKey === NEW_CONVERSATION_COMPOSER_KEY || !hasComposerContent(current)) return;
+    carryDraftRef.current = {
+      storageKey,
+      conversationKey: current.conversationKey,
+      draft: current.draft,
+      // The old composer owns its preview URLs; the new draft uses saved files.
+      attachments: current.attachments.map((item) => ({ ...item, previewURL: undefined })),
+    };
+    if (persistenceEnabled) {
+      flushPendingPersistence();
+      ComposerStorageOps.writeEntry(storageKey, current.conversationKey, current.draft, current.attachments);
+    }
+  }, [flushPendingPersistence, persistenceEnabled, storageKey]);
+
+  const restoreSubmittedDraft = React.useCallback<RestoreSubmittedDraft>((revision, draft, attachments, targetConversationID) => {
+    if (revision !== composerRevisionRef.current) return false;
+    const targetKey = targetConversationID === undefined
+      ? conversationKey
+      : resolveConversationComposerKey(targetConversationID);
+    const latest = latestStateRef.current;
+    if (targetKey !== conversationKey && latest.conversationKey === targetKey
+      && (latest.draft || latest.attachments.length > 0)) return false;
+    composerRevisionRef.current++;
+    setHydratedConversationKey(targetKey);
+    setHydratedStorageKey(storageKey);
+    setState({ conversationKey: targetKey, draft, attachments });
+    return true;
+  }, [conversationKey, storageKey]);
 
   const setDraft = React.useCallback((value: React.SetStateAction<string>) => {
+    composerRevisionRef.current++;
     setHydratedConversationKey(conversationKey);
     setHydratedStorageKey(storageKey);
     setState((prev) => ({
@@ -436,7 +490,8 @@ export function useChatComposerState(
     }));
   }, [conversationKey, storageKey]);
 
-  const setAttachments = React.useCallback((value: React.SetStateAction<PendingAttachment[]>) => {
+  const updateAttachmentStatuses = React.useCallback((value: React.SetStateAction<PendingAttachment[]>) => {
+    if (latestStateRef.current.conversationKey !== conversationKey) return;
     setHydratedConversationKey(conversationKey);
     setHydratedStorageKey(storageKey);
     setState((prev) => ({
@@ -448,12 +503,18 @@ export function useChatComposerState(
     }));
   }, [conversationKey, storageKey]);
 
+  const setAttachments = React.useCallback<React.Dispatch<React.SetStateAction<PendingAttachment[]>>>((value) => {
+    composerRevisionRef.current++;
+    updateAttachmentStatuses(value);
+  }, [updateAttachmentStatuses]);
+
   const appendAttachmentsForKey = React.useCallback((targetConversationKey: string, items: PendingAttachment[]) => {
     if (items.length === 0) {
       return;
     }
 
     if (conversationKey === targetConversationKey) {
+      composerRevisionRef.current++;
       setHydratedConversationKey(targetConversationKey);
       setHydratedStorageKey(storageKey);
       setState((prev) => ({
@@ -479,6 +540,10 @@ export function useChatComposerState(
     attachments: visibleState.attachments,
     setDraft,
     setAttachments,
+    updateAttachmentStatuses,
     appendAttachmentsForKey,
+    getComposerRevision,
+    restoreSubmittedDraft,
+    carryDraftToNewConversation,
   };
 }

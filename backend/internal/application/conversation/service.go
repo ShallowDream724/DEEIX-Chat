@@ -155,6 +155,7 @@ type Service struct {
 	snapshotCache            sync.Map // conversationID (uint) → *cachedSnapshot
 	userMemCache             sync.Map // userID (uint) → *cachedUserMemories
 	imageContextCache        *preparedConversationImageCache
+	temporaryContextCache    temporaryContextObservationCache
 }
 
 func (s *Service) llmAttribution() (string, string) {

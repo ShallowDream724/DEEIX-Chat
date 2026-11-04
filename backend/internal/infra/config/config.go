@@ -46,8 +46,12 @@ const (
 	DefaultPersonalProvidersMaxPerUser = 10
 	// MaxPersonalProvidersMaxPerUser 是管理员可配置的上限。
 	MaxPersonalProvidersMaxPerUser = 50
-	// DefaultFileFullContextMaxBytes 是全文注入的默认提取文本大小上限（2 MiB）。
-	DefaultFileFullContextMaxBytes int64 = 2 * 1024 * 1024
+	// 管理页面的大小默认值使用十进制 MB，与输入和显示单位一致。
+	DefaultUserStorageQuotaBytes         int64 = 100_000_000
+	DefaultMaxUploadFileBytes            int64 = 20_000_000
+	DefaultFileFullContextMaxBytes       int64 = 2_000_000
+	DefaultImageAttachmentProcessorBytes int64 = 20_000_000
+	DefaultGeneratedImageMaxBytes        int64 = 50_000_000
 
 	// DefaultContextWindowFallbackTokens 是无法从模型能力配置或内置目录识别窗口时的默认值。
 	DefaultContextWindowFallbackTokens = 128_000
@@ -525,7 +529,7 @@ type Config struct {
 	PreparedImageCacheMaxEntries         int    // 图片处理结果缓存条目，0 禁用
 	PreparedImageCacheMaxBytes           int64  // 图片处理结果缓存字节，0 禁用
 	GeneratedImageMaxBytes               int64  // 生成图片单文件保存上限（字节）
-	FileFullContextPDFMaxPages           int    // PDF Full Context 页数上限，超出走 RAG
+	FileFullContextPDFMaxPages           int    // 旧配置兼容：不再限制全文资格或截断 PDF 提取
 	FileAllowedMIMETypes                 string // 白名单 MIME 类型（逗号分隔）
 	ExtractEngine                        string // 提取主引擎枚举
 	ExtractSourceMaxBytes                int64
@@ -611,8 +615,8 @@ type Config struct {
 	CompactMaxFailures  int    // LLM 压缩熔断阈值：连续失败次数上限
 	CompactSystemPrompt string // 全量摘要提示词（空串用内置默认值）；支持占位符 {{FROM_TURN}}、{{TO_TURN}}
 	CompactLightPrompt  string // 轻量摘要提示词（空串用内置默认值）；支持占位符 {{FROM_TURN}}、{{TO_TURN}}
-	// Token 预算感知上下文截断
-	ContextTokenBudgetEnabled bool // 是否按 Token 预算截断上下文（替代消息数截断）
+	// 模型上下文预算保护
+	ContextTokenBudgetEnabled bool // 是否按模型有效上下文 Token 预算阻止超限请求
 	// 消息历史 Embedding（语义上下文召回）
 	MessageEmbeddingEnabled      bool // 是否对每轮消息异步生成向量嵌入
 	SemanticContextEnabled       bool // 是否在上下文组装时加入语义召回片段
@@ -765,8 +769,8 @@ func Load() Config {
 		PersonalProvidersMaxPerUser:          DefaultPersonalProvidersMaxPerUser,
 		DesktopDownloadEnabled:               true,
 		DesktopDownloadURL:                   DefaultDesktopDownloadURL,
-		UserStorageQuotaBytes:                104857600,
-		MaxUploadFileBytes:                   20971520,
+		UserStorageQuotaBytes:                DefaultUserStorageQuotaBytes,
+		MaxUploadFileBytes:                   DefaultMaxUploadFileBytes,
 		MaxMessageFiles:                      10,
 		ImageMaxDimension:                    1024,
 		InputLimitsJSON:                      inputlimits.DefaultConfigJSON(),
@@ -778,20 +782,20 @@ func Load() Config {
 		ExtractMinerUTextMaxBytes:            20 * 1024 * 1024,
 		FileFullContextLimitEnabled:          true,
 		FileFullContextMaxBytes:              DefaultFileFullContextMaxBytes,
-		FileFullContextMaxTokens:             65536,
+		FileFullContextMaxTokens:             256000,
 		FileImageMaxBytes:                    0,
 		FileDocMaxBytes:                      0,
 		FileAudioMaxBytes:                    0,
 		FileVideoMaxBytes:                    0,
 		TemporaryChatMaxAttachments:          20,
 		TemporaryChatRequestMaxBytes:         8 * 1024 * 1024,
-		ImageAttachmentProcessorMaxBytes:     20 * 1024 * 1024,
+		ImageAttachmentProcessorMaxBytes:     DefaultImageAttachmentProcessorBytes,
 		ImageAttachmentAnalysisMaxChars:      6000,
 		ImageAttachmentAnalysisTotalMaxChars: 16000,
 		PreparedImageCacheMaxEntries:         64,
 		PreparedImageCacheMaxBytes:           64 * 1024 * 1024,
-		GeneratedImageMaxBytes:               50 * 1024 * 1024,
-		FileFullContextPDFMaxPages:           20,
+		GeneratedImageMaxBytes:               DefaultGeneratedImageMaxBytes,
+		FileFullContextPDFMaxPages:           0,
 		FileAllowedMIMETypes:                 "image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,video/mpeg,audio/mpeg,audio/wav,audio/mp4,audio/aac,audio/ogg,audio/flac,audio/aiff,text/plain,text/markdown,text/csv,text/yaml,application/json,application/yaml,application/x-yaml,application/toml,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel",
 		ExtractEngine:                        "builtin",
 		ExtractOCREngine:                     "rapidocr",

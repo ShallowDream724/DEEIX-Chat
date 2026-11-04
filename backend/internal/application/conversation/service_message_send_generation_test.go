@@ -100,8 +100,8 @@ func TestPrepareRouteGenerationFailoverAlwaysSendsFullContext(t *testing.T) {
 	if plan.generateInput.Instructions == "" || len(plan.generateInput.Messages) != 3 {
 		t.Fatalf("Responses route must lift the system prompt into instructions, got %#v", plan.generateInput)
 	}
-	if plan.estimatedPromptTokens <= 0 || plan.fullContextPromptTokens < plan.estimatedPromptTokens {
-		t.Fatalf("token estimates must be populated, got estimated=%d full=%d", plan.estimatedPromptTokens, plan.fullContextPromptTokens)
+	if plan.estimatedPromptTokens <= 0 {
+		t.Fatalf("full context estimate must be populated, got %d", plan.estimatedPromptTokens)
 	}
 	if plan.statefulPrefixFingerprint == "" || plan.routeConfig.Protocol != llm.AdapterOpenAIResponses {
 		t.Fatalf("plan must carry the fingerprint and route config, got %#v", plan)

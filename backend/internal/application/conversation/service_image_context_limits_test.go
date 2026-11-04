@@ -85,7 +85,7 @@ func TestRouteImageBudgetSharesHistoryAndCurrentImages(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	cfg := config.Config{InputLimitsJSON: `{"profiles":{"compatible":{"imageCount":1}}}`}
+	cfg := config.Config{InputLimitsJSON: `{"defaults":{"imageCount":1}}`}
 	service := &Service{cfg: config.NewRuntime(cfg), storeProvider: &conversationTestStoreProvider{store: store}}
 	current := AttachmentInput{FileID: "current", FileName: "image.png", Kind: "image", MimeType: "image/png", StoragePath: "current", Current: true, ContextMode: fileContextModeDirectImage}
 	input := messageRoutePromptInput{
@@ -97,7 +97,7 @@ func TestRouteImageBudgetSharesHistoryAndCurrentImages(t *testing.T) {
 	if _, err := service.buildMessageRoutePrompt(t.Context(), route, input); !errors.Is(err, llm.ErrInputTooLarge) {
 		t.Fatalf("expected combined request image budget failure, got %v", err)
 	}
-	cfg.InputLimitsJSON = `{"profiles":{"compatible":{"imageCount":2,"imageBytes":10}}}`
+	cfg.InputLimitsJSON = `{"defaults":{"imageCount":2,"imageBytes":10}}`
 	service.cfg = config.NewRuntime(cfg)
 	input.Config = cfg
 	plan, err := service.buildMessageRoutePrompt(t.Context(), route, input)

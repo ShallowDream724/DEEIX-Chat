@@ -120,7 +120,7 @@ func TestOrdinaryPendingFilesStillWaitForExtraction(t *testing.T) {
 func TestNativeReadFailureAndBudgetCannotSilentlyDropCurrentPDF(t *testing.T) {
 	service := &Service{}
 	att := nativePDF("missing", 100, 1, true)
-	route := &channel.ResolvedRoute{Protocol: llm.AdapterGoogleGenerateContent, CatalogInputModalities: []string{"pdf"}}
+	route := &channel.ResolvedRoute{Protocol: llm.AdapterGoogleGenerateContent, BaseURL: "https://generativelanguage.googleapis.com", CatalogInputModalities: []string{"pdf"}}
 	if _, err := service.buildMessageRoutePrompt(t.Context(), route, messageRoutePromptInput{ConversationFiles: []AttachmentInput{att}}); !errors.Is(err, ErrFileProcessingNotReady) {
 		t.Fatalf("read failure must stop generation, got %v", err)
 	}
@@ -136,7 +136,7 @@ func TestCurrentMediaOverBudgetDoesNotWaitForExtraction(t *testing.T) {
 	policy := resolveNativeInputPolicy(&channel.ResolvedRoute{
 		Protocol: llm.AdapterGoogleGenerateContent, CatalogInputModalities: []string{"audio"},
 	})
-	if err := validateCurrentNativeReads([]AttachmentInput{att}, nativeInputs{Policy: policy}); !errors.Is(err, ErrFileTooLarge) {
+	if err := validateRequiredNativeInputs([]AttachmentInput{att}, nativeInputs{Policy: policy}); !errors.Is(err, ErrFileTooLarge) {
 		t.Fatalf("oversized media must report its budget instead of waiting for extraction: %v", err)
 	}
 }
@@ -146,19 +146,21 @@ func TestCurrentUnsupportedMediaStopsBeforeExtractionWait(t *testing.T) {
 		att := nativeMedia("media", mime, 100)
 		att.ContextMode = ""
 		// This is the first send-stage validation, before hydration and planning.
-		if err := validateCurrentNativeReads([]AttachmentInput{att}, nativeInputs{}); !errors.Is(err, ErrFileUnsupportedByModel) {
+		if err := validateRequiredNativeInputs([]AttachmentInput{att}, nativeInputs{}); !errors.Is(err, ErrFileUnsupportedByModel) {
 			t.Fatalf("unsupported current %s must fail immediately, got %v", mime, err)
 		}
 		att.Current = false
-		if err := validateCurrentNativeReads([]AttachmentInput{att}, nativeInputs{}); err != nil {
-			t.Fatalf("historical %s must retain compatibility, got %v", mime, err)
+		if err := validateRequiredNativeInputs([]AttachmentInput{att}, nativeInputs{}); !errors.Is(err, ErrFileUnsupportedByModel) {
+			t.Fatalf("historical %s must have a readable input path, got %v", mime, err)
 		}
 	}
 }
 
 func TestNativeOfficialBudgets(t *testing.T) {
-	openai := resolveNativeInputPolicy(&channel.ResolvedRoute{Protocol: llm.AdapterOpenAIResponses, BaseURL: "https://api.openai.com/v1", CatalogInputModalities: []string{"pdf"}})
-	gemini := resolveNativeInputPolicy(&channel.ResolvedRoute{Protocol: llm.AdapterGoogleGenerateContent, CatalogInputModalities: []string{"pdf", "audio"}})
+	// Isolate provider constraints from administrator defaults.
+	config := `{"defaults":{"nativeBytes":0,"pdfBytes":0,"pdfSingleBytes":0,"pdfPages":0}}`
+	openai := resolveNativeInputPolicy(&channel.ResolvedRoute{Protocol: llm.AdapterOpenAIResponses, BaseURL: "https://api.openai.com/v1", CatalogInputModalities: []string{"pdf"}}, config)
+	gemini := resolveNativeInputPolicy(&channel.ResolvedRoute{Protocol: llm.AdapterGoogleGenerateContent, BaseURL: "https://generativelanguage.googleapis.com", CatalogInputModalities: []string{"pdf", "audio"}}, config)
 	for _, tc := range []struct {
 		name   string
 		policy nativeInputPolicy
@@ -168,11 +170,12 @@ func TestNativeOfficialBudgets(t *testing.T) {
 		{"openai larger than old 8MiB", openai, []AttachmentInput{nativePDF("large", 49_999_999, 201, true)}, 1},
 		{"openai strict single boundary", openai, []AttachmentInput{nativePDF("limit", 50_000_000, 1, true)}, 0},
 		{"openai combined boundary", openai, []AttachmentInput{nativePDF("first", 25_000_000, 1, true), nativePDF("second", 25_000_000, 1, true)}, 2},
-		{"openai combined exceeded", openai, []AttachmentInput{nativePDF("first", 25_000_001, 1, true), nativePDF("second", 25_000_000, 1, true)}, 1},
+		{"openai combined exceeded", openai, []AttachmentInput{nativePDF("first", 25_000_001, 1, true), nativePDF("second", 25_000_000, 1, true)}, 0},
 		{"gemini single boundary", gemini, []AttachmentInput{nativePDF("limit", 50_000_000, 200, true)}, 1},
+		{"gemini single exceeded", gemini, []AttachmentInput{nativePDF("large", 50_000_001, 1, true)}, 0},
 		{"gemini multiple PDFs use inline request budget", gemini, []AttachmentInput{nativePDF("first", 30_000_000, 100, true), nativePDF("second", 30_000_000, 100, true)}, 2},
-		{"gemini total pages exceeded", gemini, []AttachmentInput{nativePDF("first", 100, 101, true), nativePDF("second", 100, 100, true)}, 1},
-		{"gemini unknown pages require metadata probe", gemini, []AttachmentInput{nativePDF("unknown", 100, 0, true)}, 0},
+		{"gemini has no administrator page cap by default", gemini, []AttachmentInput{nativePDF("first", 100, 101, true), nativePDF("second", 100, 100, true)}, 2},
+		{"gemini unknown pages need no budget metadata", gemini, []AttachmentInput{nativePDF("unknown", 100, 0, true)}, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := len(selectNativeInputs(tc.files, tc.policy)); got != tc.want {
@@ -200,7 +203,7 @@ func TestNativeUnknownPDFPagesUseMetadataOnly(t *testing.T) {
 	parser := &nativePDFMetadataParser{pages: 201}
 	extract := appextraction.NewServiceWithRuntime(config.NewRuntime(config.Config{}), appextraction.EngineFactories{Builtin: parser})
 	extract.SetObjectStoreProvider(provider)
-	service := &Service{extractSvc: extract, storeProvider: provider}
+	service := &Service{extractSvc: extract, storeProvider: provider, cfg: config.NewRuntime(config.Config{InputLimitsJSON: `{"defaults":{"pdfPages":200}}`})}
 	att := nativePDF("unknown", int64(len(data)), 0, true)
 	route := &channel.ResolvedRoute{Protocol: llm.AdapterGoogleGenerateContent, CatalogInputModalities: []string{"pdf"}}
 	if got := service.resolveNativeInputs(t.Context(), route, []AttachmentInput{att}, nil); len(got.Parts) != 0 || parser.calls != 1 {
@@ -247,7 +250,7 @@ func TestNativeReadUsesRouteBudgetBeyondOldReaderLimit(t *testing.T) {
 	}
 	att.FileSize--
 	native = service.resolveNativeInputs(t.Context(), route, []AttachmentInput{att}, nil)
-	if err := validateCurrentNativeReads([]AttachmentInput{att}, native); !errors.Is(err, ErrFileProcessingNotReady) {
+	if err := validateRequiredNativeInputs([]AttachmentInput{att}, native); !errors.Is(err, ErrFileProcessingNotReady) {
 		t.Fatal("storage bytes beyond the budgeted size must stop generation")
 	}
 }

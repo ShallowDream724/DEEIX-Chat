@@ -44,7 +44,7 @@
     },
     "contextTokenBudget": {
       "label": "Token 预算保护",
-      "description": "根据模型上下文窗口自动裁剪超出预算的历史消息。"
+      "description": "发送前检查模型上下文预算，超限时停止发送。已开启自动压缩时，先尝试压缩历史内容。"
     },
     "contextMaxTurns": {
       "label": "压缩触发轮次",

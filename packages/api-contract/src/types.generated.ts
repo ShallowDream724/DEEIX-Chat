@@ -256,6 +256,28 @@ export interface AnnouncementStateRequest {
   updatedAt: string;
 }
 
+export interface AttachmentReadinessIssueResponse {
+  actual: number;
+  dimension: string;
+  fileCategory?: "image" | "pdf" | "document" | "audio" | "video" | "other";
+  fileName?: string;
+  limit: number;
+  scope?: "current" | "history" | "context";
+}
+
+export interface AttachmentReadinessLimitsResponse {
+  imageBytes: number;
+  imageCount: number;
+  imageSingleBytes: number;
+  nativeBytes: number;
+  nativeCount: number;
+  nonPDFBytes: number;
+  pdfBytes: number;
+  pdfPages: number;
+  pdfSingleBytes: number;
+  requestBytes: number;
+}
+
 export interface AuditLogListResponseDoc {
   data: {
     results: AuditLogResponse[];
@@ -2949,13 +2971,13 @@ export interface NativeFileReadinessResponse {
 export interface NativeReadinessRequest {
   /** @maxLength 32 */
   conversationID?: string;
-  /**
-   * @maxItems 100
-   * @minItems 1
-   */
-  fileIDs: string[];
+  fileIDs?: string[];
   /** @maxLength 128 */
-  model: string;
+  model?: string;
+  /** @maxLength 32 */
+  parentMessagePublicID?: string;
+  /** @maxItems 128 */
+  selectedToolIDs?: number[];
 }
 
 export interface NativeReadinessResponse {
@@ -2972,6 +2994,9 @@ export interface NativeToolPricingRequest {
   priceLabel?: string;
   priceNanousd?: number;
   toolKey?: string;
+  issues: AttachmentReadinessIssueResponse[];
+  limits: AttachmentReadinessLimitsResponse;
+  messageFileCount: number;
   unit?: string;
 }
 
@@ -4057,7 +4082,6 @@ export interface SendMessageRequest {
   contentType: "text" | "markdown" | "image" | "file" | "mixed";
   /** Controls 为模型控件选择 {控件 id: 取值}，取值为字符串、布尔或数值；未知控件与无效取值被忽略。 */
   controls?: Record<string, any>;
-  /** @maxItems 20 */
   fileIDs?: string[];
   htmlVisualPrompt?: boolean;
   /** @maxItems 8 */
@@ -4395,7 +4419,6 @@ export interface SyncUpstreamModelsResponseDoc {
 }
 
 export interface TemporaryChatHistoryMessage {
-  /** @maxLength 200000 */
   content: string;
   role: "user" | "assistant";
 }
@@ -4407,10 +4430,7 @@ export interface TemporaryChatMessageRequest {
   htmlVisualPrompt?: boolean;
   /** @maxItems 8 */
   knowledgeBaseIDs?: string[];
-  /**
-   * @maxItems 100
-   * @minItems 1
-   */
+  /** @minItems 1 */
   messages: TemporaryChatHistoryMessage[];
   /** @maxLength 128 */
   model: string;
@@ -10465,7 +10485,7 @@ export namespace Files {
    * No description
    * @tags chat
    * @name NativeReadinessCreate
-   * @summary 查询本轮附件原生输入资格
+   * @summary 查询所选模型的附件输入限制与当前分支附件状态
    * @request POST:/files/native-readiness
    * @secure
    */

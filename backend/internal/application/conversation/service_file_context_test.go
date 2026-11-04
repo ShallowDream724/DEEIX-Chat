@@ -361,21 +361,61 @@ func TestPrepareUserContextImagesRejectsMissingObjectStoreProvider(t *testing.T)
 	}
 }
 
-func TestBuildConversationFileContextPlanSkipsOversizedFileWhenRAGUnavailable(t *testing.T) {
+func TestOversizedParsedAttachmentRequiresALegalRetrievalPath(t *testing.T) {
 	cfg := config.Config{FileFullContextMaxTokens: 10}
-	plan := buildConversationFileContextPlan([]AttachmentInput{{
+	file := AttachmentInput{
 		FileID:        "file_large",
 		FileName:      "large.md",
 		FileCategory:  "document",
 		ExtractedText: strings.Repeat("token ", 100),
 		EmbedStatus:   "pending",
-	}}, "auto", cfg, "gpt-5.5", "", false)
-
-	if len(plan.FullAttachments) != 0 || len(plan.RAGAttachments) != 0 || len(plan.Skipped) != 1 {
-		t.Fatalf("expected oversized unavailable file to be skipped, got %#v", plan)
+		MessageRole:   "user",
 	}
-	if plan.Skipped[0].ContextMode != fileContextModeSkipped {
-		t.Fatalf("expected skipped context mode, got %#v", plan.Skipped[0])
+	plan := buildConversationFileContextPlan([]AttachmentInput{file}, "auto", cfg, "gpt-5.5", "", false)
+	err := validatePlannedFileContext(plan.Attachments, cfg)
+	limit, detail := llm.InputLimitDetails(err), AttachmentInputErrorDetails(err)
+	if limit == nil || limit.Dimension != "parsedTextTokens" || detail == nil || detail.FileName != "large.md" || detail.Scope != "history" {
+		t.Fatalf("expected a historical text limit instead of omitting the document: err=%v, limit=%#v, detail=%#v", err, limit, detail)
+	}
+	cfg.RAGEnabled, cfg.EmbeddingEnabled = true, true
+	file.EmbedStatus, file.FileObjID, file.ChunkCount = "ready", 1, 3
+	plan = buildConversationFileContextPlan([]AttachmentInput{file}, "auto", cfg, "gpt-5.5", "", true)
+	if err := validatePlannedFileContext(plan.Attachments, cfg); err != nil || len(plan.RAGAttachments) != 1 || len(plan.FullAttachments) != 0 {
+		t.Fatalf("a searchable oversized document may use RAG without claiming full text: err=%v, plan=%#v", err, plan)
+	}
+}
+
+func TestResolveConversationFileContextRequiresHistoricalUserFiles(t *testing.T) {
+	service := &Service{repo: nativeReadinessRepo{owner: 1}}
+	messages := []model.Message{{Role: "user", Status: "success", Attachments: `[{"file_id":"deleted","file_name":"report.pdf"}]`}}
+	_, err := service.resolveConversationFileContext(t.Context(), 1, []string{"deleted"}, nil, messages)
+	if detail := AttachmentInputErrorDetails(err); !errors.Is(err, ErrInvalidFileReference) ||
+		detail == nil || detail.FileName != "report.pdf" || detail.Scope != "history" {
+		t.Fatalf("expected a named historical reference error, got %v (%#v)", err, detail)
+	}
+	messages[0].Role = "assistant"
+	if _, err := service.resolveConversationFileContext(t.Context(), 1, []string{"deleted"}, nil, messages); err != nil {
+		t.Fatalf("assistant output no longer available is optional: %v", err)
+	}
+}
+
+func TestAttachmentRetrievalFailureRequiresFullFallback(t *testing.T) {
+	cfg := config.Config{RAGEnabled: true, EmbeddingEnabled: true, FileFullContextMaxBytes: 3}
+	// Disabled retrieval service simulates an unavailable retrieval route.
+	service := &Service{ragSvc: apprag.NewServiceWithRuntime(config.NewRuntime(config.Config{}), nil, nil, nil)}
+	file := AttachmentInput{FileID: "report", FileObjID: 1, FileName: "report.pdf", MessageRole: "user", EmbedStatus: "ready", ChunkCount: 1}
+	in := messageRAGRetrievalInput{cfg: cfg, query: "question", contextAssembler: NewContextAssembler(0)}
+	file.ExtractedText = "too long"
+	in.fileContextPlan = buildConversationFileContextPlan([]AttachmentInput{file}, "rag", cfg, "", "", true)
+	_, err := service.retrieveMessageRAGContext(t.Context(), in)
+	if detail := AttachmentInputErrorDetails(err); !errors.Is(err, ErrFileProcessingNotReady) || detail == nil || detail.FileName != file.FileName {
+		t.Fatalf("expected retrieval failure instead of an omitted document, got %v (%#v)", err, detail)
+	}
+	file.ExtractedText = "ok"
+	in.fileContextPlan = buildConversationFileContextPlan([]AttachmentInput{file}, "rag", cfg, "", "", true)
+	result, err := service.retrieveMessageRAGContext(t.Context(), in)
+	if err != nil || len(result.retrievalFallbacks) != 1 {
+		t.Fatalf("expected full fallback, got %v (%#v)", err, result)
 	}
 }
 

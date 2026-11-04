@@ -23,6 +23,9 @@ func TestTemporaryChatJSONUsesConfiguredRequestBudget(t *testing.T) {
 	if ok || w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("ok=%v status=%d, want 413", ok, w.Code)
 	}
+	if !strings.Contains(w.Body.String(), `"dimension":"temporaryRequestBytes"`) || !strings.Contains(w.Body.String(), `"limit":64`) {
+		t.Fatalf("missing request limit details: %s", w.Body.String())
+	}
 }
 
 func TestTemporaryChatMultipartUsesConfiguredAttachmentCount(t *testing.T) {
@@ -47,7 +50,7 @@ func TestTemporaryChatMultipartUsesConfiguredAttachmentCount(t *testing.T) {
 		if err := writer.Close(); err != nil {
 			t.Fatal(err)
 		}
-		h := &Handler{cfg: config.NewRuntime(config.Config{MaxUploadFileBytes: 20, FileDocMaxBytes: 50, TemporaryChatRequestMaxBytes: 1024, TemporaryChatMaxAttachments: limit})}
+		h := &Handler{cfg: config.NewRuntime(config.Config{MaxUploadFileBytes: 20, FileDocMaxBytes: 50, TemporaryChatRequestMaxBytes: 1024, TemporaryChatMaxAttachments: limit, MaxMessageFiles: 1})}
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest(http.MethodPost, "/", &body)
@@ -59,6 +62,9 @@ func TestTemporaryChatMultipartUsesConfiguredAttachmentCount(t *testing.T) {
 		}
 		if ok && len(files) != 2 {
 			t.Fatalf("got %d files", len(files))
+		}
+		if !ok && (w.Code != http.StatusRequestEntityTooLarge || !strings.Contains(w.Body.String(), `"dimension":"temporaryFileCount"`)) {
+			t.Fatalf("missing attachment count details: status=%d %s", w.Code, w.Body.String())
 		}
 	}
 }

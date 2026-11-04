@@ -60,8 +60,8 @@ export type ChatSubmissionPlan = {
 };
 
 export type ChatSubmissionPlanResult =
-  | { ok: true; plan: ChatSubmissionPlan; attachmentsTruncated: boolean }
-  | { ok: false; block: ChatSubmissionBlock; attachmentsTruncated: boolean };
+  | { ok: true; plan: ChatSubmissionPlan }
+  | { ok: false; block: ChatSubmissionBlock };
 
 export function planChatSubmission(input: {
   content: string;
@@ -74,7 +74,6 @@ export function planChatSubmission(input: {
   optionsOverride?: ConversationOptions;
   attachmentFallbackContent: string;
   uploading: boolean;
-  maxFilesPerMessage: number;
   modelOptions: ChatModelOption[];
   selectedPlatformModelName: string;
   options: ConversationOptions;
@@ -134,10 +133,10 @@ export function planChatSubmission(input: {
     (!queuedSubmission && input.uploading) ||
     (!concurrentBranchRun && targetConversationHasActiveStream)
   ) {
-    return { ok: false, block: { kind: "invalid" }, attachmentsTruncated: false };
+    return { ok: false, block: { kind: "invalid" } };
   }
   if (activeStreams.length >= MAX_CONCURRENT_RUNS) {
-    return { ok: false, block: { kind: "concurrent_limit" }, attachmentsTruncated: false };
+    return { ok: false, block: { kind: "concurrent_limit" } };
   }
   if (concurrentBranchRun) {
     const activeRunIDs = new Set(activeStreams.map((active) => active.runID));
@@ -152,25 +151,21 @@ export function planChatSubmission(input: {
       }
     }
     if (activeRunIDs.size >= MAX_CONCURRENT_RUNS) {
-      return { ok: false, block: { kind: "concurrent_limit" }, attachmentsTruncated: false };
+      return { ok: false, block: { kind: "concurrent_limit" } };
     }
   }
-  const effectiveAttachments =
-    input.maxFilesPerMessage > 0 && currentAttachments.length > input.maxFilesPerMessage
-      ? currentAttachments.slice(0, input.maxFilesPerMessage)
-      : currentAttachments;
-  const attachmentsTruncated = effectiveAttachments.length < currentAttachments.length;
+
+  const effectiveAttachments = currentAttachments;
   const sanitizedOptions = sanitizeConversationOptions(requestOptions);
   const submitDecision = resolveChatSubmitDecision(selectedModel, effectiveAttachments, sanitizedOptions);
   if (submitDecision.blockedReason) {
     return {
       ok: false,
       block: { kind: "media_unsupported", reason: submitDecision.blockedReason },
-      attachmentsTruncated,
     };
   }
   if (!platformModelName) {
-    return { ok: false, block: { kind: "no_model" }, attachmentsTruncated };
+    return { ok: false, block: { kind: "no_model" } };
   }
   const submitTask = submitDecision.task;
 
@@ -205,7 +200,6 @@ export function planChatSubmission(input: {
 
   return {
     ok: true,
-    attachmentsTruncated,
     plan: {
       payloadContent,
       platformModelName,

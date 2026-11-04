@@ -176,12 +176,17 @@ func (s *Service) retrieveMessageRAGContext(ctx context.Context, in messageRAGRe
 	knowledgeBaseSelected := len(input.KnowledgeBaseIDs) > 0
 
 	switch {
-	case ragErr != nil:
-		s.logger.Warn("rag_retrieval_failed",
-			zap.String("trace_id", traceid.FromContext(ctx)),
-			zap.Uint("user_id", input.UserID),
-			zap.Error(ragErr),
-		)
+	case ragErr != nil || ragResult.Status == apprag.RetrieveStatusUnavailable || ragResult.Status == apprag.RetrieveStatusTimeout || ragResult.Status == apprag.RetrieveStatusError:
+		if ctx.Err() != nil {
+			return result, ctx.Err()
+		}
+		if s.logger != nil {
+			s.logger.Warn("rag_retrieval_failed",
+				zap.String("trace_id", traceid.FromContext(ctx)),
+				zap.Uint("user_id", input.UserID),
+				zap.Error(ragErr),
+			)
+		}
 		fallbacks, skipped := splitRetrievalFallbackAttachments(fileContextPlan.RAGAttachments, cfg)
 		fallbackLabel := "已改用全文"
 		if len(fallbacks) == 0 {
@@ -202,13 +207,15 @@ func (s *Service) retrieveMessageRAGContext(ctx context.Context, in messageRAGRe
 		evidences := ragFallbackEvidencesFromAttachments(fallbacks, fallbackReason, ragFallbackErrorMessage(ragResult.Status, ragErr))
 		result.fallbacks = append(result.fallbacks, evidences...)
 		result.retrievalFallbacks = append(result.retrievalFallbacks, evidences...)
-		result.unretrieved = collectUnretrievedAttachments(skipped, fallbackReason)
 		appendRAGFallbackSkippedTrace(traceRecorder, skipped, fallbackReason)
 		if knowledgeBaseSelected {
 			return result, ErrKnowledgeBaseUnavailable
 		}
-	case knowledgeBaseSelected && ragResult.Status == apprag.RetrieveStatusUnavailable:
-		return result, ErrKnowledgeBaseUnavailable
+		for _, att := range skipped {
+			if isUserSubmittedAttachment(att) {
+				return result, attachmentInputErrorWithReason(att, ErrFileProcessingNotReady, attachmentInputReadFailed)
+			}
+		}
 	case len(ragChunks) == 0:
 		fallbacks, skipped := splitRetrievalFallbackAttachments(fileContextPlan.RAGAttachments, cfg)
 		fallbackLabel := "已改用全文"

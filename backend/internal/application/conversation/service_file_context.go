@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"strings"
 
-	apprag "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/rag"
 	domainchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/channel"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	domainknowledgebase "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/knowledgebase"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/tokenestimate"
 )
 
@@ -27,8 +27,14 @@ const (
 	fileContextModeUnsupported    = "unsupported"
 )
 
+const (
+	attachmentInputParseFailed = "fileParseFailed"
+	attachmentInputReadFailed  = "fileReadFailed"
+)
+
 type attachmentSnapshotRef struct {
 	FileID       string `json:"file_id"`
+	FileName     string `json:"file_name"`
 	Kind         string `json:"kind"`
 	MimeType     string `json:"mime_type"`
 	DetectedMIME string `json:"detected_mime"`
@@ -39,6 +45,59 @@ type conversationFileContextPlan struct {
 	FullAttachments []AttachmentInput
 	RAGAttachments  []AttachmentInput
 	Skipped         []AttachmentInput
+}
+
+// AttachmentInputError adds the context needed to recover from a file input error.
+type AttachmentInputError struct {
+	FileName string `json:"fileName,omitempty"`
+	Scope    string `json:"scope"`
+	Reason   string `json:"reason,omitempty"`
+	cause    error
+}
+
+func (e *AttachmentInputError) Error() string { return e.cause.Error() }
+func (e *AttachmentInputError) Unwrap() error { return e.cause }
+
+func AttachmentInputErrorDetails(err error) *AttachmentInputError {
+	var detail *AttachmentInputError
+	if !errors.As(err, &detail) {
+		return nil
+	}
+	return detail
+}
+
+func attachmentInputError(att AttachmentInput, cause error) error {
+	return attachmentInputErrorWithReason(att, cause, "")
+}
+
+func attachmentInputErrorWithReason(att AttachmentInput, cause error, reason string) error {
+	name := strings.TrimSpace(att.FileName)
+	if errors.Is(cause, llm.ErrInputTooLarge) {
+		// Aggregate limits describe the whole request rather than one file.
+		if isAggregateAttachmentLimit(cause) {
+			name = ""
+		}
+		cause = wrapUpstreamRequestError(cause)
+		reason = ""
+	}
+	scope := "history"
+	if att.Current {
+		scope = "current"
+	}
+	return &AttachmentInputError{FileName: name, Scope: scope, Reason: reason, cause: cause}
+}
+
+func isAggregateAttachmentLimit(err error) bool {
+	var limit *llm.InputLimitError
+	if !errors.As(err, &limit) {
+		return false
+	}
+	switch limit.Dimension {
+	case "nativeCount", "nativeBytes", "pdfBytes", "pdfPages", "nonPDFBytes", "requestBytes", "imageCount", "imageBytes":
+		return true
+	default:
+		return false
+	}
 }
 
 func collectConversationFileIDs(messages []model.Message, currentFileIDs []string) []string {
@@ -65,7 +124,7 @@ func collectConversationFileIDs(messages []model.Message, currentFileIDs []strin
 		}
 	}
 	for _, fileID := range currentFileIDs {
-		// Current attachments take budget priority even when reused from history.
+		// Keep a reused attachment with the current files for metadata assembly.
 		fileID = strings.TrimSpace(fileID)
 		if _, exists := seen[fileID]; exists {
 			for i, existing := range result {
@@ -255,9 +314,32 @@ func shouldUseRAGForAttachment(item AttachmentInput, fileMode string, cfg config
 
 func canRetrieveAttachment(item AttachmentInput, ragAvailable bool) bool {
 	return ragAvailable &&
+		!isMediaAttachment(item) &&
 		strings.TrimSpace(item.FileID) != "" &&
 		!item.RAGOptOut &&
 		strings.EqualFold(strings.TrimSpace(item.EmbedStatus), "ready")
+}
+
+func validatePlannedFileContext(items []AttachmentInput, cfg config.Config) error {
+	for _, item := range items {
+		if !isUserSubmittedAttachment(item) {
+			continue
+		}
+		switch item.ContextMode {
+		case fileContextModeDirectImage, fileContextModeNativeDocument, fileContextModeRAG:
+			continue
+		case fileContextModeSkipped:
+			if err := checkAttachmentFullContext(item, cfg); err != nil {
+				return attachmentInputError(item, err)
+			}
+			return attachmentInputError(item, ErrFileProcessingNotReady)
+		case fileContextModeFull, fileContextModeRAGFallback:
+			if err := checkAttachmentFullContext(item, cfg); err != nil {
+				return attachmentInputError(item, err)
+			}
+		}
+	}
+	return nil
 }
 
 func fileContextPlanRAGObjects(items []AttachmentInput) []model.FileObject {
@@ -364,14 +446,9 @@ func splitRetrievalFallbackAttachments(items []AttachmentInput, cfg config.Confi
 
 // 附件检索状态
 //
-// 每个文件在所属轮次都有固定说明（全文、按问题检索、无法读取，见 placeTurnDocuments）。
-// 按问题检索的文件在某一轮可能一无所获：检索失败、未命中，或多文件中只有部分命中且无法回退全文。
-// 这时模型只看到「会按问题检索」，容易误以为已读过文件，因此在本轮动态上下文中补充检索结果。
-//
-// 报告范围按信号强弱区分，避免长对话中每轮重复噪声：
-//   - 检索系统故障（失败、超时、不可用）：报告全部未拿到内容的用户附件，无论哪一轮上传；
-//   - 相关性未命中（无结果、低于阈值、部分命中）：只报告本轮上传的附件，历史文件与本轮问题无关很正常。
-// 只处理用户提交的附件；助手生成的文件不是附件，不报告。
+// 相关性未命中时，用动态上下文告知模型本轮提交的附件未提供内容。
+// 历史文件与本轮问题无关时无需反复报告。检索系统故障交给发送流程处理：
+// 用户附件没有合法全文回退时直接停止，不用说明代替实际输入。
 
 const (
 	attachmentRetrievalNoMatch = "rag_no_match"
@@ -383,28 +460,14 @@ type unretrievedAttachment struct {
 	Reason     string
 }
 
-// isRetrievalSystemFailure 区分检索系统故障与相关性未命中。
-func isRetrievalSystemFailure(reason string) bool {
-	switch strings.TrimSpace(reason) {
-	case string(apprag.RetrieveStatusEmpty), string(apprag.RetrieveStatusLowScore), attachmentRetrievalNoMatch:
-		return false
-	default:
-		return true
-	}
-}
-
 // collectUnretrievedAttachments 从没有拿到内容的检索附件中挑出需要告知模型的部分。
 // attachments 应为本轮既无检索片段、也无法回退全文的附件。
 func collectUnretrievedAttachments(attachments []AttachmentInput, reason string) []unretrievedAttachment {
 	reason = strings.TrimSpace(reason)
-	includeHistory := isRetrievalSystemFailure(reason)
 	result := make([]unretrievedAttachment, 0, len(attachments))
 	seen := make(map[string]struct{}, len(attachments))
 	for _, att := range attachments {
-		if !att.Current && !strings.EqualFold(strings.TrimSpace(att.MessageRole), "user") {
-			continue
-		}
-		if !att.Current && !includeHistory {
+		if !att.Current {
 			continue
 		}
 		id := stableAttachmentSourceID(att)

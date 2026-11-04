@@ -26,16 +26,16 @@ import (
 //     OpenAI 兼容协议只在官方地址或显式声明时启用，第三方中转站可能不认识这些内容块；
 //  4. 大小、页数与数量在保守上限内。
 //
-// 文件一律以 base64 内嵌在请求体中，不使用各家 Files API。PDF 不满足条件时回退到既有的文本提取；
-// 音频与视频没有文本可回退，本轮不支持时阻止生成，历史轮次保留「不支持」说明。
+// 文件一律以 base64 内嵌在请求体中，不使用各家 Files API。路由不支持原生 PDF 时可使用文本提取。
+// 原生预算不足时停止发送；音频和视频没有文本回退，历史文件同样需要可用的处理路径。
 // 策略按路由计算：故障转移到另一条路由时会重新判断，不会把原生内容块发给不支持它的协议。
 
 // 未单独声明的协议继续使用原有保守预算。官方 OpenAI 与 Google
 // 的预算由 resolveNativeInputPolicy 按协议设置，预检和发送共用。
 const (
 	maxNativeInputCount      = 5
-	maxNativeInputTotalBytes = 14 * 1024 * 1024
-	maxNativePDFTotalBytes   = 8 * 1024 * 1024
+	maxNativeInputTotalBytes = 14_000_000
+	maxNativePDFTotalBytes   = 8_000_000
 	maxNativePDFTotalPages   = 100
 	nativeDocumentMIMEPDF    = "application/pdf"
 	officialOpenRouterHost   = "openrouter.ai"
@@ -128,6 +128,13 @@ func (p nativeInputPolicy) budget() nativeInputBudget {
 		return p.Budget
 	}
 	return nativeInputBudget{TotalBytes: maxNativeInputTotalBytes, PDFBytes: maxNativePDFTotalBytes, PDFSingleBytes: maxNativePDFTotalBytes, NonPDFBytes: maxNativeInputTotalBytes, PDFPages: maxNativePDFTotalPages, Count: maxNativeInputCount}
+}
+
+func (p nativeInputPolicy) withoutPDFPageBudget() nativeInputPolicy {
+	p.Budget = p.budget()
+	p.Budget.PDFPages = 0
+	p.budgetConfigured = true
+	return p
 }
 
 // accepts 判断附件能否在该路由上原生发送（不含预算）。
@@ -236,8 +243,12 @@ func nativeInputKindOf(att AttachmentInput) nativeInputKind {
 
 // isUserMediaAttachment 判断附件是用户提交的音频或视频（助手生成的视频不回传给模型）。
 func isUserMediaAttachment(att AttachmentInput) bool {
+	return isMediaAttachment(att) && isUserSubmittedAttachment(att)
+}
+
+func isMediaAttachment(att AttachmentInput) bool {
 	kind := nativeInputKindOf(att)
-	return (kind == nativeInputAudio || kind == nativeInputVideo) && isUserSubmittedAttachment(att)
+	return kind == nativeInputAudio || kind == nativeInputVideo
 }
 
 func isUserSubmittedAttachment(att AttachmentInput) bool {
@@ -254,21 +265,11 @@ func isNativeInputCandidate(att AttachmentInput) bool {
 	if att.FileSize <= 0 {
 		return false
 	}
-	// 提取失败的 PDF（扫描件、图片型 PDF 等）没有文本可用，但模型可以直接阅读原文件。
-	if strings.EqualFold(strings.TrimSpace(att.ProcessingStatus), "failed") && nativeInputKindOf(att) != nativeInputPDF {
-		return false
-	}
-	switch nativeInputKindOf(att) {
-	case nativeInputPDF:
-		return true
-	case nativeInputAudio, nativeInputVideo:
-		return true
-	}
-	return false
+	// Extracting text or ancillary metadata is independent of reading the original.
+	return nativeInputKindOf(att) != ""
 }
 
-// selectNativeInputs 在预算内挑出原生发送的文件，越新的文件越优先。
-// attachments 按会话中出现的先后排列，本轮文件在最后。
+// selectNativeInputs 仅在所有原生文件均可放入预算时返回可读文件。
 func selectNativeInputs(attachments []AttachmentInput, policy nativeInputPolicy) []AttachmentInput {
 	selected, _ := selectNativeInputsWithRejections(attachments, policy)
 	return selected
@@ -279,60 +280,49 @@ func selectNativeInputsWithRejections(attachments []AttachmentInput, policy nati
 	selected := make([]AttachmentInput, 0, maxNativeInputCount)
 	rejected := make(map[string]error)
 	seen := make(map[string]struct{})
-	totalBytes, pdfBytes, pdfPages := int64(0), int64(0), 0
-	var encodedBytes int64
-	for index := len(attachments) - 1; index >= 0; index-- {
-		att := attachments[index]
+	var totalBytes, pdfBytes, pdfPages, encodedBytes int64
+	for _, att := range attachments {
 		fileID := strings.TrimSpace(att.FileID)
 		if _, duplicated := seen[fileID]; duplicated || fileID == "" || !policy.accepts(att) || !isNativeInputCandidate(att) {
 			continue
 		}
-		if budget.Count > 0 && len(selected) >= budget.Count {
-			rejected[fileID] = llm.NewInputLimitError("nativeCount", int64(len(selected)+1), int64(budget.Count))
-			continue
-		}
-		if budget.TotalBytes > 0 && totalBytes+att.FileSize > budget.TotalBytes {
-			rejected[fileID] = llm.NewInputLimitError("nativeBytes", totalBytes+att.FileSize, budget.TotalBytes)
-			continue
-		}
-		// Even before text, tools and images are known, native Base64 alone must
-		// fit. The final serializer accounts for all framing and other content.
-		encodedSize := ((att.FileSize + 2) / 3) * 4
-		if policy.InputLimits.RequestBytes > 0 && encodedSize > policy.InputLimits.RequestBytes-encodedBytes {
-			rejected[fileID] = llm.NewInputLimitError("requestBytes", encodedBytes+encodedSize, policy.InputLimits.RequestBytes)
-			continue
-		}
-		isPDF := nativeInputKindOf(att) == nativeInputPDF
-		if !isPDF && budget.NonPDFBytes > 0 && totalBytes-pdfBytes+att.FileSize > budget.NonPDFBytes {
-			rejected[fileID] = llm.NewInputLimitError("nonPDFBytes", totalBytes-pdfBytes+att.FileSize, budget.NonPDFBytes)
-			continue
-		}
-		if isPDF {
-			if budget.PDFSingleBytes > 0 && att.FileSize > budget.PDFSingleBytes {
-				rejected[fileID] = llm.NewInputLimitError("pdfSingleBytes", att.FileSize, budget.PDFSingleBytes)
-				continue
-			}
-			if budget.PDFBytes > 0 && pdfBytes+att.FileSize > budget.PDFBytes {
-				rejected[fileID] = llm.NewInputLimitError("pdfBytes", pdfBytes+att.FileSize, budget.PDFBytes)
-				continue
-			}
-			if budget.PDFPages > 0 && (att.PageCount <= 0 || pdfPages+att.PageCount > budget.PDFPages) {
-				actual := int64(pdfPages + att.PageCount)
-				if att.PageCount <= 0 {
-					actual = -1
-				}
-				rejected[fileID] = llm.NewInputLimitError("pdfPages", actual, int64(budget.PDFPages))
-				continue
-			}
-		}
 		seen[fileID] = struct{}{}
 		totalBytes += att.FileSize
-		encodedBytes += encodedSize
-		if isPDF {
+		encodedBytes += ((att.FileSize + 2) / 3) * 4
+		if nativeInputKindOf(att) == nativeInputPDF {
+			if budget.PDFSingleBytes > 0 && att.FileSize > budget.PDFSingleBytes {
+				rejected[fileID] = llm.NewInputLimitError("pdfSingleBytes", att.FileSize, budget.PDFSingleBytes)
+			} else if budget.PDFPages > 0 && att.PageCount <= 0 {
+				rejected[fileID] = ErrFileProcessingNotReady
+			}
 			pdfBytes += att.FileSize
-			pdfPages += att.PageCount
+			pdfPages += int64(max(0, att.PageCount))
 		}
 		selected = append(selected, att)
+	}
+	if len(rejected) > 0 {
+		return nil, rejected
+	}
+	// The Base64 floor is known before any reads. The final serializer checks
+	// the whole request, including repeated occurrences, framing and text.
+	for _, limit := range []struct {
+		dimension     string
+		actual, limit int64
+	}{
+		{"nativeCount", int64(len(selected)), int64(budget.Count)},
+		{"nativeBytes", totalBytes, budget.TotalBytes},
+		{"pdfBytes", pdfBytes, budget.PDFBytes},
+		{"pdfPages", pdfPages, int64(budget.PDFPages)},
+		{"nonPDFBytes", totalBytes - pdfBytes, budget.NonPDFBytes},
+		{"requestBytes", encodedBytes, policy.InputLimits.RequestBytes},
+	} {
+		if limit.limit > 0 && limit.actual > limit.limit {
+			err := llm.NewInputLimitError(limit.dimension, limit.actual, limit.limit)
+			for _, att := range selected {
+				rejected[strings.TrimSpace(att.FileID)] = err
+			}
+			return nil, rejected
+		}
 	}
 	return selected, rejected
 }
@@ -350,50 +340,62 @@ func markNativeAttachments(attachments []AttachmentInput, native nativeInputs) [
 	return result
 }
 
-// Read failures are fatal for this turn. In particular, a green preflight must
-// never turn into a successful generation that omitted an unreadable attachment.
-func validateCurrentNativeReads(attachments []AttachmentInput, native nativeInputs) error {
-	for _, att := range attachments {
-		if att.Current && native.Selected[strings.TrimSpace(att.FileID)] {
-			if _, ok := native.Parts[strings.TrimSpace(att.FileID)]; !ok {
-				return ErrFileProcessingNotReady
-			}
-		}
+// Read failures and limits apply to the entire active attachment context.
+// This check runs before text hydration and again on the actual route.
+func validateRequiredNativeInputs(attachments []AttachmentInput, native nativeInputs) error {
+	if native.resolved != nil {
+		attachments = native.resolved
+	}
+	if native.Rejected == nil {
+		_, native.Rejected = selectNativeInputsWithRejections(attachments, native.Policy)
+	}
+	if err := validateNativeSelection(attachments, native.Policy, native.Rejected); err != nil {
+		return err
 	}
 	for _, att := range attachments {
-		if !att.Current {
+		if !isUserSubmittedAttachment(att) {
 			continue
 		}
-		if _, ok := native.Parts[strings.TrimSpace(att.FileID)]; ok {
+		fileID := strings.TrimSpace(att.FileID)
+		if _, ok := native.Parts[fileID]; ok {
 			continue
 		}
-		// Audio/video have no parsed-context path in this version (see
-		// canUseAttachmentFullContext), so metadata or stray text is not a fallback.
-		if isUserMediaAttachment(att) && !native.Policy.accepts(att) {
-			return ErrFileUnsupportedByModel
+		if native.Selected[fileID] || native.Policy.accepts(att) {
+			return attachmentInputErrorWithReason(att, ErrFileProcessingNotReady, attachmentInputReadFailed)
 		}
-		if isUserMediaAttachment(att) && isNativeInputCandidate(att) {
-			// Supported media omitted by the selector exceeded the request budget;
-			// waiting for extraction cannot make an audio/video file smaller.
-			if reason := native.Rejected[strings.TrimSpace(att.FileID)]; reason != nil {
-				return wrapUpstreamRequestError(reason)
+		if isMediaAttachment(att) {
+			return attachmentInputError(att, ErrFileUnsupportedByModel)
+		}
+	}
+	return nil
+}
+
+func validateNativeSelection(attachments []AttachmentInput, policy nativeInputPolicy, rejected map[string]error) error {
+	if len(rejected) == 0 {
+		return nil
+	}
+	for _, att := range attachments {
+		reason := rejected[strings.TrimSpace(att.FileID)]
+		if reason == nil {
+			continue
+		}
+		if isAggregateAttachmentLimit(reason) {
+			history := make([]AttachmentInput, 0, len(attachments))
+			for _, item := range attachments {
+				if !item.Current {
+					history = append(history, item)
+				}
 			}
-			// Legacy callers may construct nativeInputs directly without diagnostics.
-			_, rejected := selectNativeInputsWithRejections(attachments, native.Policy)
-			if reason := rejected[strings.TrimSpace(att.FileID)]; reason != nil {
-				return wrapUpstreamRequestError(reason)
+			if limit, ok := reason.(*llm.InputLimitError); ok && limit.Dimension != "pdfPages" {
+				policy = policy.withoutPDFPageBudget()
 			}
-			return ErrFileTooLarge
+			_, historicalRejections := selectNativeInputsWithRejections(history, policy)
+			att.Current = len(historicalRejections) == 0
 		}
-		if isUserMediaAttachment(att) && att.ContextMode != "" {
-			return ErrFileProcessingNotReady
+		if reason == ErrFileProcessingNotReady {
+			return attachmentInputErrorWithReason(att, reason, attachmentInputReadFailed)
 		}
-		if native.Policy.accepts(att) && strings.TrimSpace(att.ExtractedText) == "" && att.ContextMode != "" && att.ContextMode != fileContextModeRAG {
-			if reason := native.Rejected[strings.TrimSpace(att.FileID)]; reason != nil {
-				return wrapUpstreamRequestError(reason)
-			}
-			return ErrFileProcessingNotReady
-		}
+		return attachmentInputError(att, reason)
 	}
 	return nil
 }
@@ -413,6 +415,7 @@ type nativeInputs struct {
 	Policy   nativeInputPolicy
 	Selected map[string]bool
 	Rejected map[string]error
+	resolved []AttachmentInput // Metadata used to check the route budget, including probed page counts.
 	// Parts 为实际原生发送的内容块（按 fileID）；读取失败的文件不在其中。
 	Parts map[string]llm.ContentPart
 }
@@ -429,8 +432,8 @@ func (n nativeInputs) unsupported(att AttachmentInput) bool {
 	return isUserMediaAttachment(att) && !n.Policy.accepts(att)
 }
 
-// resolveNativeInputs 计算路由策略并读取预算内的原始内容。读取失败的文件不在
-// 结果中；发送入口和每次路由规划必须校验本轮文件，确保调用上游前发现失败。
+// resolveNativeInputs 计算路由策略并读取预算内的原始内容。发送入口和每次路由
+// 规划随后校验原生预算及读取结果，确保完整分支中的附件未丢失。
 func (s *Service) resolveNativeInputs(ctx context.Context, route *channel.ResolvedRoute, attachments []AttachmentInput, cache *nativeInputCache, configuration ...config.Config) nativeInputs {
 	var cfg config.Config
 	if len(configuration) > 0 {
@@ -439,7 +442,16 @@ func (s *Service) resolveNativeInputs(ctx context.Context, route *channel.Resolv
 		cfg = s.cfg.Snapshot()
 	}
 	result := nativeInputs{Policy: resolveNativeInputPolicy(route, cfg.InputLimitsJSON)}
+	if result.Policy.PDF && result.Policy.budget().PDFPages > 0 {
+		// Don't open stored PDFs to count pages when metadata already proves
+		// the selection cannot fit a count, byte or request-size budget.
+		if _, rejected := selectNativeInputsWithRejections(attachments, result.Policy.withoutPDFPageBudget()); len(rejected) > 0 {
+			result.Rejected = rejected
+			return result
+		}
+	}
 	attachments = s.resolveNativePDFPageCounts(ctx, attachments, result.Policy, cache)
+	result.resolved = attachments
 	selected, rejected := selectNativeInputsWithRejections(attachments, result.Policy)
 	result.Rejected = rejected
 	if len(selected) == 0 {
@@ -517,6 +529,11 @@ func routeAttachmentTraceItems(items []AttachmentInput, native nativeInputs, ski
 		if _, ok := native.Parts[fileID]; ok {
 			result[index].ContextMode = fileContextModeNativeDocument
 			continue
+		}
+		if result[index].ContextMode == fileContextModeNativeDocument && nativeInputKindOf(result[index]) == nativeInputPDF &&
+			!native.Policy.accepts(result[index]) {
+			// A successful fallback route can only place the parsed PDF text.
+			result[index].ContextMode = fileContextModeFull
 		}
 		isImage := result[index].ContextMode == fileContextModeDirectImage
 		if (isImage && skipImages) || !native.unsupported(result[index]) {

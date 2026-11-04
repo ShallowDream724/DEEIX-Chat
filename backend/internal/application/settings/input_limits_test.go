@@ -10,11 +10,11 @@ import (
 )
 
 func TestInputLimitsSaveValidationAndRuntimeApply(t *testing.T) {
-	raw := `{"profiles":{"openai":{"requestBytes":123}},"upstreams":{"7":{"nativeCount":0}}}`
+	raw := `{"defaults":{"requestBytes":123},"upstreams":{"7":{"nativeCount":0}}}`
 	if err := validatePatchItem(PatchItem{Namespace: "file", Key: "input_limits", Value: raw}); err != nil {
 		t.Fatal(err)
 	}
-	for _, value := range []string{`{"profiles":{"unknown":{}}}`, `{"upstreams":{"0":{}}}`, `{"profiles":{"openai":{"imageBytes":-1}}}`} {
+	for _, value := range []string{`{"profiles":{"openai":{}}}`, `{"upstreams":{"0":{}}}`, `{"defaults":{"imageBytes":-1}}`, `{"upstreams":{"7":{"protocols":{}}}}`} {
 		if err := validatePatchItem(PatchItem{Namespace: "file", Key: "input_limits", Value: value}); err == nil {
 			t.Fatalf("invalid save accepted: %s", value)
 		}
@@ -32,20 +32,22 @@ func TestInputLimitsSaveValidationAndRuntimeApply(t *testing.T) {
 	t.Fatal("input limits setting not registered")
 }
 
-func TestInputLimitsResponseMaterializesProfilesWithoutChangingStoredValue(t *testing.T) {
-	raw := `{"profiles":{"openai":{"requestBytes":123,"imageCount":null}},"upstreams":{"7":{"nativeCount":0}}}`
+func TestInputLimitsResponseMaterializesDefaultsWithoutChangingStoredValue(t *testing.T) {
+	raw := `{"defaults":{"requestBytes":123,"imageCount":null},"upstreams":{"7":{"nativeCount":0}}}`
 	service := &Service{}
 	item := domainsettings.SystemSetting{Namespace: "file", Key: "input_limits", Value: raw, ValueType: "json"}
 	response := service.settingResponse(item)
 	var cfg struct {
-		Profiles  map[string]inputlimits.Limits `json:"profiles"`
-		Upstreams map[string]map[string]any     `json:"upstreams"`
+		Defaults  inputlimits.Limits        `json:"defaults"`
+		Upstreams map[string]map[string]any `json:"upstreams"`
 	}
 	if err := json.Unmarshal([]byte(response.Value), &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Profiles["openai"].RequestBytes != 123 || cfg.Profiles["openai"].ImageCount != 1500 || cfg.Profiles["xai_image_edits"].ImageCount != 3 || cfg.Profiles["xai_video"].ImageCount != 1 || cfg.Profiles["openrouter_images"].ImageCount != 16 {
-		t.Fatalf("profile values not materialized: %+v", cfg.Profiles)
+	want := inputlimits.Resolve("", "", "", 0)
+	want.RequestBytes = 123
+	if cfg.Defaults != want {
+		t.Fatalf("default values not materialized: %+v", cfg.Defaults)
 	}
 	if cfg.Upstreams["7"]["nativeCount"] != float64(0) {
 		t.Fatalf("upstream override lost: %+v", cfg.Upstreams)
@@ -54,12 +56,12 @@ func TestInputLimitsResponseMaterializesProfilesWithoutChangingStoredValue(t *te
 		t.Fatal("stored value changed")
 	}
 	var defaults struct {
-		Profiles map[string]inputlimits.Limits `json:"profiles"`
+		Defaults inputlimits.Limits `json:"defaults"`
 	}
 	if err := json.Unmarshal([]byte(response.DefaultValue), &defaults); err != nil {
 		t.Fatal(err)
 	}
-	if defaults.Profiles["openai"].RequestBytes != 512_000_000 {
+	if defaults.Defaults != inputlimits.Resolve("", "", "", 0) {
 		t.Fatal("clearing an override must reveal the true system default, not the saved override")
 	}
 }

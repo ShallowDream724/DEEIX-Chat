@@ -265,15 +265,17 @@ export function AdminFilesPage() {
             {group.key === "uploadLimits" ? (
               <>
                 <SettingsSectionSeparator />
-                <FilesInputLimits
-                  defaultValue={inputLimitsDefaultValue}
-                  value={settingsMap["file.input_limits"] ?? ""}
-                  savedValue={savedMap["file.input_limits"] ?? ""}
-                  loading={loading}
-                  saving={saving}
-                  onChange={(value) => handleFieldChange("file.input_limits", value)}
-                  onSave={() => void handleSaveInputLimits()}
-                />
+                <React.Suspense fallback={null}>
+                  <FilesInputLimits
+                    defaultValue={inputLimitsDefaultValue}
+                    value={settingsMap["file.input_limits"] ?? ""}
+                    savedValue={savedMap["file.input_limits"] ?? ""}
+                    loading={loading}
+                    saving={saving}
+                    onChange={(value) => handleFieldChange("file.input_limits", value)}
+                    onSave={() => void handleSaveInputLimits()}
+                  />
+                </React.Suspense>
               </>
             ) : null}
             {index < SETTINGS_GROUPS.length - 1 ? <SettingsSectionSeparator /> : null}

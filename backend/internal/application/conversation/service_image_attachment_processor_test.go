@@ -21,6 +21,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/mcp"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/objectstorage"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	objectstorageport "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/objectstorage"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/security"
 )
@@ -234,30 +235,51 @@ func TestSelectedToolRuntimeRejectsMultipleImageProcessors(t *testing.T) {
 	}
 }
 
-func TestBuildMessageRoutePromptSkipsRawImagesAfterProcessorRouting(t *testing.T) {
-	service := &Service{}
+func TestBuildMessageRoutePromptOnlySkipsImagesHandledByProcessor(t *testing.T) {
+	store := objectstorage.NewLocal(t.TempDir())
+	if _, err := store.Put(t.Context(), "images/history.png", bytes.NewReader(testPNG(t)), objectstorageport.PutOptions{ContentType: "image/png"}); err != nil {
+		t.Fatal(err)
+	}
+	service := &Service{storeProvider: &conversationTestStoreProvider{store: store}}
 	plan, err := service.buildMessageRoutePrompt(t.Context(), &channel.ResolvedRoute{UpstreamModel: "text-only"}, messageRoutePromptInput{
 		UserContent: "继续分析",
 		DomainMessages: []domainconversation.Message{{
 			Role:        "user",
-			Content:     "描述图片",
+			Content:     "上一张图片",
+			Attachments: `[{"file_id":"history","kind":"image","mime_type":"image/png"}]`,
+		}, {
+			Role:    "assistant",
+			Content: "已读",
+		}, {
+			Role:        "user",
+			Content:     "描述新图片",
 			Attachments: `[{"file_id":"image-1","kind":"image","mime_type":"image/png"}]`,
 		}},
 		ConversationFiles: []AttachmentInput{{
-			FileID: "image-1", Kind: "image", MimeType: "image/png", ContextMode: fileContextModeDirectImage,
+			FileID: "history", Kind: "image", MimeType: "image/png", ContextMode: fileContextModeDirectImage, MessageRole: "user", StoragePath: "images/history.png",
+		}, {
+			FileID: "image-1", Kind: "image", MimeType: "image/png", ContextMode: fileContextModeDirectImage, Current: true,
 		}},
+		DynamicContext:       userContextInput{ImageAnalyses: []imageAttachmentAnalysis{{FileID: "image-1", Content: "image details"}}},
 		SkipImageAttachments: true,
 		Config:               config.Config{},
 	})
 	if err != nil {
 		t.Fatalf("build routed prompt: %v", err)
 	}
+	images := 0
 	for _, message := range plan.Messages {
 		for _, part := range message.Parts {
 			if part.Kind == llm.ContentPartImage {
-				t.Fatalf("raw image leaked into routed prompt: %#v", plan.Messages)
+				images++
+				if len(part.SourceFileIDs) != 1 || part.SourceFileIDs[0] != "history" {
+					t.Fatalf("only the earlier image should be included in the routed prompt: %#v", part)
+				}
 			}
 		}
+	}
+	if images != 1 {
+		t.Fatalf("the earlier image must remain in the prompt, got %d images", images)
 	}
 }
 

@@ -63,12 +63,12 @@
   },
   "deleteDialog": {
     "title": "删除文件",
-    "description": "确认删除「{name}」文件吗？此操作不可撤销。",
+    "description": "确认删除「{name}」吗？删除后无法再预览或下载，引用此文件的对话可能无法继续发送。此操作不可撤销。",
     "fallbackName": "文件"
   },
   "bulkDeleteDialog": {
     "title": "批量删除文件",
-    "description": "确认删除已选择的 {count} 个文件吗？此操作不可撤销。",
+    "description": "确认删除已选择的 {count} 个文件吗？删除后无法再预览或下载，引用这些文件的对话可能无法继续发送。此操作不可撤销。",
     "confirm": "确认删除"
   },
   "list": {

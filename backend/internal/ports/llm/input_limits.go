@@ -36,7 +36,12 @@ func InputLimitDetails(err error) *InputLimitError {
 		return nil
 	}
 	switch detail.Dimension {
-	case "requestBytes", "provider.requestBytes", "imageSingleBytes", "imageCount", "imageBytes", "nativeCount", "nativeBytes", "pdfSingleBytes", "pdfBytes", "pdfPages", "nonPDFBytes", "provider.imageEncodedBytes", "provider.imageWidth", "provider.imageHeight":
+	case "temporaryMessageCount", "temporaryTextLength", "temporaryFileCount", "temporaryRequestBytes":
+		if detail.Limit > 0 && detail.Actual >= -1 {
+			value := *detail
+			return &value
+		}
+	case "messageFileCount", "contextTokens", "currentTurnTokens", "parsedTextBytes", "parsedTextTokens", "requestBytes", "provider.requestBytes", "imageSingleBytes", "imageCount", "imageBytes", "nativeCount", "nativeBytes", "pdfSingleBytes", "pdfBytes", "pdfPages", "nonPDFBytes", "provider.imageEncodedBytes", "provider.imageWidth", "provider.imageHeight":
 		if detail.Limit > 0 && detail.Actual >= -1 {
 			value := *detail
 			return &value

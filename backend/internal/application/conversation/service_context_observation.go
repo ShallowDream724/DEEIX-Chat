@@ -113,23 +113,43 @@ func (o contextInputObservation) estimate(current contextInputObservation) (int6
 	return max(o.InputTokens+current.EstimatedTokens-o.EstimatedTokens, 0), true
 }
 
-func (r *messageGenerationRunner) estimateContextInput(input llm.GenerateInput) int64 {
-	current := describeContextInput(r.contextIdentity, input, nil)
-	for index := len(r.contextObservations) - 1; index >= 0; index-- {
-		if tokens, ok := r.contextObservations[index].estimate(current); ok {
+// contextInputMeter shares the same calibration across persisted and temporary
+// histories. The current run's trusted measurements take precedence.
+type contextInputMeter struct {
+	identity string
+	prior    []contextInputObservation // newest ancestor first
+	observed []contextInputObservation // upstream call order
+}
+
+func (m *contextInputMeter) estimate(input llm.GenerateInput) int64 {
+	return m.estimateDescribed(describeContextInput(m.identity, input, nil))
+}
+
+func (m *contextInputMeter) estimateDescribed(current contextInputObservation) int64 {
+	for index := len(m.observed) - 1; index >= 0; index-- {
+		if tokens, ok := m.observed[index].estimate(current); ok {
 			return tokens
 		}
 	}
-	if r.contextInputEstimator != nil {
-		return r.contextInputEstimator(input)
+	for _, observed := range m.prior {
+		if tokens, ok := observed.estimate(current); ok {
+			return tokens
+		}
 	}
 	return current.EstimatedTokens
 }
 
-// contextInputEstimator reads only measurements owned by assistants on this
+func (m *contextInputMeter) record(current contextInputObservation, usage llm.Usage) {
+	if usage.HasObservedInput() {
+		current.InputTokens = usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
+		m.observed = append(m.observed, current)
+	}
+}
+
+// contextInputBaselines reads only measurements owned by assistants on this
 // ancestor path. A snapshot boundary intentionally does not limit this lookup:
 // its changed system summary already invalidates incompatible observations.
-func (s *Service) contextInputEstimator(ctx context.Context, scope repository.HistoricalMessageScope, identity string) func(llm.GenerateInput) int64 {
+func (s *Service) contextInputBaselines(ctx context.Context, scope repository.HistoricalMessageScope) []contextInputObservation {
 	var observations []contextInputObservation
 	if s != nil && s.repo != nil && scope.Valid() {
 		items, err := s.repo.ListRecentContextArtifacts(ctx, repository.ContextArtifactListFilter{
@@ -144,15 +164,7 @@ func (s *Service) contextInputEstimator(ctx context.Context, scope repository.Hi
 			}
 		}
 	}
-	return func(input llm.GenerateInput) int64 {
-		current := describeContextInput(identity, input, nil)
-		for _, observed := range observations {
-			if tokens, ok := observed.estimate(current); ok {
-				return tokens
-			}
-		}
-		return current.EstimatedTokens
-	}
+	return observations
 }
 
 // contextTokenEstimate reports the latest request's context, independently of
@@ -165,11 +177,11 @@ func (r *messageGenerationRunner) contextTokenEstimate(text, reasoning string, f
 }
 
 func (r *messageGenerationRunner) persistContextObservation(ctx context.Context, assistant *model.Message) {
-	if r == nil || r.service == nil || r.service.repo == nil || assistant == nil || assistant.ID == 0 || len(r.contextObservations) == 0 {
+	if r == nil || r.service == nil || r.service.repo == nil || assistant == nil || assistant.ID == 0 || len(r.contextMeter.observed) == 0 {
 		return
 	}
-	items := make([]model.ContextArtifact, 0, len(r.contextObservations))
-	for _, observation := range r.contextObservations {
+	items := make([]model.ContextArtifact, 0, len(r.contextMeter.observed))
+	for _, observation := range r.contextMeter.observed {
 		raw, err := json.Marshal(observation)
 		if err != nil {
 			continue

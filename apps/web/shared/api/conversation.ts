@@ -1452,21 +1452,26 @@ export async function streamMessage(
   return postConversationStream(accessToken, conversationPublicID, "/messages/stream", payload, options);
 }
 
-export async function streamTemporaryChatMessage(
+export async function prepareTemporaryChatRequest(
   accessToken: string,
   payload: TemporaryChatMessageRequest,
-  options: ConversationStreamOptions = {},
-  attachments: TemporaryChatRequestAttachment[] = [],
-): Promise<SendMessageResult> {
-  const policy = await getChatFilePolicy(accessToken, options.signal);
+  attachments: TemporaryChatRequestAttachment[],
+  signal?: AbortSignal,
+): Promise<FormData | string> {
+  const policy = await getChatFilePolicy(accessToken, signal);
   const attachmentLimit = policy.temporaryChatMaxAttachments || 20;
   if (attachments.length > attachmentLimit) {
-    throw new ApiError(`temporary chat supports at most ${attachmentLimit} attachments`, 400);
+    throw new ApiError("errors.file.tooLarge", 413, {
+      dimension: "temporaryFileCount", actual: attachments.length, limit: attachmentLimit,
+    }, "file.too_large");
   }
   const serializedPayload = JSON.stringify(payload);
   const requestLimit = policy.temporaryChatRequestMaxBytes || 8 * 1024 * 1024;
-  if (new TextEncoder().encode(serializedPayload).byteLength > requestLimit) {
-    throw new ApiError(`temporary chat context exceeds the ${requestLimit} byte limit`, 413);
+  const payloadBytes = new TextEncoder().encode(serializedPayload).byteLength;
+  if (payloadBytes > requestLimit) {
+    throw new ApiError("errors.file.tooLarge", 413, {
+      dimension: "temporaryRequestBytes", actual: payloadBytes, limit: requestLimit,
+    }, "file.too_large");
   }
   if (attachments.length > 0) {
     const body = new FormData();
@@ -1475,21 +1480,22 @@ export async function streamTemporaryChatMessage(
     for (const attachment of attachments) {
       body.append("attachments", attachment.file, attachment.file.name);
     }
-    return postMessageStreamRequest(
-      accessToken,
-      "/api/v1/temporary-chat/messages/stream",
-      { method: "POST", body, signal: options.signal },
-      options,
-      "no-store",
-    );
+    return body;
   }
-  return postMessageStream(
-    accessToken,
-    "/api/v1/temporary-chat/messages/stream",
-    payload,
-    options,
-    "no-store",
-  );
+  return serializedPayload;
+}
+
+export function streamTemporaryChatMessage(
+  accessToken: string,
+  body: FormData | string,
+  options: ConversationStreamOptions = {},
+): Promise<SendMessageResult> {
+  return postMessageStreamRequest(accessToken, "/api/v1/temporary-chat/messages/stream", {
+    method: "POST",
+    headers: typeof body === "string" ? { "Content-Type": "application/json" } : undefined,
+    body,
+    signal: options.signal,
+  }, options, "no-store");
 }
 
 export async function streamImageGeneration(

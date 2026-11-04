@@ -10,7 +10,6 @@ import type {
 import { useChatNativeReadiness } from "@/features/chat/hooks/use-chat-native-readiness";
 import {
   inferUploadCategory,
-  normalizeUploadMime,
   resolveUploadPolicyRejection,
 } from "@/features/chat/utils/attachments";
 import { captureScreenshotFile } from "@/features/chat/utils/browser-media";
@@ -25,8 +24,6 @@ import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import {
   type FileStatusPollingResult,
   isFileProcessing,
-  isFileProcessingFailed,
-  resolveFileProcessingBadge,
   useFileProcessingStatusPolling,
 } from "@/entities/file";
 import { firstSettledFailureReason, runSettledItemsWithConcurrency } from "@/shared/lib/bulk-action";
@@ -42,24 +39,28 @@ export function useChatAttachments({
   conversationKey,
   conversationID,
   model,
+  parentMessagePublicID,
+  selectedToolIDs,
   attachments,
   setAttachments,
+  updateAttachmentStatuses,
   appendAttachmentsForKey,
   temporary = false,
 }: {
   conversationKey: string;
   conversationID?: string | null;
   model: string;
+  parentMessagePublicID?: string | null;
+  selectedToolIDs: number[];
   attachments: PendingAttachment[];
   setAttachments: React.Dispatch<React.SetStateAction<PendingAttachment[]>>;
+  updateAttachmentStatuses: React.Dispatch<React.SetStateAction<PendingAttachment[]>>;
   appendAttachmentsForKey: (conversationKey: string, items: PendingAttachment[]) => void;
   temporary?: boolean;
 }) {
   const t = useTranslations("chat.attachments");
-  const tFileStatus = useTranslations("files.status");
   const resolveErrorMessage = useLocalizedErrorMessage();
   const [uploadingByKey, setUploadingByKey] = React.useState<Record<string, UploadingAttachment[]>>({});
-  const [maxFilesPerMessage, setMaxFilesPerMessage] = React.useState(() => resolveMaxFilesPerMessage());
   const [chatFilePolicy, setChatFilePolicy] = React.useState<ChatFilePolicyDTO | null>(null);
   const attachmentsRef = React.useRef<PendingAttachment[]>(attachments);
   const previousAttachmentsRef = React.useRef<PendingAttachment[]>(attachments);
@@ -69,14 +70,21 @@ export function useChatAttachments({
   const currentConversationKeyRef = React.useRef(conversationKey);
   const uploadingAttachments = uploadingByKey[conversationKey] ?? [];
   const uploading = uploadingAttachments.length > 0;
-  const { eligibleFileIDs: nativeEligibleFileIDs, pending: nativeReadinessPending } = useChatNativeReadiness({
+  const {
+    eligibleFileIDs: nativeEligibleFileIDs,
+    issues: nativeInputIssues,
+    pending: nativeReadinessPending,
+    maxFilesPerMessage: channelMaxFiles,
+  } = useChatNativeReadiness({
     attachments,
     model,
     conversationKey,
     conversationID,
+    parentMessagePublicID,
+    selectedToolIDs,
     temporary,
   });
-  const notifiedProcessingFailuresRef = React.useRef(new Set<string>());
+  const maxFilesPerMessage = channelMaxFiles ?? chatFilePolicy?.maxMessageFiles ?? resolveMaxFilesPerMessage();
   const processingFileIDs = React.useMemo(
     () => attachments
       .filter(isFileProcessing)
@@ -84,39 +92,25 @@ export function useChatAttachments({
     [attachments],
   );
 
-  // Extraction can fail while the original file remains usable by the model.
-  // Wait for current readiness before announcing a failure, once per composer file.
-  React.useEffect(() => {
-    if (nativeReadinessPending) {
-      return;
-    }
-    for (const item of attachments) {
-      const key = `${conversationKey}:${item.fileID}`;
-      if (!isFileProcessingFailed(item) || nativeEligibleFileIDs.has(item.fileID)
-        || notifiedProcessingFailuresRef.current.has(key)) {
-        continue;
-      }
-      notifiedProcessingFailuresRef.current.add(key);
-      const badge = resolveFileProcessingBadge(item, (key, values) => tFileStatus(key, values));
-      toast.error(t("processingFailed", { name: item.fileName }), {
-        id: `attachment-processing-failed:${item.fileID}`,
-        description: badge.detail,
-      });
-    }
-  }, [attachments, conversationKey, nativeEligibleFileIDs, nativeReadinessPending, t, tFileStatus]);
-
   const onProcessingResult = React.useCallback(({
     statuses,
     missingFileIDs,
   }: FileStatusPollingResult<FileProcessingStatusDTO>) => {
     const statusesByID = new Map(statuses.map((status) => [status.fileID, status]));
     const missingFileIDSet = new Set(missingFileIDs);
-    setAttachments((current) => {
+    updateAttachmentStatuses((current) => {
       let changed = false;
       const next: PendingAttachment[] = [];
       for (const item of current) {
         if (missingFileIDSet.has(item.fileID)) {
           changed = true;
+          next.push({
+            ...item,
+            processingStatus: "failed",
+            processingReady: false,
+            processingErrorCode: "file.not_found",
+            embedStatus: undefined,
+          });
           continue;
         }
         const status = statusesByID.get(item.fileID);
@@ -158,7 +152,7 @@ export function useChatAttachments({
       }
       return changed ? next : current;
     });
-  }, [setAttachments]);
+  }, [updateAttachmentStatuses]);
 
   useFileProcessingStatusPolling({
     fileIDs: processingFileIDs,
@@ -179,9 +173,6 @@ export function useChatAttachments({
           return;
         }
         setChatFilePolicy(policy);
-        if (policy.maxMessageFiles > 0) {
-          setMaxFilesPerMessage(policy.maxMessageFiles);
-        }
       } catch {
         // Keep fallback value.
       }
@@ -245,41 +236,39 @@ export function useChatAttachments({
       }
       const targetConversationKey = conversationKey;
       const targetUploadingCount = uploadingByKey[targetConversationKey]?.length ?? 0;
-      const remainingSlots = maxFilesPerMessage - attachments.length - targetUploadingCount;
+      const limitDescription = () => t(channelMaxFiles !== undefined ? "maxUploadFilesInChannel" : "maxUploadFiles", {
+        count: maxFilesPerMessage,
+      });
+      const remainingSlots = maxFilesPerMessage > 0
+        ? maxFilesPerMessage - attachments.length - targetUploadingCount
+        : Infinity;
       if (remainingSlots <= 0) {
         toast.error(t("limitReached"), {
-          description: t("maxUploadFiles", { count: maxFilesPerMessage }),
+          description: limitDescription(),
         });
         return [];
       }
       const policyAcceptedFiles: File[] = [];
-      let overflowCount = 0;
       const policyLabels = {
         mimeNotAllowed: t("policy.mimeNotAllowed"),
         fullContextLimitExceeded: (limit: string) => t("policy.fullContextLimitExceeded", { limit }),
         sizeLimitExceeded: (limit: string) => t("policy.sizeLimitExceeded", { limit }),
       };
       for (const file of files) {
-        const mime = normalizeUploadMime(file);
-        const rejection = temporary && (mime.startsWith("video/") || mime.startsWith("audio/"))
-          ? t("temporaryVideoUnsupported")
-          : resolveUploadPolicyRejection(file, chatFilePolicy, policyLabels);
+        const rejection = resolveUploadPolicyRejection(file, chatFilePolicy, policyLabels);
         if (rejection) {
           toast.error(t("policyRejected"), {
             description: t("fileRejected", { name: file.name, reason: rejection }),
           });
           continue;
         }
-        if (policyAcceptedFiles.length >= remainingSlots) {
-          overflowCount += 1;
-          continue;
-        }
         policyAcceptedFiles.push(file);
       }
-      if (overflowCount > 0) {
-        toast(t("autoTruncated"), {
-          description: t("autoTruncatedDescription", { max: maxFilesPerMessage, count: overflowCount }),
+      if (policyAcceptedFiles.length > remainingSlots) {
+        toast.error(t("limitReached"), {
+          description: limitDescription(),
         });
+        return [];
       }
       if (policyAcceptedFiles.length === 0) {
         return [];
@@ -427,6 +416,7 @@ export function useChatAttachments({
     [
       appendAttachmentsForKey,
       attachments.length,
+      channelMaxFiles,
       chatFilePolicy,
       conversationKey,
       maxFilesPerMessage,
@@ -488,6 +478,10 @@ export function useChatAttachments({
     uploading,
     uploadingAttachments,
     nativeEligibleFileIDs,
+    nativeInputIssues,
+    nativeReadinessPending,
+    channelMaxFiles,
+    maxTemporaryAttachments: chatFilePolicy?.temporaryChatMaxAttachments,
     maxFilesPerMessage,
     fileMode: temporary ? "full_context" : (chatFilePolicy?.fileMode ?? "auto"),
     ragAvailable: chatFilePolicy?.ragAvailable ?? null,

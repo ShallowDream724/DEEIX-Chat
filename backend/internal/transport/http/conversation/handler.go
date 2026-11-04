@@ -148,9 +148,7 @@ var sendMessageErrorStatuses = []sendMessageErrorStatus{
 func describeSendMessageError(err error) response.Description {
 	if errors.Is(err, llm.ErrInputTooLarge) {
 		description := response.Describe(http.StatusRequestEntityTooLarge, appconversation.ErrFileTooLarge)
-		if details := llm.InputLimitDetails(err); details != nil {
-			description.Details = details
-		}
+		description.Details = sendMessageInputDetails(err)
 		return description
 	}
 	switch {
@@ -161,10 +159,36 @@ func describeSendMessageError(err error) response.Description {
 	}
 	for _, entry := range sendMessageErrorStatuses {
 		if errors.Is(err, entry.err) {
-			return response.Describe(entry.status, entry.err)
+			description := response.Describe(entry.status, entry.err)
+			if detail := appconversation.AttachmentInputErrorDetails(err); detail != nil {
+				description.Details = sendMessageInputDetails(err)
+			}
+			return description
 		}
 	}
 	return response.DescribeCode(http.StatusInternalServerError, response.CodeInternal)
+}
+
+func sendMessageInputDetails(err error) any {
+	fields := make(map[string]any)
+	if limit := llm.InputLimitDetails(err); limit != nil {
+		fields["dimension"], fields["actual"], fields["limit"] = limit.Dimension, limit.Actual, limit.Limit
+	}
+	if file := appconversation.AttachmentInputErrorDetails(err); file != nil {
+		if fields["dimension"] == nil && (file.Reason == "fileParseFailed" || file.Reason == "fileReadFailed") {
+			fields["dimension"] = file.Reason
+		}
+		if file.FileName != "" {
+			fields["fileName"] = file.FileName
+		}
+		if file.Scope == "current" || file.Scope == "history" {
+			fields["scope"] = file.Scope
+		}
+	}
+	if len(fields) == 0 {
+		return nil
+	}
+	return fields
 }
 
 // describeUpstreamRequestFailure 描述上游请求失败。只有 application 层明确识别的上游场景

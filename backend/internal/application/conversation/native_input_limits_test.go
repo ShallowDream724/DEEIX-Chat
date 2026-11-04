@@ -13,7 +13,7 @@ func TestConfiguredZeroNativeBudgetsDoNotRestoreLegacyCaps(t *testing.T) {
 		UpstreamID: 17, Protocol: llm.AdapterOpenAIResponses, BaseURL: "https://relay.example.test/v1",
 		ModelCapabilitiesJSON: `{"inputModalities":["pdf"]}`,
 	}
-	configuration := `{"upstreams":{"17":{"nativeCount":0,"nativeBytes":0,"pdfBytes":0,"pdfSingleBytes":0,"pdfPages":0}}}`
+	configuration := `{"defaults":{"nativeCount":2},"upstreams":{"17":{"nativeCount":0,"nativeBytes":0,"pdfBytes":0,"pdfSingleBytes":0,"pdfPages":0}}}`
 	files := make([]AttachmentInput, 7)
 	for index := range files {
 		files[index] = nativePDF(fmt.Sprintf("pdf-%d", index), 3*1024*1024, 20, true)
@@ -33,9 +33,10 @@ func TestNativePreviewCountsBase64AgainstRequestBudget(t *testing.T) {
 	}
 	configuration := `{"upstreams":{"17":{"requestBytes":30}}}`
 	files := []AttachmentInput{nativePDF("older", 12, 1, true), nativePDF("newer", 12, 1, true)}
-	selected := selectNativeInputs(files, resolveNativeInputPolicy(route, configuration))
-	if len(selected) != 1 || selected[0].FileID != "newer" {
-		t.Fatalf("two 16-byte encoded files cannot fit a 30-byte request: %+v", selected)
+	selected, rejected := selectNativeInputsWithRejections(files, resolveNativeInputPolicy(route, configuration))
+	if detail := llm.InputLimitDetails(rejected["older"]); len(selected) != 0 || detail == nil ||
+		detail.Dimension != "requestBytes" || detail.Actual != 32 || detail.Limit != 30 {
+		t.Fatalf("two 16-byte encoded files cannot fit a 30-byte request: selected=%+v, rejected=%v", selected, rejected)
 	}
 }
 

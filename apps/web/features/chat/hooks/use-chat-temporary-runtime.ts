@@ -5,6 +5,8 @@ import { useTranslations } from "next-intl";
 import * as React from "react";
 import { toast } from "sonner";
 
+import type { RestoreSubmittedDraft } from "@/features/chat/hooks/use-chat-composer-state";
+import { getInputLimitReasons, type InputLimitReason } from "@/shared/lib/input-limit";
 import { mergeChatOptionsOverride, splitControlSelections } from "@/features/chat/model/chat-model-controls";
 import { mapServerMessage } from "@/features/chat/model/chat-thread";
 import { mergeProcessTraceSnapshot, toPendingProcessTrace } from "@/features/chat/model/message-submit";
@@ -20,9 +22,7 @@ import {
   resolveErrorReason,
   resolveErrorSummary,
 } from "@/features/chat/utils/chat-runtime";
-import {
-  streamTemporaryChatMessage,
-} from "@/shared/api/conversation";
+import { prepareTemporaryChatRequest, streamTemporaryChatMessage } from "@/shared/api/conversation";
 import type { TemporaryChatRequestAttachment } from "@/shared/api/conversation";
 import type {
   ConversationOptions,
@@ -70,6 +70,11 @@ type TemporaryChatRuntimeInput = {
   htmlVisualPromptEnabled: boolean;
   attachments: PendingAttachment[];
   onDraftChange: (value: string) => void;
+  getComposerRevision: () => number;
+  restoreSubmittedDraft: RestoreSubmittedDraft;
+  restoreDraftOnFailure: boolean;
+  onInputLimit: (reasons: readonly InputLimitReason[]) => void;
+  maxTemporaryAttachments?: number;
   onAttachmentsConsumed: (items: PendingAttachment[]) => void;
   releaseAttachments: (items: PendingAttachment[]) => void;
   // Interactive component state of earlier replies, attached to the next turn.
@@ -134,24 +139,20 @@ function toAreaMessage(message: TemporaryMessage): ChatAreaMessage {
 
 // Temporary chats have no message ids on the server: a block is located by the
 // index of its reply in the request's `messages`. A reply sits right after its
-// user turn in the history; the request may drop the oldest entries, so indexes
-// shift by however many were dropped.
+// user turn in the full history.
 function toTemporaryUIStates(
   entries: readonly MessageUIStateInput[],
   messages: readonly TemporaryMessage[],
   fullHistory: readonly TemporaryHistoryMessage[],
-  requestLength: number,
 ): TemporaryChatUIStateInput[] {
-  const dropped = fullHistory.length - requestLength;
   const result: TemporaryChatUIStateInput[] = [];
   for (const entry of entries) {
     const message = messages.find((item) => item.id === entry.messagePublicID && item.role === "assistant");
     if (!message) {
       continue;
     }
-    const historyIndex = message.historyOffset + 1;
-    const messageIndex = historyIndex - dropped;
-    if (messageIndex < 0 || messageIndex >= requestLength || fullHistory[historyIndex]?.role !== "assistant") {
+    const messageIndex = message.historyOffset + 1;
+    if (fullHistory[messageIndex]?.role !== "assistant") {
       continue;
     }
     result.push({ messageIndex, blockID: entry.blockID, title: entry.title, state: entry.state });
@@ -163,59 +164,72 @@ function isImageAttachment(item: PendingAttachment): boolean {
   return item.fileCategory === "image" || item.mimeType.startsWith("image/");
 }
 
-function prepareTemporaryRequestHistory(fullHistory: TemporaryHistoryMessage[]): {
-  attachments: TemporaryChatRequestAttachment[];
-  messages: TemporaryChatHistoryMessage[];
-} {
-  const historyTruncated = fullHistory.length > 99;
-  const history = historyTruncated ? fullHistory.slice(-99) : fullHistory;
-  const selected: Array<TemporaryChatRequestAttachment & { fileID: string }> = [];
+function prepareTemporaryRequestHistory(history: TemporaryHistoryMessage[]) {
+  return {
+    messages: history.map(({ role, content }): TemporaryChatHistoryMessage => ({ role, content: content.trim() })),
+    attachments: history.flatMap((message, messageIndex) =>
+      (message.attachments ?? []).map((attachment): TemporaryChatRequestAttachment => {
+        if (!attachment.localFile) throw new Error("Temporary attachment is unavailable");
+        return {
+          file: attachment.localFile,
+          kind: isImageAttachment(attachment) ? "image" : "file",
+          messageIndex,
+        };
+      }),
+    ),
+  };
+}
 
-  for (let messageIndex = history.length - 1; messageIndex >= 0; messageIndex -= 1) {
-    const message = history[messageIndex];
-    if (message.role !== "user") {
-      continue;
+function getTemporaryHistoryIssues(
+  history: TemporaryHistoryMessage[],
+  current: TemporaryHistoryMessage,
+  maxAttachments?: number,
+): InputLimitReason[] {
+  const allMessages = [...history, current];
+  const issues: InputLimitReason[] = [];
+  const maxMessages = 100;
+  const maxChars = 1_000_000;
+  const maxMessageChars = 200_000;
+  if (allMessages.length > maxMessages) {
+    issues.push({ dimension: "temporaryMessageCount", actual: allMessages.length, limit: maxMessages });
+  }
+  // Only count Unicode code points when the cheap UTF-16 upper bound can exceed a limit.
+  const mayExceedTotal = allMessages.reduce((total, message) => total + message.content.length, 0) > maxChars;
+  let totalChars = 0;
+  for (const message of allMessages) {
+    const content = message.content.trim();
+    if (!mayExceedTotal && content.length <= maxMessageChars) continue;
+    let chars = 0;
+    for (let index = 0; index < content.length; index++, chars++) {
+      if ((content.codePointAt(index) ?? 0) > 0xffff) index++;
     }
-    const messageAttachments = message.attachments ?? [];
-    for (let index = messageAttachments.length - 1; index >= 0; index -= 1) {
-      const attachment = messageAttachments[index];
-      if (!attachment.localFile) {
-        continue;
-      }
-      const image = isImageAttachment(attachment);
-      selected.push({
-        file: attachment.localFile,
-        fileID: attachment.fileID,
-        kind: image ? "image" : "file",
-        messageIndex,
+    totalChars += chars;
+    if (chars > maxMessageChars) {
+      issues.push({
+        dimension: "temporarySingleTextLength",
+        actual: chars,
+        limit: maxMessageChars,
+        scope: message === current ? "current" : "history",
       });
     }
   }
-
-  selected.reverse();
-  const selectedIDs = new Set(selected.map((item) => item.fileID));
-  const messages = history.map((message, messageIndex): TemporaryChatHistoryMessage => {
-    const content = [
-      historyTruncated && messageIndex === 0 ? "[Earlier temporary conversation omitted from this request]" : "",
-      message.content.trim(),
-    ].filter(Boolean).join("\n\n");
-    if (message.role !== "user") {
-      return { role: message.role, content };
+  if (totalChars > maxChars) issues.push({ dimension: "temporaryTextLength", actual: totalChars, limit: maxChars });
+  const attachments = allMessages.flatMap((message) => message.attachments ?? []);
+  if (maxAttachments !== undefined && maxAttachments > 0 && attachments.length > maxAttachments) {
+    issues.push({ dimension: "temporaryFileCount", actual: attachments.length, limit: maxAttachments });
+  }
+  for (const message of allMessages) {
+    for (const attachment of message.attachments ?? []) {
+      if (!(attachment.localFile instanceof File)) {
+        issues.push({
+          dimension: "fileUnavailable",
+          fileName: attachment.fileName,
+          scope: message === current ? "current" : "history",
+        });
+      }
     }
-    const omittedNames = (message.attachments ?? [])
-      .filter((item) => !selectedIDs.has(item.fileID))
-      .map((item) => item.fileName);
-    if (omittedNames.length === 0) {
-      return { role: message.role, content };
-    }
-    const notice = `[Earlier temporary attachments omitted from this request: ${JSON.stringify(omittedNames)}]`;
-    return { role: message.role, content: content ? `${content}\n\n${notice}` : notice };
-  });
-
-  return {
-    attachments: selected.map(({ fileID: _fileID, ...item }) => item),
-    messages,
-  };
+  }
+  return issues;
 }
 
 export function useChatTemporaryRuntime({
@@ -230,6 +244,11 @@ export function useChatTemporaryRuntime({
   htmlVisualPromptEnabled,
   attachments,
   onDraftChange,
+  getComposerRevision,
+  restoreSubmittedDraft,
+  restoreDraftOnFailure,
+  onInputLimit,
+  maxTemporaryAttachments,
   onAttachmentsConsumed,
   releaseAttachments,
   collectUIStates,
@@ -240,6 +259,11 @@ export function useChatTemporaryRuntime({
   const [sending, setSending] = React.useState(false);
   const messagesRef = React.useRef<TemporaryMessage[]>([]);
   const historyRef = React.useRef<TemporaryHistoryMessage[]>([]);
+  const [history, setHistory] = React.useState<TemporaryHistoryMessage[]>([]);
+  const replaceHistory = React.useCallback((next: TemporaryHistoryMessage[]) => {
+    historyRef.current = next;
+    setHistory(next);
+  }, []);
   const retainedAttachmentsRef = React.useRef(new Map<string, PendingAttachment>());
   const sessionIDRef = React.useRef("");
   const abortControllerRef = React.useRef<AbortController | null>(null);
@@ -311,20 +335,21 @@ export function useChatTemporaryRuntime({
     sendingRef.current = false;
   }, []);
 
-  React.useEffect(() => {
-    if (active) {
-      return;
-    }
+  const startNew = React.useCallback(() => {
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
     sendingRef.current = false;
     sessionIDRef.current = "";
-    historyRef.current = [];
+    replaceHistory([]);
     clearRetainedAttachments();
     clearLiveTraces();
     setSending(false);
     replaceMessages([]);
-  }, [active, clearLiveTraces, clearRetainedAttachments, replaceMessages]);
+  }, [clearLiveTraces, clearRetainedAttachments, replaceHistory, replaceMessages]);
+
+  React.useEffect(() => {
+    if (!active) startNew();
+  }, [active, startNew]);
 
   React.useEffect(() => {
     const abort = () => abortControllerRef.current?.abort();
@@ -377,17 +402,24 @@ export function useChatTemporaryRuntime({
     ) {
       return false;
     }
-    if (localAttachments.some((item) => !(item.localFile instanceof File))) {
-      toast.error(t("failed"));
+    const userHistory: TemporaryHistoryMessage = {
+      role: "user",
+      content: normalizedContent,
+      attachments: localAttachments,
+    };
+    const issues = getTemporaryHistoryIssues(baseHistory, userHistory, maxTemporaryAttachments);
+    if (issues.length > 0) {
+      onInputLimit(issues);
       return false;
     }
 
+    const initialRevision = getComposerRevision();
     sendingRef.current = true;
     setSending(true);
     const controller = new AbortController();
     abortControllerRef.current = controller;
     const token = await resolveAccessToken().catch(() => "");
-    if (controller.signal.aborted) {
+    if (controller.signal.aborted || (consumeComposer && initialRevision !== getComposerRevision())) {
       finishSending(controller);
       return false;
     }
@@ -400,15 +432,6 @@ export function useChatTemporaryRuntime({
       sessionIDRef.current = createSecureUUID();
     }
 
-    for (const attachment of localAttachments) {
-      retainedAttachmentsRef.current.set(attachment.fileID, attachment);
-    }
-    if (consumeComposer) {
-      onAttachmentsConsumed(localAttachments);
-      onDraftChange("");
-    }
-
-    historyRef.current = baseHistory;
     const historyOffset = baseHistory.length;
     const currentMessages = messagesRef.current;
     const insertionIndex = replaceFromIndex ?? currentMessages.length;
@@ -423,6 +446,56 @@ export function useChatTemporaryRuntime({
     };
     const assistantID = createSecureUUID();
     const clientRunID = createSecureUUID();
+    const fullHistory = [...baseHistory, userHistory];
+    let preparedBody: FormData | string;
+    try {
+      const preparedRequest = prepareTemporaryRequestHistory(fullHistory);
+      const turnUIStates = collectUIStates
+        ? toTemporaryUIStates(
+            collectUIStates(currentMessages.slice(0, insertionIndex).map(toAreaMessage)),
+            currentMessages,
+            fullHistory,
+          )
+        : [];
+      const requestOptions = splitControlSelections(mergeChatOptionsOverride(options, optionsOverride));
+      preparedBody = await prepareTemporaryChatRequest(token, {
+        sessionID: sessionIDRef.current,
+        clientRunID,
+        model: selectedModel,
+        options: requestOptions.options,
+        controls: requestOptions.controls,
+        selectedToolIDs: selectedToolIDs.length > 0 ? selectedToolIDs : undefined,
+        skillIDs: selectedSkillIDs.length > 0 ? selectedSkillIDs : undefined,
+        knowledgeBaseIDs: selectedKnowledgeBaseIDs.length > 0 ? selectedKnowledgeBaseIDs : undefined,
+        htmlVisualPrompt: htmlVisualPromptEnabled || undefined,
+        uiComponentIDs: uiComponentIDs.length > 0 ? uiComponentIDs : undefined,
+        uiBlockVersion: uiComponentIDs.length > 0 ? UI_BLOCK_FORMAT_VERSION : undefined,
+        uiStates: turnUIStates.length > 0 ? turnUIStates : undefined,
+        messages: preparedRequest.messages,
+      }, preparedRequest.attachments, controller.signal);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        const inputLimits = getInputLimitReasons(error);
+        if (inputLimits.length > 0) onInputLimit(inputLimits);
+        else toast.error(tSubmit("sendFailed"), { description: resolveErrorSummary(error, tSubmit("retryLater")) });
+      }
+      finishSending(controller);
+      return false;
+    }
+    if (controller.signal.aborted || (consumeComposer && initialRevision !== getComposerRevision())) {
+      finishSending(controller);
+      return false;
+    }
+
+    for (const attachment of localAttachments) {
+      retainedAttachmentsRef.current.set(attachment.fileID, attachment);
+    }
+    if (consumeComposer) {
+      onAttachmentsConsumed(localAttachments);
+      onDraftChange("");
+    }
+    const composerRevision = consumeComposer ? getComposerRevision() : undefined;
+    replaceHistory(baseHistory);
     const replacements: TemporaryMessage[] = [
       userMessage,
       {
@@ -446,43 +519,13 @@ export function useChatTemporaryRuntime({
       );
     }
 
-    const userHistory: TemporaryHistoryMessage = {
-      role: "user",
-      content: normalizedContent,
-      attachments: localAttachments,
-    };
-    const fullHistory = [...baseHistory, userHistory];
-    const preparedRequest = prepareTemporaryRequestHistory(fullHistory);
-    const turnUIStates = collectUIStates
-      ? toTemporaryUIStates(
-          collectUIStates(currentMessages.slice(0, insertionIndex).map(toAreaMessage)),
-          currentMessages,
-          fullHistory,
-          preparedRequest.messages.length,
-        )
-      : [];
     let streamedAssistantText = "";
     let moderationBlocked = false;
 
     try {
-      const requestOptions = splitControlSelections(mergeChatOptionsOverride(options, optionsOverride));
       const completed = await streamTemporaryChatMessage(
         token,
-        {
-          sessionID: sessionIDRef.current,
-          clientRunID,
-          model: selectedModel,
-          options: requestOptions.options,
-          controls: requestOptions.controls,
-          selectedToolIDs: selectedToolIDs.length > 0 ? selectedToolIDs : undefined,
-          skillIDs: selectedSkillIDs.length > 0 ? selectedSkillIDs : undefined,
-          knowledgeBaseIDs: selectedKnowledgeBaseIDs.length > 0 ? selectedKnowledgeBaseIDs : undefined,
-          htmlVisualPrompt: htmlVisualPromptEnabled || undefined,
-          uiComponentIDs: uiComponentIDs.length > 0 ? uiComponentIDs : undefined,
-          uiBlockVersion: uiComponentIDs.length > 0 ? UI_BLOCK_FORMAT_VERSION : undefined,
-          uiStates: turnUIStates.length > 0 ? turnUIStates : undefined,
-          messages: preparedRequest.messages,
-        },
+        preparedBody,
         {
           signal: controller.signal,
           onDelta: (delta) => {
@@ -529,17 +572,16 @@ export function useChatTemporaryRuntime({
             }));
           },
         },
-        preparedRequest.attachments,
       );
       if (controller.signal.aborted || abortControllerRef.current !== controller) {
         throw new DOMException("The operation was aborted", "AbortError");
       }
       const mappedAssistant = mapServerMessage(completed.assistantMessage);
-      historyRef.current = [
+      replaceHistory([
         ...baseHistory,
         userHistory,
         { role: "assistant", content: completed.assistantMessage.content },
-      ];
+      ]);
       updateMessage(assistantID, (message) => ({
         ...message,
         content: completed.assistantMessage.content,
@@ -560,11 +602,11 @@ export function useChatTemporaryRuntime({
       }
       const aborted = controller.signal.aborted;
       if (!moderationBlocked && streamedAssistantText.trim()) {
-        historyRef.current = [
+        replaceHistory([
           ...baseHistory,
           userHistory,
           { role: "assistant", content: streamedAssistantText },
-        ];
+        ]);
       }
       if (moderationBlocked) {
         updateMessage(assistantID, (message) => ({
@@ -594,9 +636,21 @@ export function useChatTemporaryRuntime({
             },
       }));
       if (!aborted) {
-        toast.error(tSubmit("sendFailed"), {
-          description: resolveErrorSummary(error, tSubmit("retryLater")),
-        });
+        if (composerRevision !== undefined && restoreDraftOnFailure) {
+          // The failed turn retains its local files for retry. Restoring the
+          // composer shares the files but owns separate preview URLs.
+          const restoredAttachments = localAttachments.map((item) => ({
+            ...item,
+            fileID: `temporary_${createSecureUUID()}`,
+            previewURL: item.previewURL && item.localFile ? URL.createObjectURL(item.localFile) : undefined,
+          }));
+          if (!restoreSubmittedDraft(composerRevision, content, restoredAttachments)) {
+            releaseAttachments(restoredAttachments);
+          }
+        }
+        const inputLimits = getInputLimitReasons(error);
+        if (inputLimits.length > 0) onInputLimit(inputLimits);
+        else toast.error(tSubmit("sendFailed"), { description: resolveErrorSummary(error, tSubmit("retryLater")) });
       }
     } finally {
       finishSending(controller);
@@ -606,13 +660,20 @@ export function useChatTemporaryRuntime({
     active,
     collectUIStates,
     finishSending,
+    getComposerRevision,
     htmlVisualPromptEnabled,
+    maxTemporaryAttachments,
     model,
     onAttachmentsConsumed,
     onDraftChange,
+    onInputLimit,
     options,
+    releaseAttachments,
+    replaceHistory,
     replaceMessageTail,
     replaceMessages,
+    restoreDraftOnFailure,
+    restoreSubmittedDraft,
     selectedKnowledgeBaseIDs,
     uiComponentIDs,
     selectedSkillIDs,
@@ -623,18 +684,13 @@ export function useChatTemporaryRuntime({
   ]);
 
   const send = React.useCallback(async () => {
-    const currentAttachments = attachments.filter((item) => item.localFile instanceof File);
-    if (currentAttachments.length !== attachments.length) {
-      toast.error(t("failed"));
-      return;
-    }
     await submitTurn({
       content: draft,
-      localAttachments: currentAttachments,
+      localAttachments: attachments,
       baseHistory: [...historyRef.current],
       consumeComposer: true,
     });
-  }, [attachments, draft, submitTurn, t]);
+  }, [attachments, draft, submitTurn]);
 
   // An interactive block's `ask`: the text becomes the next turn; the draft and
   // its attachments are left alone.
@@ -704,7 +760,7 @@ export function useChatTemporaryRuntime({
       if (historyEntry?.role === "user") {
         const nextHistory = historyRef.current.slice();
         nextHistory[turn.message.historyOffset] = { ...historyEntry, content: nextContent };
-        historyRef.current = nextHistory;
+        replaceHistory(nextHistory);
       }
       return true;
     }
@@ -715,7 +771,7 @@ export function useChatTemporaryRuntime({
       replaceFromIndex: turn.index,
       consumeComposer: false,
     });
-  }, [resolveUserTurn, submitTurn, t, updateMessage]);
+  }, [replaceHistory, resolveUserTurn, submitTurn, t, updateMessage]);
 
   const editAssistantMessage = React.useCallback(async (message: ChatAreaMessage, content: string) => {
     const nextContent = content.trim();
@@ -740,7 +796,7 @@ export function useChatTemporaryRuntime({
       activityLabel: undefined,
       inlineAlert: undefined,
     }));
-    historyRef.current = [
+    replaceHistory([
       ...historyRef.current.slice(0, turn.message.historyOffset),
       {
         role: "user",
@@ -748,17 +804,29 @@ export function useChatTemporaryRuntime({
         attachments: turn.message.localAttachments ?? [],
       },
       { role: "assistant", content: nextContent },
-    ];
+    ]);
     return true;
-  }, [replaceMessageTail, resolveUserTurn, t, updateMessage]);
+  }, [replaceHistory, replaceMessageTail, resolveUserTurn, t, updateMessage]);
 
   const areaMessages = React.useMemo<ChatAreaMessage[]>(() => messages.map(toAreaMessage), [messages]);
 
+  const inputIssues = React.useMemo(() => active
+    ? getTemporaryHistoryIssues(history, { role: "user", content: draft.trim(), attachments }, maxTemporaryAttachments)
+    : [], [active, history, attachments, draft, maxTemporaryAttachments]);
+
+  const historyAttachments = React.useMemo(
+    () => history.flatMap((item) => item.attachments ?? []),
+    [history],
+  );
+
   return {
     messages: areaMessages,
+    inputIssues,
+    historyAttachments,
     sending,
     send,
     sendText,
+    startNew,
     stop,
     loadAttachmentContent,
     onRetryUserMessage: retryMessage,

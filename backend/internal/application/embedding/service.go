@@ -908,7 +908,6 @@ func (s *Service) loadSourceText(ctx context.Context, fileObj domainconversation
 	}
 	result, err := s.extractSvc.ExtractStoredFile(ctx, extraction.ExtractInput{
 		File:                  fileObj,
-		PDFMaxPages:           cfg.FileFullContextPDFMaxPages,
 		OCREngine:             cfg.ExtractOCREngine,
 		ImageOCREnabled:       cfg.ExtractImageOCREnabled,
 		PDFOCRFallbackEnabled: cfg.ExtractPDFOCRFallbackEnabled,

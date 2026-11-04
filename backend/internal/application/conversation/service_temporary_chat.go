@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	appbilling "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/billing"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
@@ -15,7 +16,11 @@ import (
 	"github.com/google/uuid"
 )
 
-const temporaryChatMaxContentChars = 1_000_000
+const (
+	temporaryChatMaxMessages     = 100
+	temporaryChatMaxMessageChars = 200_000
+	temporaryChatMaxContentChars = 1_000_000
+)
 
 // TemporaryChatMessage 是浏览器内临时对话的一条消息。
 type TemporaryChatMessage struct {
@@ -79,6 +84,15 @@ func (s *Service) StreamTemporaryChat(
 	attributionReferer, attributionTitle := s.llmAttribution()
 	cfg := s.cfg.Snapshot()
 	routeConfig := messageRouteConfig(route, attributionReferer, attributionTitle, cfg)
+	currentAttachmentCount := 0
+	for _, item := range input.Attachments {
+		if item.MessageIndex == len(input.Messages)-1 {
+			currentAttachmentCount++
+		}
+	}
+	if err := validateRouteMessageFileCount(cfg, route, currentAttachmentCount); err != nil {
+		return nil, err
+	}
 	runID := strings.TrimSpace(input.ClientRunID)
 	lastUser := input.Messages[len(input.Messages)-1]
 	temporaryAssistant := model.Message{
@@ -94,9 +108,9 @@ func (s *Service) StreamTemporaryChat(
 	traceRecorder := newEphemeralMessageTraceRecorder(s, ctx, &temporaryAssistant, input.OnEvent)
 	messages := make([]llm.Message, 0, len(input.Messages)+1)
 	for _, item := range input.Messages {
-		messages = append(messages, llm.Message{Role: item.Role, Content: item.Content})
+		messages = append(messages, llm.Message{Role: strings.TrimSpace(item.Role), Content: item.Content})
 	}
-	attachmentContext, err := s.prepareTemporaryAttachmentContext(ctx, input, messages, *routeConfig.InputLimits)
+	attachmentContext, err := s.prepareTemporaryAttachmentContext(ctx, input, messages, resolveNativeInputPolicy(route, cfg.InputLimitsJSON))
 	if input.ReleaseAttachmentSources != nil {
 		input.ReleaseAttachmentSources()
 	}
@@ -104,6 +118,11 @@ func (s *Service) StreamTemporaryChat(
 		return nil, err
 	}
 	messages = attachmentContext.messages
+	meter := contextInputMeter{identity: contextObservationRouteIdentity(route, buildPromptContextConfigSignature(cfg))}
+	cacheKey := temporaryContextObservationKey{
+		userID: input.UserID, session: contextObservationHash(strings.TrimSpace(input.SessionID)), route: meter.identity,
+	}
+	cacheKey.ancestry, meter.prior = s.temporaryContextCache.ancestors(cacheKey, messages, time.Now())
 	uiComponents, err := s.resolveUIComponents(ctx, input.UserID, input.UIComponentIDs)
 	if err != nil {
 		return nil, err
@@ -160,6 +179,27 @@ func (s *Service) StreamTemporaryChat(
 		Controls:              input.Controls,
 	})
 	filteredOptions = stripTemporaryChatProviderStateOptions(filteredOptions)
+	generateInput := llm.GenerateInput{
+		RequestID:      strings.TrimSpace(input.RequestID),
+		Messages:       messages,
+		Tools:          toolRuntime.definitions,
+		Options:        filteredOptions,
+		NativeToolKeys: authorizedNativeToolKeys(route.Protocol, filteredOptions, route.ModelCapabilitiesJSON),
+		Ephemeral:      true,
+	}
+	applyOpenAIResponsesInstructions(route, routeConfig.Endpoint, &generateInput)
+	estimatedInputTokens := meter.estimate(generateInput)
+	budget := resolveContextBudgetPolicy(cfg, route.UpstreamModel, route.ModelCapabilitiesJSON)
+	if err := budget.evaluate(generateInput, estimatedInputTokens).err(); err != nil {
+		traceRecorder.fail(err)
+		return nil, wrapUpstreamRequestError(err)
+	}
+	traceRecorder.recordPromptTrace(buildMessagePromptTrace(messagePromptTraceInput{
+		Plan:         promptPlan.Trace,
+		Mode:         "full",
+		SentMessages: generateInput.Messages,
+		FullMessages: fullMessages,
+	}))
 	var moderationCoord *appcm.RunCoordinator
 	if s.moderationSvc != nil {
 		moderationCoord = s.moderationSvc.BeginRun(ctx, appcm.RunMeta{
@@ -176,34 +216,8 @@ func (s *Service) StreamTemporaryChat(
 			moderationCoord.EnqueueInputImageSources(attachmentContext.moderationImages)
 		}
 	}
-	generateInput := llm.GenerateInput{
-		RequestID:      strings.TrimSpace(input.RequestID),
-		Messages:       messages,
-		Tools:          toolRuntime.definitions,
-		Options:        filteredOptions,
-		NativeToolKeys: authorizedNativeToolKeys(route.Protocol, filteredOptions, route.ModelCapabilitiesJSON),
-		Ephemeral:      true,
-	}
-	var budgetFit promptBudgetFit
-	generateInput, budgetFit = fitGenerateInputToModelBudget(
-		generateInput,
-		route.UpstreamModel,
-		route.ModelCapabilitiesJSON,
-		cfg.ContextWindowFallbackTokens,
-		cfg.ContextTokenBudgetEnabled,
-	)
-	if budgetFit.Trimmed {
-		promptPlan.applyMessages(generateInput.Messages)
-	}
-	applyOpenAIResponsesInstructions(route, routeConfig.Endpoint, &generateInput)
-	traceRecorder.recordPromptTrace(buildMessagePromptTrace(messagePromptTraceInput{
-		Plan:         promptPlan.Trace,
-		Mode:         "full",
-		SentMessages: generateInput.Messages,
-		FullMessages: fullMessages,
-	}))
 	if err := s.ensureUsageBudgetCoversEstimate(ctx, input.UsageAuthorization, route, filteredOptions, usageBudgetEstimate{
-		InputTokens:  estimateGenerateInputTokens(generateInput),
+		InputTokens:  estimatedInputTokens,
 		OutputTokens: messageRequestMaxOutputTokens(filteredOptions),
 	}); err != nil {
 		if moderationCoord != nil {
@@ -218,6 +232,8 @@ func (s *Service) StreamTemporaryChat(
 		Route:         route,
 		RouteConfig:   routeConfig,
 		InitialInput:  generateInput,
+		ContextBudget: budget,
+		ContextMeter:  meter,
 		ToolRuntime:   toolRuntime,
 		TraceRecorder: traceRecorder,
 		StartedAt:     startedAt,
@@ -225,7 +241,7 @@ func (s *Service) StreamTemporaryChat(
 	})
 	output := generation.Output
 	if generateErr != nil {
-		if output == nil || output.Text == "" && generation.Usage == (llm.Usage{}) {
+		if output == nil || output.Text == "" && generation.Usage == (llm.Usage{}) && generation.LLMCallCount == 0 {
 			if moderationCoord != nil {
 				moderationCoord.WaitInputOnly(ctx)
 			}
@@ -254,7 +270,7 @@ func (s *Service) StreamTemporaryChat(
 	outputObserved := usage.OutputTokens > 0
 	inputTokens := usage.InputTokens
 	if !inputObserved {
-		inputTokens = estimateGenerateInputTokens(generateInput)
+		inputTokens = estimatedInputTokens
 	}
 	outputTokens := resolveObservedOrEstimatedOutputTokens(usage.OutputTokens, assistantText)
 	usageSource := "observed"
@@ -327,6 +343,10 @@ func (s *Service) StreamTemporaryChat(
 	if generateErr != nil {
 		return result, wrapTemporaryGenerationError(generateErr)
 	}
+	if result.Moderation == nil || !result.Moderation.Blocked {
+		cacheKey.ancestry = extendTemporaryContextAncestry(cacheKey.ancestry, llm.Message{Role: "assistant", Content: result.AssistantMessage.Content})
+		s.temporaryContextCache.put(cacheKey, generation.InitialObservation, now)
+	}
 	return result, nil
 }
 
@@ -394,15 +414,18 @@ func ValidateTemporaryChatInput(input TemporaryChatInput, attachmentLimits ...in
 	if input.UserID == 0 || strings.TrimSpace(input.SessionID) == "" || strings.TrimSpace(input.ClientRunID) == "" || strings.TrimSpace(input.Model) == "" {
 		return ErrInvalidMessageContent
 	}
-	if len(input.Messages) == 0 || len(input.Messages) > 100 {
+	if len(input.Messages) == 0 {
 		return ErrInvalidMessageContent
+	}
+	if len(input.Messages) > temporaryChatMaxMessages {
+		return temporaryChatResourceLimitError(ErrInvalidMessageContent, "temporaryMessageCount", len(input.Messages), temporaryChatMaxMessages)
 	}
 	attachmentLimit := 20
 	if len(attachmentLimits) > 0 && attachmentLimits[0] > 0 {
 		attachmentLimit = attachmentLimits[0]
 	}
 	if len(input.Attachments) > attachmentLimit {
-		return ErrTooManyMessageFiles
+		return temporaryChatResourceLimitError(ErrTooManyMessageFiles, "temporaryFileCount", len(input.Attachments), attachmentLimit)
 	}
 	if len(input.KnowledgeBaseIDs) > 8 {
 		return ErrInvalidMessageContent
@@ -420,7 +443,7 @@ func ValidateTemporaryChatInput(input TemporaryChatInput, attachmentLimits ...in
 	}
 	attachmentCounts := make(map[int]int)
 	for _, attachment := range input.Attachments {
-		if attachment.MessageIndex < 0 || attachment.MessageIndex >= len(input.Messages) || attachment.Reader == nil {
+		if attachment.MessageIndex < 0 || attachment.MessageIndex >= len(input.Messages) || attachment.Reader == nil || strings.TrimSpace(input.Messages[attachment.MessageIndex].Role) != "user" {
 			return ErrInvalidFileReference
 		}
 		attachmentCounts[attachment.MessageIndex]++
@@ -436,14 +459,22 @@ func ValidateTemporaryChatInput(input TemporaryChatInput, attachmentLimits ...in
 		if content == "" && (role != "user" || attachmentCounts[index] == 0) {
 			return ErrInvalidMessageContent
 		}
-		totalChars += len([]rune(item.Content))
-		if totalChars > temporaryChatMaxContentChars {
-			return ErrInvalidMessageContent
+		messageChars := utf8.RuneCountInString(item.Content)
+		if messageChars > temporaryChatMaxMessageChars {
+			return temporaryChatResourceLimitError(ErrInvalidMessageContent, "temporaryTextLength", messageChars, temporaryChatMaxMessageChars)
 		}
+		totalChars += messageChars
 		previousRole = role
+	}
+	if totalChars > temporaryChatMaxContentChars {
+		return temporaryChatResourceLimitError(ErrInvalidMessageContent, "temporaryTextLength", totalChars, temporaryChatMaxContentChars)
 	}
 	if previousRole != "user" {
 		return ErrInvalidMessageContent
 	}
 	return nil
+}
+
+func temporaryChatResourceLimitError(cause error, dimension string, actual, limit int) error {
+	return errors.Join(cause, wrapUpstreamRequestError(llm.NewInputLimitError(dimension, int64(actual), int64(limit))))
 }

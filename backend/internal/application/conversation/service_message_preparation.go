@@ -49,9 +49,6 @@ func (s *Service) prepareMessageSendBranch(ctx context.Context, input *SendMessa
 		input.Content = branchState.ReuseUserMessage.Content
 		input.FileIDs = parseAttachmentSnapshotFileIDs(branchState.ReuseUserMessage.Attachments)
 	}
-	if err := s.validateMessageFileCount(input.FileIDs); err != nil {
-		return nil, err
-	}
 
 	return &messageSendBranchPreparation{
 		branchState:            branchState,

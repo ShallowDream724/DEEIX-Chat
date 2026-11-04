@@ -13779,10 +13779,10 @@ const docTemplate = `{
                 "tags": [
                     "chat"
                 ],
-                "summary": "查询本轮附件原生输入资格",
+                "summary": "查询所选模型的附件输入限制与当前分支附件状态",
                 "parameters": [
                     {
-                        "description": "模型与本轮全部附件",
+                        "description": "模型、当前分支父消息及本轮附件",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -17853,6 +17853,12 @@ const docTemplate = `{
                             "$ref": "#/definitions/ConversationErrorDoc"
                         }
                     },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "$ref": "#/definitions/ConversationErrorDoc"
+                        }
+                    },
                     "500": {
                         "description": "Internal Server Error",
                         "schema": {
@@ -19166,6 +19172,94 @@ const docTemplate = `{
             "properties": {
                 "updatedAt": {
                     "type": "string"
+                }
+            }
+        },
+        "AttachmentReadinessIssueResponse": {
+            "type": "object",
+            "required": [
+                "actual",
+                "dimension",
+                "limit"
+            ],
+            "properties": {
+                "actual": {
+                    "type": "integer"
+                },
+                "dimension": {
+                    "type": "string"
+                },
+                "fileCategory": {
+                    "type": "string",
+                    "enum": [
+                        "image",
+                        "pdf",
+                        "document",
+                        "audio",
+                        "video",
+                        "other"
+                    ]
+                },
+                "fileName": {
+                    "type": "string"
+                },
+                "limit": {
+                    "type": "integer"
+                },
+                "scope": {
+                    "type": "string",
+                    "enum": [
+                        "current",
+                        "history",
+                        "context"
+                    ]
+                }
+            }
+        },
+        "AttachmentReadinessLimitsResponse": {
+            "type": "object",
+            "required": [
+                "imageBytes",
+                "imageCount",
+                "imageSingleBytes",
+                "nativeBytes",
+                "nativeCount",
+                "nonPDFBytes",
+                "pdfBytes",
+                "pdfPages",
+                "pdfSingleBytes",
+                "requestBytes"
+            ],
+            "properties": {
+                "imageBytes": {
+                    "type": "integer"
+                },
+                "imageCount": {
+                    "type": "integer"
+                },
+                "imageSingleBytes": {
+                    "type": "integer"
+                },
+                "nativeBytes": {
+                    "type": "integer"
+                },
+                "nativeCount": {
+                    "type": "integer"
+                },
+                "nonPDFBytes": {
+                    "type": "integer"
+                },
+                "pdfBytes": {
+                    "type": "integer"
+                },
+                "pdfPages": {
+                    "type": "integer"
+                },
+                "pdfSingleBytes": {
+                    "type": "integer"
+                },
+                "requestBytes": {
+                    "type": "integer"
                 }
             }
         },
@@ -27733,10 +27827,6 @@ const docTemplate = `{
         },
         "NativeReadinessRequest": {
             "type": "object",
-            "required": [
-                "fileIDs",
-                "model"
-            ],
             "properties": {
                 "conversationID": {
                     "type": "string",
@@ -27744,8 +27834,6 @@ const docTemplate = `{
                 },
                 "fileIDs": {
                     "type": "array",
-                    "maxItems": 100,
-                    "minItems": 1,
                     "items": {
                         "type": "string"
                     }
@@ -27759,7 +27847,10 @@ const docTemplate = `{
         "NativeReadinessResponse": {
             "type": "object",
             "required": [
-                "files"
+                "files",
+                "issues",
+                "limits",
+                "messageFileCount"
             ],
             "properties": {
                 "files": {
@@ -27794,6 +27885,17 @@ const docTemplate = `{
                 "priceLabel": {
                     "type": "string"
                 },
+                },
+                "parentMessagePublicID": {
+                    "type": "string",
+                    "maxLength": 32
+                },
+                "selectedToolIDs": {
+                    "type": "array",
+                    "maxItems": 128,
+                    "items": {
+                        "type": "integer"
+                    }
                 "priceNanousd": {
                     "type": "integer"
                 },
@@ -27808,6 +27910,18 @@ const docTemplate = `{
         "NativeToolPricingResponse": {
             "type": "object",
             "required": [
+                },
+                "issues": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AttachmentReadinessIssueResponse"
+                    }
+                },
+                "limits": {
+                    "$ref": "#/definitions/AttachmentReadinessLimitsResponse"
+                },
+                "messageFileCount": {
+                    "type": "integer"
                 "billable",
                 "description",
                 "label",
@@ -31073,7 +31187,6 @@ const docTemplate = `{
                 },
                 "fileIDs": {
                     "type": "array",
-                    "maxItems": 20,
                     "items": {
                         "type": "string"
                     }
@@ -32051,8 +32164,7 @@ const docTemplate = `{
             ],
             "properties": {
                 "content": {
-                    "type": "string",
-                    "maxLength": 200000
+                    "type": "string"
                 },
                 "role": {
                     "type": "string",
@@ -32092,7 +32204,6 @@ const docTemplate = `{
                 },
                 "messages": {
                     "type": "array",
-                    "maxItems": 100,
                     "minItems": 1,
                     "items": {
                         "$ref": "#/definitions/TemporaryChatHistoryMessage"

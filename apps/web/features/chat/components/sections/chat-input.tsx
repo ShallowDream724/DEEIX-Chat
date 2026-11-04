@@ -5,6 +5,9 @@ import { AnimatePresence, motion } from "motion/react";
 import { useLocale, useTranslations } from "next-intl";
 import * as React from "react";
 import { toast } from "sonner";
+import { normalizeAppLocale } from "@/i18n/config";
+import { resolveInputLimitPresentation } from "@/i18n/resolve-error-message";
+import type { InputLimitReason } from "@/shared/lib/input-limit";
 
 import { AudioLines } from "@/components/animate-ui/icons/audio-lines";
 import { Crop } from "@/components/animate-ui/icons/crop";
@@ -124,6 +127,8 @@ type ChatInputProps = {
   inputHeight?: "compact" | "standard" | "loose";
   attachments: PendingAttachment[];
   nativeEligibleFileIDs?: ReadonlySet<string>;
+  inputIssues?: readonly InputLimitReason[];
+  processingAttachments?: boolean;
   uploadingAttachments: UploadingAttachment[];
   modelOptions: ChatModelOption[];
   billingDisplayCurrency: BillingDisplayCurrency;
@@ -223,6 +228,8 @@ function ChatInputComponent({
   inputHeight = "standard",
   attachments,
   nativeEligibleFileIDs,
+  inputIssues,
+  processingAttachments,
   uploadingAttachments,
   modelOptions,
   billingDisplayCurrency,
@@ -318,8 +325,15 @@ function ChatInputComponent({
   const [pastedTexts, setPastedTexts] = React.useState<ReadonlyMap<string, string>>(() => new Map());
   const [inputGroupHeight, setInputGroupHeight] = React.useState<number | null>(null);
   const hasDraftText = draft.trim().length > 0;
+  const inputIssueHintID = React.useId();
+  const inputIssueLocale = normalizeAppLocale(locale);
+  const primaryInputIssue = inputIssues?.[0];
+  const inputIssueTitle = primaryInputIssue
+    ? resolveInputLimitPresentation(primaryInputIssue, inputIssueLocale).title
+    : "";
   const hasSubmitContent = hasDraftText || attachments.length > 0;
-  const canSend = hasSubmitContent && !loading && !uploading;
+  const waitingForAttachments = Boolean(processingAttachments && !primaryInputIssue);
+  const canSend = hasSubmitContent && !loading && !uploading && !waitingForAttachments;
   const submitActionLabel = hasSubmitContent
     ? sending
       ? tComposer("queueMessage")
@@ -845,7 +859,7 @@ function ChatInputComponent({
             </div>
           ) : null}
 
-          {blockedNotice ? (
+          {blockedNotice && !primaryInputIssue ? (
             <div className="flex w-full items-center gap-1.5 px-5 pt-3 text-[11px] leading-4 text-destructive">
               <CircleAlert className="size-3.5 shrink-0" strokeWidth={1.7} />
               <span className="min-w-0">{blockedNotice}</span>
@@ -1034,7 +1048,19 @@ function ChatInputComponent({
             onSelectTab={selectMentionTab}
           />
 
+          {primaryInputIssue ? (
+            <div id={inputIssueHintID} role="status" className="flex items-center gap-1.5 px-3 pt-2 text-xs text-muted-foreground">
+              <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
+              <span>{tChat("composer.inputIssueHint", { title: inputIssueTitle, count: inputIssues?.length ?? 1 })}</span>
+            </div>
+          ) : waitingForAttachments ? (
+            <div id={inputIssueHintID} role="status" className="flex items-center gap-1.5 px-3 pt-2 text-xs text-muted-foreground">
+              <LoaderCircle aria-hidden="true" className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+              <span>{tChat("submit.processingAttachments")}</span>
+            </div>
+          ) : null}
           <InputGroupTextarea
+            aria-describedby={primaryInputIssue || waitingForAttachments ? inputIssueHintID : undefined}
             ref={textareaRef}
             value={draft}
             disabled={loading}
@@ -1305,11 +1331,12 @@ function ChatInputComponent({
                     variant="ghost"
                     size="icon-sm"
                     className="size-7 rounded-md text-muted-foreground hover:text-foreground sm:size-8"
-                    disabled={loading || uploading || (!sending && !hasSubmitContent && !speechInput.supported)}
+                    disabled={loading || uploading || (hasSubmitContent && waitingForAttachments) || (!sending && !hasSubmitContent && !speechInput.supported)}
                     onClick={hasSubmitContent ? onSendMessage : sending ? onStopMessage : speechInput.toggle}
                     onMouseEnter={() => setIsVoiceHovered(true)}
                     onMouseLeave={() => setIsVoiceHovered(false)}
                     aria-label={submitActionLabel}
+                    aria-describedby={hasSubmitContent && (primaryInputIssue || waitingForAttachments) ? inputIssueHintID : undefined}
                   >
                     {hasSubmitContent ? (
                       <Send

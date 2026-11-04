@@ -2,7 +2,6 @@ package conversation
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"strings"
@@ -12,7 +11,6 @@ import (
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	domainconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
-	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/inputlimits"
 )
 
 // TemporaryChatAttachment 是随临时会话请求传入、且不进入持久化文件链路的附件。
@@ -34,7 +32,7 @@ func (s *Service) prepareTemporaryAttachmentContext(
 	ctx context.Context,
 	input TemporaryChatInput,
 	messages []llm.Message,
-	budgets ...inputlimits.Limits,
+	policy nativeInputPolicy,
 ) (temporaryAttachmentContext, error) {
 	result := temporaryAttachmentContext{
 		messages: append([]llm.Message(nil), messages...),
@@ -47,12 +45,21 @@ func (s *Service) prepareTemporaryAttachmentContext(
 	}
 
 	cfg := s.cfg.Snapshot()
-	limits := firstImageInputLimits(budgets)
 	if len(input.Attachments) > TemporaryChatAttachmentLimit(cfg) {
 		return result, ErrTooManyMessageFiles
 	}
-	documentsByMessage := make(map[int][]turnDocument)
+	type stagedAttachment struct {
+		messageIndex int
+		file         *appupload.PreparedTemporaryFile
+		attachment   AttachmentInput
+	}
+	staged := make([]stagedAttachment, 0, len(input.Attachments))
+	candidates := make([]AttachmentInput, 0, len(input.Attachments))
+	var imageCount, historicalImageCount int64
 	for _, item := range input.Attachments {
+		if item.MessageIndex < 0 || item.MessageIndex >= len(messages) || messages[item.MessageIndex].Role != "user" {
+			return result, ErrInvalidFileReference
+		}
 		file, err := s.uploadSvc.PrepareTemporaryFile(ctx, appupload.TemporaryFileInput{
 			FileName:     item.FileName,
 			MimeType:     item.MimeType,
@@ -60,111 +67,169 @@ func (s *Service) prepareTemporaryAttachmentContext(
 			Reader:       item.Reader,
 		})
 		if err != nil {
+			return result, attachmentInputError(AttachmentInput{FileName: item.FileName, Current: item.MessageIndex == len(messages)-1}, err)
+		}
+		defer file.Cleanup()
+		att := AttachmentInput{
+			FileID: file.FileID, FileName: file.FileName, MimeType: file.MimeType, DetectedMIME: file.DetectedMIME,
+			FileCategory: file.FileCategory, FileSize: file.SizeBytes, StoragePath: file.AbsolutePath, SHA256: file.SHA256,
+			Current: item.MessageIndex == len(messages)-1, MessageRole: "user",
+			Kind: inferAttachmentKind(file.DetectedMIME),
+		}
+		if att.FileCategory == fileCategoryImage {
+			if policy.ImageUnsupported {
+				return result, attachmentInputError(att, ErrFileUnsupportedByModel)
+			}
+			imageCount++
+			if !att.Current {
+				historicalImageCount++
+			}
+		}
+		if isMediaAttachment(att) && !policy.accepts(att) {
+			return result, attachmentInputError(att, ErrFileUnsupportedByModel)
+		}
+		if policy.accepts(att) && !isNativeInputCandidate(att) {
+			return result, attachmentInputErrorWithReason(att, ErrFileProcessingNotReady, attachmentInputReadFailed)
+		}
+		staged = append(staged, stagedAttachment{messageIndex: item.MessageIndex, file: file, attachment: att})
+		candidates = append(candidates, att)
+	}
+	limits := policy.InputLimits
+	if limits.ImageCount > 0 && imageCount > int64(limits.ImageCount) {
+		return result, attachmentInputError(AttachmentInput{Current: historicalImageCount <= int64(limits.ImageCount)},
+			llm.NewInputLimitError("imageCount", imageCount, int64(limits.ImageCount)))
+	}
+	_, rejected := selectNativeInputsWithRejections(candidates, policy.withoutPDFPageBudget())
+	if err := validateNativeSelection(candidates, policy, rejected); err != nil {
+		return result, err
+	}
+	if policy.PDF && policy.budget().PDFPages > 0 {
+		if s.extractSvc != nil {
+			for i, att := range candidates {
+				if nativeInputKindOf(att) == nativeInputPDF {
+					pages, _ := s.extractSvc.ProbeTemporaryPDFPageCount(ctx, staged[i].file.AbsolutePath)
+					candidates[i].PageCount = pages
+					staged[i].attachment.PageCount = pages
+				}
+			}
+		}
+		_, rejected := selectNativeInputsWithRejections(candidates, policy)
+		if err := validateNativeSelection(candidates, policy, rejected); err != nil {
 			return result, err
 		}
-		processErr := func() error {
-			defer file.Cleanup()
-			switch file.FileCategory {
-			case "image":
-				reader, err := os.Open(file.AbsolutePath)
-				if err != nil {
-					return fmt.Errorf("%w: read temporary image", ErrFileNotFound)
-				}
-				data, readErr := io.ReadAll(io.LimitReader(reader, file.SizeBytes+1))
-				closeErr := reader.Close()
-				if readErr != nil || closeErr != nil {
-					return fmt.Errorf("%w: read temporary image", ErrFileNotFound)
-				}
-				if file.SizeBytes <= 0 || int64(len(data)) != file.SizeBytes {
-					return fmt.Errorf("%w: temporary image source size changed", ErrInvalidFileReference)
-				}
-				resized, mimeType := resizeImageIfNeeded(data, resolveImageMimeType(file.DetectedMIME), cfg.ImageMaxDimension)
-				result.messages[item.MessageIndex] = addUserTurnParts(result.messages[item.MessageIndex], llm.ContentPart{
-					Kind:          llm.ContentPartImage,
-					MimeType:      mimeType,
-					Data:          resized,
-					FileName:      file.FileName,
-					SourceFileIDs: []string{temporaryAttachmentContextID(file.SHA256)},
-				})
-				if err := validateConversationImageBudget(result.messages, limits); err != nil {
-					return err
-				}
-				result.moderationImages = append(result.moderationImages, appcm.OutputImageSource{
-					FileID:   temporaryAttachmentContextID(file.SHA256),
-					Data:     resized,
-					MimeType: mimeType,
-					SHA256:   file.SHA256,
-				})
-			case "pdf", "word", "presentation", "excel", "text":
-				if s.extractSvc == nil {
-					return ErrInvalidFileReference
-				}
-				extracted, err := s.extractSvc.ExtractTemporaryFile(ctx, extraction.ExtractInput{
-					File: domainconversation.FileObject{
-						FileID:       file.FileID,
-						FileName:     file.FileName,
-						MimeType:     file.MimeType,
-						DetectedMIME: file.DetectedMIME,
-						FileCategory: file.FileCategory,
-						SizeBytes:    file.SizeBytes,
-						SHA256:       file.SHA256,
-						StoragePath:  file.AbsolutePath,
-					},
-					PDFMaxPages:           cfg.FileFullContextPDFMaxPages,
-					OCREngine:             cfg.ExtractOCREngine,
-					ImageOCREnabled:       false,
-					PDFOCRFallbackEnabled: cfg.ExtractPDFOCRFallbackEnabled,
-				})
-				if err != nil || strings.TrimSpace(extracted.Text) == "" {
-					return fmt.Errorf("%w: temporary attachment extraction failed", ErrFileProcessingNotReady)
-				}
-				attachment := AttachmentInput{
-					FileID:          temporaryAttachmentContextID(file.SHA256),
-					Kind:            "file",
-					FileName:        file.FileName,
-					MimeType:        file.MimeType,
-					DetectedMIME:    file.DetectedMIME,
-					FileCategory:    file.FileCategory,
-					FileSize:        file.SizeBytes,
-					SHA256:          file.SHA256,
-					PageCount:       extracted.PageCount,
-					ExtractedText:   extracted.Text,
-					Current:         item.MessageIndex == len(input.Messages)-1,
-					MessageRole:     "user",
-					ContextMode:     fileContextModeFull,
-					ProcessingReady: true,
-					ExtractStatus:   "success",
-				}
-				if !canUseAttachmentFullContext(attachment, cfg) {
-					return ErrFileTooLargeForFullContext
-				}
-				// 与持久化会话一致：文件随所属轮次提供，而不是集中放在提示词开头。
-				documentsByMessage[item.MessageIndex] = append(documentsByMessage[item.MessageIndex], turnDocument{
-					Attachment: attachment,
-					Access:     turnDocumentFull,
-				})
-			default:
-				return ErrInvalidFileReference
+	}
+
+	documentsByMessage := make(map[int][]turnDocument)
+	imagesByMessage := make(map[int][]llm.ContentPart)
+	var historicalImageBytes int64
+	for _, item := range staged {
+		att := item.attachment
+		// Stable content identity is used in the prompt, while the staging IDs
+		// above ensure each occurrence consumes the request budget.
+		att.FileID = temporaryAttachmentContextID(att.SHA256)
+		switch {
+		case att.FileCategory == fileCategoryImage:
+			data, err := readTemporaryAttachment(item.file)
+			if err != nil {
+				return result, attachmentInputErrorWithReason(att, err, attachmentInputReadFailed)
 			}
-			return nil
-		}()
-		if processErr != nil {
-			return result, processErr
+			resized, mimeType := resizeImageIfNeeded(data, resolveImageMimeType(att.DetectedMIME), cfg.ImageMaxDimension)
+			if limits.ImageSingleBytes > 0 && int64(len(resized)) > limits.ImageSingleBytes {
+				return result, attachmentInputError(att, llm.NewInputLimitError("imageSingleBytes", int64(len(resized)), limits.ImageSingleBytes))
+			}
+			if !att.Current {
+				historicalImageBytes += int64(len(resized))
+			}
+			imagesByMessage[item.messageIndex] = append(imagesByMessage[item.messageIndex], llm.ContentPart{
+				Kind: llm.ContentPartImage, MimeType: mimeType, Data: resized, FileName: att.FileName, SourceFileIDs: []string{att.FileID},
+			})
+			result.moderationImages = append(result.moderationImages, appcm.OutputImageSource{
+				FileID: att.FileID, Data: resized, MimeType: mimeType, SHA256: att.SHA256,
+			})
+		case policy.accepts(att):
+			data, err := readTemporaryAttachment(item.file)
+			if err != nil {
+				return result, attachmentInputErrorWithReason(att, err, attachmentInputReadFailed)
+			}
+			att.ContextMode = fileContextModeNativeDocument
+			documentsByMessage[item.messageIndex] = append(documentsByMessage[item.messageIndex], turnDocument{
+				Attachment: att, Access: turnDocumentNative, Native: newNativeInputPart(att, data),
+			})
+		default:
+			switch att.FileCategory {
+			case "pdf", "word", "presentation", "excel", "text":
+			default:
+				return result, attachmentInputError(att, ErrFileUnsupportedByModel)
+			}
+			if s.extractSvc == nil {
+				return result, attachmentInputError(att, ErrFileProcessingNotReady)
+			}
+			extracted, err := s.extractSvc.ExtractTemporaryFile(ctx, extraction.ExtractInput{
+				File: domainconversation.FileObject{
+					FileID: att.FileID, FileName: att.FileName, MimeType: att.MimeType, DetectedMIME: att.DetectedMIME,
+					FileCategory: att.FileCategory, SizeBytes: att.FileSize, SHA256: att.SHA256, StoragePath: att.StoragePath,
+				},
+				OCREngine:             cfg.ExtractOCREngine,
+				PDFOCRFallbackEnabled: cfg.ExtractPDFOCRFallbackEnabled,
+			})
+			if err != nil || strings.TrimSpace(extracted.Text) == "" {
+				if ctx.Err() != nil {
+					return result, ctx.Err()
+				}
+				return result, attachmentInputErrorWithReason(att, ErrFileProcessingNotReady, attachmentInputParseFailed)
+			}
+			att.PageCount, att.ExtractedText = extracted.PageCount, extracted.Text
+			if err := checkAttachmentFullContext(att, cfg); err != nil {
+				return result, attachmentInputError(att, err)
+			}
+			att.ContextMode, att.ProcessingReady, att.ExtractStatus = fileContextModeFull, true, "success"
+			documentsByMessage[item.messageIndex] = append(documentsByMessage[item.messageIndex], turnDocument{
+				Attachment: att, Access: turnDocumentFull,
+			})
 		}
 	}
 	for index, message := range result.messages {
 		documents := documentsByMessage[index]
-		if len(documents) == 0 {
-			continue
+		var parts []llm.ContentPart
+		if len(documents) != 0 {
+			parts = append(parts, turnDocumentsPart(documents))
+			for _, document := range documents {
+				if document.Access == turnDocumentNative {
+					parts = append(parts, document.Native)
+					result.documents.NativeAttachments = append(result.documents.NativeAttachments, document.Attachment)
+				} else {
+					result.documents.FullAttachments = append(result.documents.FullAttachments, document.Attachment)
+				}
+			}
+			for _, part := range parts {
+				result.documents.TokenEstimate += estimateContentPartTokens(part)
+			}
 		}
-		documentPart := turnDocumentsPart(documents)
-		result.messages[index] = addUserTurnParts(message, documentPart)
-		result.documents.TokenEstimate += estimateContentPartTokens(documentPart)
-		for _, document := range documents {
-			result.documents.FullAttachments = append(result.documents.FullAttachments, document.Attachment)
+		parts = append(parts, imagesByMessage[index]...)
+		if len(parts) > 0 {
+			result.messages[index] = addUserTurnParts(message, parts...)
 		}
 	}
+	if err := validateConversationImageBudget(result.messages, limits); err != nil {
+		return result, attachmentInputError(AttachmentInput{Current: historicalImageBytes <= limits.ImageBytes}, err)
+	}
 	return result, nil
+}
+
+func readTemporaryAttachment(file *appupload.PreparedTemporaryFile) ([]byte, error) {
+	reader, err := os.Open(file.AbsolutePath)
+	if err != nil {
+		return nil, ErrFileNotFound
+	}
+	defer reader.Close() //nolint:errcheck
+	data, err := io.ReadAll(io.LimitReader(reader, file.SizeBytes+1))
+	if err != nil {
+		return nil, ErrFileNotFound
+	}
+	if file.SizeBytes <= 0 || int64(len(data)) != file.SizeBytes {
+		return nil, ErrInvalidFileReference
+	}
+	return data, nil
 }
 
 func temporaryAttachmentContextID(sha string) string {
