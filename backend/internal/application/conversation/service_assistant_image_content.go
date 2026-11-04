@@ -124,7 +124,7 @@ func (s *Service) saveAssistantImages(ctx context.Context, input assistantImageS
 			MimeType:     image.MIMEType,
 			DeclaredSize: int64(len(image.Bytes)),
 			Reader:       bytes.NewReader(image.Bytes),
-			MaxBytes:     maxGeneratedImageBytes,
+			MaxBytes:     s.generatedImageMaxBytes(),
 		})
 		if uploadErr != nil {
 			return nil, uploadErr

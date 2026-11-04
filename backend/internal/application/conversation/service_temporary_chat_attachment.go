@@ -12,10 +12,8 @@ import (
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	domainconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/inputlimits"
 )
-
-// TemporaryChatMaxAttachments 限制单次临时请求携带的历史附件总数。
-const TemporaryChatMaxAttachments = 20
 
 // TemporaryChatAttachment 是随临时会话请求传入、且不进入持久化文件链路的附件。
 type TemporaryChatAttachment struct {
@@ -36,6 +34,7 @@ func (s *Service) prepareTemporaryAttachmentContext(
 	ctx context.Context,
 	input TemporaryChatInput,
 	messages []llm.Message,
+	budgets ...inputlimits.Limits,
 ) (temporaryAttachmentContext, error) {
 	result := temporaryAttachmentContext{
 		messages: append([]llm.Message(nil), messages...),
@@ -48,8 +47,10 @@ func (s *Service) prepareTemporaryAttachmentContext(
 	}
 
 	cfg := s.cfg.Snapshot()
-	imageCount := 0
-	imageBytes := 0
+	limits := firstImageInputLimits(budgets)
+	if len(input.Attachments) > TemporaryChatAttachmentLimit(cfg) {
+		return result, ErrTooManyMessageFiles
+	}
 	documentsByMessage := make(map[int][]turnDocument)
 	for _, item := range input.Attachments {
 		file, err := s.uploadSvc.PrepareTemporaryFile(ctx, appupload.TemporaryFileInput{
@@ -65,28 +66,29 @@ func (s *Service) prepareTemporaryAttachmentContext(
 			defer file.Cleanup()
 			switch file.FileCategory {
 			case "image":
-				imageCount++
-				if imageCount > maxConversationImageContextCount {
-					return ErrTooManyMessageFiles
-				}
-				data, err := os.ReadFile(file.AbsolutePath)
+				reader, err := os.Open(file.AbsolutePath)
 				if err != nil {
 					return fmt.Errorf("%w: read temporary image", ErrFileNotFound)
 				}
-				if len(data) > maxConversationImageSourceBytes {
-					return ErrFileTooLarge
+				data, readErr := io.ReadAll(io.LimitReader(reader, file.SizeBytes+1))
+				closeErr := reader.Close()
+				if readErr != nil || closeErr != nil {
+					return fmt.Errorf("%w: read temporary image", ErrFileNotFound)
+				}
+				if file.SizeBytes <= 0 || int64(len(data)) != file.SizeBytes {
+					return fmt.Errorf("%w: temporary image source size changed", ErrInvalidFileReference)
 				}
 				resized, mimeType := resizeImageIfNeeded(data, resolveImageMimeType(file.DetectedMIME), cfg.ImageMaxDimension)
-				imageBytes += len(resized)
-				if imageBytes > maxConversationImageContextBytes {
-					return ErrFileTooLarge
-				}
 				result.messages[item.MessageIndex] = addUserTurnParts(result.messages[item.MessageIndex], llm.ContentPart{
-					Kind:     llm.ContentPartImage,
-					MimeType: mimeType,
-					Data:     resized,
-					FileName: file.FileName,
+					Kind:          llm.ContentPartImage,
+					MimeType:      mimeType,
+					Data:          resized,
+					FileName:      file.FileName,
+					SourceFileIDs: []string{temporaryAttachmentContextID(file.SHA256)},
 				})
+				if err := validateConversationImageBudget(result.messages, limits); err != nil {
+					return err
+				}
 				result.moderationImages = append(result.moderationImages, appcm.OutputImageSource{
 					FileID:   temporaryAttachmentContextID(file.SHA256),
 					Data:     resized,

@@ -160,12 +160,24 @@ func nativeProviderToolsFromOption(protocolKey string, raw any, capabilitiesJSON
 		return nil
 	}
 	allowedTools := nativeToolCapabilitiesFromConfig(capabilitiesJSON, protocolKey)
+	current := make([]nativeToolCapability, 0, len(allowedTools))
+	for _, capability := range allowedTools {
+		if capability.Protocol == protocolKey {
+			current = append(current, capability)
+		}
+	}
+	if len(current) > 0 {
+		allowedTools = current
+	}
 	if len(allowedTools) == 0 {
 		return nil
 	}
 	seen := make(map[string]struct{}, len(rawTools))
 	tools := make([]map[string]any, 0, len(rawTools))
 	for _, rawTool := range rawTools {
+		if _, ok := authorizedNativeToolKey(protocolKey, rawTool, allowedTools); !ok {
+			continue
+		}
 		tool, identity, ok := nativeProviderToolPayload(protocolKey, rawTool, allowedTools)
 		if !ok {
 			continue
@@ -177,6 +189,49 @@ func nativeProviderToolsFromOption(protocolKey string, raw any, capabilitiesJSON
 		tools = append(tools, tool)
 	}
 	return tools
+}
+
+func authorizedNativeToolKey(protocol string, payload map[string]any, capabilities []nativeToolCapability) (string, bool) {
+	key := ""
+	for _, capability := range capabilities {
+		if !nativeToolCapabilityMatchesRawTool(capability, payload) {
+			continue
+		}
+		if capability.Key == "" {
+			return "", false
+		}
+		if key != "" && key != capability.Key {
+			return "", false
+		}
+		key = capability.Key
+	}
+	return key, key != ""
+}
+
+// Resolve only the declarations that survived the model policy. Same-name
+// tools with multiple provider identities are rejected before dispatch.
+func authorizedNativeToolKeys(protocol string, options map[string]any, capabilitiesJSON string) map[string]string {
+	protocol = modelOptionPolicyProtocolKey(protocol)
+	capabilities := nativeToolCapabilitiesFromConfig(capabilitiesJSON, protocol)
+	keys := make(map[string]string)
+	for _, payload := range providerToolOptionPayloads(options["tools"]) {
+		key, ok := authorizedNativeToolKey(protocol, payload, capabilities)
+		if !ok {
+			continue
+		}
+		for _, capability := range capabilities {
+			if capability.Key == key {
+				keys[capability.Type] = key
+				if key == "deepseek.tool_search" {
+					keys["tool_search"] = key
+				}
+				if key == "deepseek.tool_fetch" {
+					keys["tool_fetch"] = key
+				}
+			}
+		}
+	}
+	return keys
 }
 
 func nativeProviderToolPayload(protocolKey string, rawTool map[string]any, allowedTools []nativeToolCapability) (map[string]any, string, bool) {
@@ -424,7 +479,9 @@ func nativeToolCapabilityMatchesRawTool(capability nativeToolCapability, rawTool
 		return rawType == payloadType
 	}
 	if capability.Type != "" {
-		return false
+		if _, ok := rawTool[capability.Type]; ok {
+			return true
+		}
 	}
 	for key := range capability.Payload {
 		if key == "type" {

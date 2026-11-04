@@ -22,8 +22,6 @@ import {
 } from "@/features/chat/utils/chat-runtime";
 import {
   streamTemporaryChatMessage,
-  TEMPORARY_CHAT_MAX_ATTACHMENTS,
-  TEMPORARY_CHAT_MAX_IMAGE_ATTACHMENTS,
 } from "@/shared/api/conversation";
 import type { TemporaryChatRequestAttachment } from "@/shared/api/conversation";
 import type {
@@ -172,7 +170,6 @@ function prepareTemporaryRequestHistory(fullHistory: TemporaryHistoryMessage[]):
   const historyTruncated = fullHistory.length > 99;
   const history = historyTruncated ? fullHistory.slice(-99) : fullHistory;
   const selected: Array<TemporaryChatRequestAttachment & { fileID: string }> = [];
-  let imageCount = 0;
 
   for (let messageIndex = history.length - 1; messageIndex >= 0; messageIndex -= 1) {
     const message = history[messageIndex];
@@ -182,16 +179,10 @@ function prepareTemporaryRequestHistory(fullHistory: TemporaryHistoryMessage[]):
     const messageAttachments = message.attachments ?? [];
     for (let index = messageAttachments.length - 1; index >= 0; index -= 1) {
       const attachment = messageAttachments[index];
-      if (!attachment.localFile || selected.length >= TEMPORARY_CHAT_MAX_ATTACHMENTS) {
+      if (!attachment.localFile) {
         continue;
       }
       const image = isImageAttachment(attachment);
-      if (image && imageCount >= TEMPORARY_CHAT_MAX_IMAGE_ATTACHMENTS) {
-        continue;
-      }
-      if (image) {
-        imageCount += 1;
-      }
       selected.push({
         file: attachment.localFile,
         fileID: attachment.fileID,

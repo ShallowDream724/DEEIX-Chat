@@ -14,6 +14,8 @@ const (
 	ContextArtifactNativeTool      ContextArtifactKind = "native_tool_result"
 	ContextArtifactImageAnalysis   ContextArtifactKind = "image_analysis"
 	ContextArtifactSummary         ContextArtifactKind = "conversation_summary"
+	// InputObservation is an entire upstream input measurement, excluded from evidence recall.
+	ContextArtifactInputObservation ContextArtifactKind = "input_observation"
 )
 
 // ContextArtifact 保存一次对话请求中被选入上下文规划的证据引用。

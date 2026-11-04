@@ -55,6 +55,12 @@ const ACTIVE_UPLOAD_MIMES = new Set([
   "image/svg+xml",
 ]);
 
+const MEDIA_EXTENSION_MIMES: Record<string, string> = {
+  mp4: "video/mp4", webm: "video/webm", mov: "video/quicktime", mpeg: "video/mpeg", mpg: "video/mpeg",
+  mp3: "audio/mpeg", wav: "audio/wav", m4a: "audio/mp4", aac: "audio/aac", ogg: "audio/ogg", oga: "audio/ogg",
+  flac: "audio/flac", aif: "audio/aiff", aiff: "audio/aiff",
+};
+
 function resolveFileExtension(fileName: string): string {
   const normalizedName = fileName.trim().toLowerCase();
   return normalizedName.includes(".") ? normalizedName.split(".").pop() || "" : "";
@@ -74,8 +80,12 @@ function normalizeUploadMimeForPolicy(file: File): string {
     return "text/plain";
   }
 
-  if (browserMime.startsWith("image/")) {
+  if (browserMime.startsWith("image/") || browserMime.startsWith("audio/") || browserMime.startsWith("video/") || browserMime === "application/pdf") {
     return browserMime;
+  }
+
+  if (MEDIA_EXTENSION_MIMES[ext]) {
+    return MEDIA_EXTENSION_MIMES[ext];
   }
 
   switch (ext) {
@@ -125,7 +135,7 @@ export function isAllowedUploadMime(file: File, policy: ChatFilePolicyDTO | null
 }
 
 export function inferUploadCategory(file: File): UploadCategory {
-  const mime = normalizeMimeValue(file.type);
+  const mime = normalizeUploadMimeForPolicy(file);
   const ext = resolveFileExtension(file.name);
 
   if (ACTIVE_FILE_EXTENSIONS.has(ext) || ACTIVE_UPLOAD_MIMES.has(mime)) {
@@ -172,9 +182,11 @@ export function resolveEffectiveUploadLimit(policy: ChatFilePolicyDTO | null, ca
   if (category === "image") {
     return policy.effectiveImageMaxBytes || policy.imageMaxBytes || policy.maxUploadFileBytes;
   }
-  // Audio and video are not extracted, so only the global upload limit applies (same as the backend).
-  if (category === "audio" || category === "video") {
-    return policy.maxUploadFileBytes;
+  if (category === "audio") {
+    return policy.effectiveAudioMaxBytes || policy.audioMaxBytes || policy.maxUploadFileBytes;
+  }
+  if (category === "video") {
+    return policy.effectiveVideoMaxBytes || policy.videoMaxBytes || policy.maxUploadFileBytes;
   }
 
   return policy.effectiveDocMaxBytes || policy.docMaxBytes || policy.maxUploadFileBytes;

@@ -200,10 +200,17 @@ func responsesDefaultIncludeValues(adapter string, stream bool, providerTools []
 }
 
 func openAIResponsesDefaultIncludeValues(tools []map[string]any) []string {
-	if !responsesToolsIncludeType(tools, "web_search") {
-		return nil
+	var includes []string
+	if responsesToolsIncludeType(tools, "web_search") || responsesToolsIncludeType(tools, "web_search_preview") {
+		includes = append(includes, "web_search_call.action.sources")
 	}
-	return []string{"web_search_call.action.sources"}
+	if responsesToolsIncludeType(tools, "code_interpreter") {
+		includes = append(includes, "code_interpreter_call.outputs")
+	}
+	if responsesToolsIncludeType(tools, "file_search") {
+		includes = append(includes, "file_search_call.results")
+	}
+	return includes
 }
 
 func responsesToolsIncludeType(tools []map[string]any, toolType string) bool {
@@ -352,7 +359,7 @@ func applyResponsesStreamEvent(
 	}
 
 	if call, ok := parseResponsesServerToolStatusEvent(eventType, parsed); ok {
-		appendUniqueToolCall(&result.ServerToolCalls, call)
+		call = appendResponsesServerToolCall(result, call)
 		if onEvent != nil {
 			return onEvent(portllm.GenerateStreamEvent{
 				ServerToolCall: &call,
@@ -446,8 +453,12 @@ func applyResponsesStreamEvent(
 		if result.Reasoning == nil || !reasoningOutputContains(result.Reasoning, reasoning.Text) {
 			mergeReasoningDeltaOutput(&result.Reasoning, reasoning)
 		}
-	case "response.completed":
+	case "response.completed", "response.incomplete", "response.failed":
 		output := buildGenerateOutputFromParsedForAdapter(portllm.EndpointResponses, adapter, asMap(parsed["response"]), false)
+		// Preserve provider-confirmed counters before a cancellation callback can interrupt delivery.
+		if output.ServerSideToolUsage != nil {
+			result.ServerSideToolUsage = cloneInt64Map(output.ServerSideToolUsage)
+		}
 		if result.Reasoning == nil && output.Reasoning != nil && onEvent != nil {
 			if text := textutil.FirstNonEmpty(output.Reasoning.Text, output.Reasoning.Summary); text != "" {
 				if err := onEvent(portllm.GenerateStreamEvent{
@@ -466,13 +477,16 @@ func applyResponsesStreamEvent(
 			}
 		}
 		mergeGenerateOutput(result, output)
+		if eventType == "response.failed" {
+			return parseResponsesStreamErrorEvent(parsed, rawBody)
+		}
 		if output.Usage != (portllm.Usage{}) && onEvent != nil {
 			return onEvent(portllm.GenerateStreamEvent{
 				Usage:      output.Usage,
 				ResponseID: result.ResponseID,
 			})
 		}
-	case "response.failed", "response.error":
+	case "response.error":
 		return parseResponsesStreamErrorEvent(parsed, rawBody)
 	}
 
@@ -504,7 +518,7 @@ func parseResponsesServerToolStatusEvent(eventType string, parsed map[string]any
 	for _, key := range responseServerToolIdentifierKeys() {
 		mergeMapValueIfEmpty(item, key, parsed[key])
 	}
-	for _, key := range []string{"action", "arguments", "input", "query", "output", "outputs", "results", "search_results", "sources", "citations", "data", "items", "content", "response", "result", "error"} {
+	for _, key := range []string{"action", "arguments", "input", "query", "code", "container_id", "output", "outputs", "results", "search_results", "sources", "citations", "data", "items", "content", "response", "result", "error"} {
 		mergeMapValueIfEmpty(item, key, parsed[key])
 	}
 	return parseResponseServerToolCall(item), true
@@ -533,7 +547,7 @@ func mergeResponsesStreamOutputItem(
 		return nil
 	}
 	call := parseResponseServerToolCall(item)
-	appendUniqueToolCall(&result.ServerToolCalls, call)
+	call = appendResponsesServerToolCall(result, call)
 	result.Citations = appendUniqueStrings(result.Citations, parseResponseCitations(item)...)
 	if onEvent == nil {
 		return nil
@@ -626,7 +640,7 @@ func mergeResponsesTopLevelToolCalls(result *portllm.GenerateOutput, raw any) {
 			continue
 		}
 		if isResponsesServerToolCallItem(item) {
-			appendUniqueToolCall(&result.ServerToolCalls, parseResponseServerToolCall(item))
+			appendResponsesServerToolCall(result, parseResponseServerToolCall(item))
 			result.Citations = appendUniqueStrings(result.Citations, parseResponseCitations(item)...)
 			continue
 		}
@@ -799,7 +813,7 @@ func mergeResponsesOutputItem(result *portllm.GenerateOutput, item map[string]an
 		if image, ok := parseResponsesGeneratedImage(item); ok {
 			result.GeneratedImages = appendUniqueGeneratedImage(result.GeneratedImages, image)
 		}
-		appendUniqueToolCall(&result.ServerToolCalls, parseResponseServerToolCall(item))
+		appendResponsesServerToolCall(result, parseResponseServerToolCall(item))
 		result.Citations = appendUniqueStrings(result.Citations, parseResponseCitations(item)...)
 	case isResponsesClientToolCallType(itemType):
 		appendUniqueToolCall(&result.ToolCalls, parseResponseToolCall(item))
@@ -865,6 +879,9 @@ func parseResponseServerToolCall(item map[string]any) portllm.ToolCall {
 		normalizeJSONString(item["input"]),
 		normalizeJSONString(item["query"]),
 	)
+	if code, ok := item["code"]; ok {
+		inputJSON = normalizeJSONString(map[string]any{"code": code, "container_id": item["container_id"]})
+	}
 	outputJSON := textutil.FirstNonEmpty(
 		normalizeJSONString(item["output"]),
 		normalizeJSONString(item["outputs"]),
@@ -884,14 +901,35 @@ func parseResponseServerToolCall(item map[string]any) portllm.ToolCall {
 	}
 	errorJSON := normalizeJSONString(item["error"])
 	return portllm.ToolCall{
-		ToolCallID:    toolCallID,
-		ToolType:      itemType,
-		ToolName:      toolName,
-		ArgumentsJSON: inputJSON,
-		Status:        status,
-		OutputJSON:    outputJSON,
-		ErrorJSON:     errorJSON,
+		ToolCallID:     toolCallID,
+		ProviderItemID: textutil.FirstNonEmpty(getString(item["item_id"]), getString(item["id"])),
+		ToolType:       itemType,
+		ToolName:       toolName,
+		ArgumentsJSON:  inputJSON,
+		Status:         status,
+		OutputJSON:     outputJSON,
+		ErrorJSON:      errorJSON,
 	}
+}
+
+// A Responses item ID identifies stream updates; call_id pairs independent call
+// and output items. Preserve both so status-only events cannot split a shell run.
+func appendResponsesServerToolCall(result *portllm.GenerateOutput, incoming portllm.ToolCall) portllm.ToolCall {
+	for index, existing := range result.ServerToolCalls {
+		if shouldMergeToolCall(existing, incoming) || (incoming.ProviderItemID != "" && existing.ProviderItemID == incoming.ProviderItemID) {
+			if existing.ToolCallID != "" && incoming.ToolCallID == "" {
+				incoming.ToolCallID = existing.ToolCallID
+			}
+			merged := mergeToolCall(existing, incoming)
+			if merged.ProviderItemID == "" {
+				merged.ProviderItemID = incoming.ProviderItemID
+			}
+			result.ServerToolCalls[index] = merged
+			return merged
+		}
+	}
+	result.ServerToolCalls = append(result.ServerToolCalls, incoming)
+	return incoming
 }
 
 // parseResponsesPartialImage 解析 Responses 图片生成过程中的预览帧。
@@ -976,6 +1014,9 @@ func responsesImageGenerationToolOutputJSON(item map[string]any) string {
 }
 
 func responseServerToolCallID(item map[string]any, itemType string) string {
+	if itemType == "shell_call" || itemType == "shell_call_output" {
+		return textutil.FirstNonEmpty(getString(item["call_id"]), getString(item["item_id"]), getString(item["id"]))
+	}
 	for _, extension := range allResponsesProtocolExtensions() {
 		if extension.serverToolCallID == nil {
 			continue
@@ -1041,6 +1082,10 @@ func isResponsesServerToolCallType(itemType string) bool {
 	switch strings.TrimSpace(itemType) {
 	case "web_search_call",
 		"web_search_call_output",
+		"web_fetch_call",
+		"web_fetch_call_output",
+		"tool_search_call",
+		"tool_fetch_call",
 		"file_search_call",
 		"file_search_call_output",
 		"code_interpreter_call",
@@ -1136,6 +1181,9 @@ func parseServerSideToolUsage(parsed map[string]any) map[string]int64 {
 		return nil
 	}
 	raw := asMap(usage["server_side_tool_usage"])
+	if len(raw) == 0 {
+		raw = asMap(usage["server_tool_use"])
+	}
 	if len(raw) == 0 {
 		raw = asMap(usage["tool_usage"])
 	}

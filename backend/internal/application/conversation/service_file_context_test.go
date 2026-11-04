@@ -20,6 +20,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/objectstorage"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/inputlimits"
 )
 
 func TestFileContextPlanRAGObjectsPreservesFileRevision(t *testing.T) {
@@ -142,21 +143,21 @@ func TestResolveKnowledgeBaseRAGFilesSkipsWhenFeatureDisabled(t *testing.T) {
 	}
 }
 
-func TestConversationImageRefsPreferRecentImagesWithinBudget(t *testing.T) {
-	messages := make([]model.Message, 0, maxConversationImageContextCount+1)
-	attachments := make([]AttachmentInput, 0, maxConversationImageContextCount+1)
-	for index := 0; index <= maxConversationImageContextCount; index++ {
+func TestConversationImageRefsKeepsAllBranchImages(t *testing.T) {
+	messages := make([]model.Message, 0, 12)
+	attachments := make([]AttachmentInput, 0, 12)
+	for index := 0; index < 12; index++ {
 		fileID := fmt.Sprintf("image_%d", index)
 		messages = append(messages, model.Message{Role: "user", Attachments: fmt.Sprintf(`[{"file_id":%q,"kind":"image","mime_type":"image/png"}]`, fileID)})
 		attachments = append(attachments, AttachmentInput{FileID: fileID, Kind: "image", MimeType: "image/png", ContextMode: fileContextModeDirectImage})
 	}
 
-	refs := conversationImageRefs(messages, attachments, maxConversationImageContextCount)
-	if len(refs) != maxConversationImageContextCount {
-		t.Fatalf("expected %d recent images, got %#v", maxConversationImageContextCount, refs)
+	refs := conversationImageRefs(messages, attachments)
+	if len(refs) != 12 {
+		t.Fatalf("expected all 12 images, got %#v", refs)
 	}
-	if refs[0].fileID != "image_1" || refs[len(refs)-1].fileID != "image_10" {
-		t.Fatalf("expected oldest image to be trimmed, got %#v", refs)
+	if refs[0].fileID != "image_0" || refs[len(refs)-1].fileID != "image_11" {
+		t.Fatalf("expected image order to be preserved, got %#v", refs)
 	}
 }
 
@@ -186,7 +187,8 @@ func TestInjectConversationImageContextKeepsOwnershipAndUsesCache(t *testing.T) 
 	service := &Service{storeProvider: provider, imageContextCache: defaultPreparedConversationImageCache()}
 	history := historyMessagesFromDomain(domainMessages, historyMessageOptions{})
 
-	got, err := service.injectConversationImageContext(t.Context(), history, domainMessages, attachments, config.Config{ImageMaxDimension: 1024})
+	cfg := config.Config{ImageMaxDimension: 1024, PreparedImageCacheMaxEntries: 64, PreparedImageCacheMaxBytes: 64 * 1024 * 1024}
+	got, err := service.injectConversationImageContext(t.Context(), history, domainMessages, attachments, cfg)
 	if err != nil {
 		t.Fatalf("inject historical images: %v", err)
 	}
@@ -197,7 +199,7 @@ func TestInjectConversationImageContextKeepsOwnershipAndUsesCache(t *testing.T) 
 	if len(got[2].Parts) != 2 || string(got[2].Parts[0].Data) != "image-two" || got[2].Parts[1].Text != "第二张和第一张有什么不同" {
 		t.Fatalf("expected second image before the second question, got %#v", got[2])
 	}
-	if _, err = service.injectConversationImageContext(t.Context(), history, domainMessages, attachments, config.Config{ImageMaxDimension: 1024}); err != nil {
+	if _, err = service.injectConversationImageContext(t.Context(), history, domainMessages, attachments, cfg); err != nil {
 		t.Fatalf("inject cached historical images: %v", err)
 	}
 	if provider.opens != 1 {
@@ -235,9 +237,14 @@ func TestInjectConversationImageContextRejectsMissingAndOversizedContext(t *test
 		{Role: "assistant"},
 		{Role: "user", Attachments: `[{"file_id":"two","kind":"image","mime_type":"image/png"}]`},
 	}
-	_, err = service.injectConversationImageContext(t.Context(), historyMessagesFromDomain(domainMessages, historyMessageOptions{}), domainMessages, attachments, config.Config{ImageMaxDimension: 1024})
-	if !errors.Is(err, ErrFileTooLarge) {
-		t.Fatalf("expected aggregate image context budget failure, got %v", err)
+	cfg := config.Config{ImageMaxDimension: 1024, PreparedImageCacheMaxEntries: 64, PreparedImageCacheMaxBytes: 64 * 1024 * 1024}
+	history := historyMessagesFromDomain(domainMessages, historyMessageOptions{})
+	if _, err = service.injectConversationImageContext(t.Context(), history, domainMessages, attachments, cfg); err != nil {
+		t.Fatalf("expected 22MiB to be allowed without an extra image budget, got %v", err)
+	}
+	_, err = service.injectConversationImageContext(t.Context(), history, domainMessages, attachments, cfg, inputlimits.Limits{ImageBytes: 20 * 1024 * 1024})
+	if !errors.Is(err, llm.ErrInputTooLarge) {
+		t.Fatalf("expected configured aggregate image context budget failure, got %v", err)
 	}
 }
 
@@ -345,13 +352,12 @@ func TestInjectUserContextPreservesExistingImageParts(t *testing.T) {
 	}
 }
 
-func TestInjectUserContextSilentlySkipsImagesWithoutObjectStoreProvider(t *testing.T) {
-	messages := []llm.Message{{Role: "user", Content: "describe this image"}}
-	got := injectUserContext(t.Context(), messages, userContextInput{Attachments: []AttachmentInput{{
+func TestPrepareUserContextImagesRejectsMissingObjectStoreProvider(t *testing.T) {
+	_, err := (&Service{}).prepareUserContextImages(t.Context(), []AttachmentInput{{
 		FileID: "image-1", Kind: "image", MimeType: "image/png", StoragePath: "images/one.png", Current: true,
-	}}}, config.Config{}, nil)
-	if len(got) != 1 || len(got[0].Parts) != 0 || got[0].Content != messages[0].Content {
-		t.Fatalf("expected missing provider to leave the message unchanged, got %#v", got)
+	}}, config.Config{}, inputlimits.Limits{})
+	if !errors.Is(err, appstorage.ErrProviderNotConfigured) {
+		t.Fatalf("expected image read failure to stop preparation, got %v", err)
 	}
 }
 
@@ -510,17 +516,17 @@ func TestShouldShowAttachmentProcessTraceSkipsHistoricalSkippedOnly(t *testing.T
 	}
 }
 
-func TestShouldShowAttachmentProcessTraceSkipsHistoricalDirectImages(t *testing.T) {
+func TestShouldShowAttachmentProcessTraceIncludesHistoricalDirectImages(t *testing.T) {
 	items := []AttachmentInput{{
 		FileID:      "file_history_image",
 		Kind:        "image",
 		ContextMode: fileContextModeDirectImage,
 	}}
-	if shouldShowAttachmentProcessTrace(items) {
-		t.Fatal("expected historical direct images to stay out of repeated process traces")
+	if !shouldShowAttachmentProcessTrace(items) {
+		t.Fatal("expected selected historical direct images in process traces")
 	}
-	if got := attachmentProcessTraceItems(items); len(got) != 0 {
-		t.Fatalf("expected historical direct images to be filtered from trace payload, got %#v", got)
+	if got := attachmentProcessTraceItems(items); len(got) != 1 || got[0].FileID != "file_history_image" {
+		t.Fatalf("expected historical direct image in trace payload, got %#v", got)
 	}
 }
 

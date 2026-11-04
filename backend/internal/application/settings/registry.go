@@ -10,6 +10,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 	extractionport "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/extraction"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/inputlimits"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/nativetool"
 )
 
@@ -187,6 +188,8 @@ var settingSpecs = []settingSpec{
 		Validate: intRange(1, 50), Apply: applyField(func(c *config.Config) *int { return &c.MaxMessageFiles }, toInt)},
 
 	// 文件处理配置
+	{Namespace: "file", Key: "input_limits", ValueType: "json", Default: inputlimits.DefaultConfigJSON(), Description: "协议默认与上游覆盖的原生图片、文件及编码请求预算；0不施加该项额外上限，null或省略继承",
+		Validate: func(value, _ string) error { return inputlimits.Validate(value) }, Apply: applyField(func(c *config.Config) *string { return &c.InputLimitsJSON }, rawText)},
 	{Namespace: "file", Key: "image_max_dimension", ValueType: "int", Default: "1024", Description: "图片发送前缩放最大边长(px)，0=不缩放",
 		Validate: intRange(0, 8192), Apply: applyField(func(c *config.Config) *int { return &c.ImageMaxDimension }, toInt)},
 	{Namespace: "file", Key: "full_context_limit_enabled", ValueType: "bool", Default: "true", Description: "是否启用全文注入大小、Token、PDF页数限制",
@@ -199,12 +202,38 @@ var settingSpecs = []settingSpec{
 		Validate: optionalInt64Min(1), Apply: applyField(func(c *config.Config) *int64 { return &c.FileImageMaxBytes }, toOptionalInt64)},
 	{Namespace: "file", Key: "doc_max_bytes", ValueType: "int", Default: "", Description: "文档单文件大小上限（管理页面按 MB 输入，内部以字节保存），留空则回退默认附件大小上限",
 		Validate: optionalInt64Min(1), Apply: applyField(func(c *config.Config) *int64 { return &c.FileDocMaxBytes }, toOptionalInt64)},
+	{Namespace: "file", Key: "audio_max_bytes", ValueType: "int", Default: "", Description: "单个音频附件上传大小上限（字节），留空或0继承默认大小上限",
+		Validate: optionalInt64Min(0), Apply: applyField(func(c *config.Config) *int64 { return &c.FileAudioMaxBytes }, toOptionalInt64)},
+	{Namespace: "file", Key: "video_max_bytes", ValueType: "int", Default: "", Description: "单个视频附件上传大小上限（字节），留空或0继承默认大小上限",
+		Validate: optionalInt64Min(0), Apply: applyField(func(c *config.Config) *int64 { return &c.FileVideoMaxBytes }, toOptionalInt64)},
+	{Namespace: "file", Key: "temporary_chat_max_attachments", ValueType: "int", Default: "20", Description: "临时会话单个请求的附件总数",
+		Validate: intRange(1, 1000), Apply: applyField(func(c *config.Config) *int { return &c.TemporaryChatMaxAttachments }, toInt)},
+	{Namespace: "file", Key: "temporary_chat_request_max_bytes", ValueType: "int", Default: "8388608", Description: "临时会话基础JSON请求预算（字节），multipart另加附件预算",
+		Validate: int64Min(1), Apply: applyField(func(c *config.Config) *int64 { return &c.TemporaryChatRequestMaxBytes }, toInt64)},
+	{Namespace: "file", Key: "image_attachment_processor_max_bytes", ValueType: "int", Default: "20971520", Description: "图片工具处理后的图片合计字节，0不增加此项限制",
+		Validate: int64Min(0), Apply: applyField(func(c *config.Config) *int64 { return &c.ImageAttachmentProcessorMaxBytes }, toInt64)},
+	{Namespace: "file", Key: "image_attachment_analysis_max_chars", ValueType: "int", Default: "6000", Description: "图片工具单张图片分析结果字符数，0不增加此项限制",
+		Validate: intRange(0, 1000000), Apply: applyField(func(c *config.Config) *int { return &c.ImageAttachmentAnalysisMaxChars }, toInt)},
+	{Namespace: "file", Key: "image_attachment_analysis_total_max_chars", ValueType: "int", Default: "16000", Description: "图片工具分析结果合计字符数，0不增加此项限制",
+		Validate: intRange(0, 1000000), Apply: applyField(func(c *config.Config) *int { return &c.ImageAttachmentAnalysisTotalMaxChars }, toInt)},
+	{Namespace: "file", Key: "prepared_image_cache_max_entries", ValueType: "int", Default: "64", Description: "图片处理结果缓存条目数，0禁用缓存",
+		Validate: intRange(0, 1000000), Apply: applyField(func(c *config.Config) *int { return &c.PreparedImageCacheMaxEntries }, toInt)},
+	{Namespace: "file", Key: "prepared_image_cache_max_bytes", ValueType: "int", Default: "67108864", Description: "图片处理结果缓存总字节，0禁用缓存",
+		Validate: int64Min(0), Apply: applyField(func(c *config.Config) *int64 { return &c.PreparedImageCacheMaxBytes }, toInt64)},
+	{Namespace: "file", Key: "generated_image_max_bytes", ValueType: "int", Default: "52428800", Description: "生成图片单文件保存上限（字节）",
+		Validate: int64Min(1), Apply: applyField(func(c *config.Config) *int64 { return &c.GeneratedImageMaxBytes }, toInt64)},
 	{Namespace: "file", Key: "full_context_pdf_max_pages", ValueType: "int", Default: "20", Description: "PDF Full Context最大页数，留空或0表示不限制",
 		Validate: optionalIntZeroOrRange(1, 500), Apply: applyField(func(c *config.Config) *int { return &c.FileFullContextPDFMaxPages }, toOptionalInt)},
 	{Namespace: "file", Key: "allowed_mime_types", ValueType: "string", Default: defaultAllowedMIMETypes, Description: "白名单MIME类型(逗号分隔)",
 		Validate: validateAllowedMIMETypes, Apply: applyField(func(c *config.Config) *string { return &c.FileAllowedMIMETypes }, rawText)},
 
 	// 文本提取与 OCR 配置
+	{Namespace: "extract", Key: "mineru_archive_max_bytes", ValueType: "int", Default: "104857600", Description: "MinerU结果ZIP下载上限（字节）", Validate: int64Min(1), Apply: applyField(func(c *config.Config) *int64 { return &c.ExtractMinerUArchiveMaxBytes }, toInt64)},
+	{Namespace: "extract", Key: "mineru_text_max_bytes", ValueType: "int", Default: "20971520", Description: "MinerU ZIP内单个Markdown文本上限（字节）", Validate: int64Min(1), Apply: applyField(func(c *config.Config) *int64 { return &c.ExtractMinerUTextMaxBytes }, toInt64)},
+	{Namespace: "extract", Key: "source_max_bytes", ValueType: "int", Default: "52428800", Description: "提取服务源文件读入上限（字节）", Validate: int64Min(1), Apply: applyField(func(c *config.Config) *int64 { return &c.ExtractSourceMaxBytes }, toInt64)},
+	{Namespace: "extract", Key: "response_max_bytes", ValueType: "int", Default: "52428800", Description: "提取服务完整响应上限（字节）", Validate: int64Min(1), Apply: applyField(func(c *config.Config) *int64 { return &c.ExtractResponseMaxBytes }, toInt64)},
+	{Namespace: "extract", Key: "ocr_source_max_bytes", ValueType: "int", Default: "52428800", Description: "OCR源文件读入上限（字节）", Validate: int64Min(1), Apply: applyField(func(c *config.Config) *int64 { return &c.ExtractOCRSourceMaxBytes }, toInt64)},
+	{Namespace: "extract", Key: "ocr_response_max_bytes", ValueType: "int", Default: "52428800", Description: "OCR完整响应上限（字节）", Validate: int64Min(1), Apply: applyField(func(c *config.Config) *int64 { return &c.ExtractOCRResponseMaxBytes }, toInt64)},
 	{Namespace: "extract", Key: "engine", ValueType: "string", Default: "builtin", Description: "提取主引擎枚举(builtin/tika/docling/mineru)",
 		Validate: oneOf(extraction.EngineBuiltin, extraction.EngineTika, extraction.EngineDocling, extraction.EngineMinerU), Apply: applyField(func(c *config.Config) *string { return &c.ExtractEngine }, rawText)},
 	{Namespace: "extract", Key: "ocr_engine", ValueType: "string", Default: "rapidocr", Description: "OCR 引擎枚举(rapidocr/tesseract/paddle/tencent/aliyun/mistral/llm)",

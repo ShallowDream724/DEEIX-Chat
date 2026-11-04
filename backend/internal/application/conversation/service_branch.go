@@ -135,10 +135,9 @@ func (s *Service) resolveMessageBranch(
 
 // loadMessageBranchContext 分页有界地加载一条活动祖先路径。
 // 分支选择有意保持轻量；完整消息仅在
-// 路由与最新滚动快照确定后才加载。已验证的
-// 快照边界会提前终止扫描，而没有快照的会话
-// 会读取到根节点，确保首次压缩绝不会对
-// 被静默截断的后缀进行摘要。
+// 路由与最新滚动快照确定后才加载。摘要只替代文字，不能作为
+// 附件引用的加载边界；始终沿当前祖先链读取到根节点，使回退分支
+// 与压缩后的请求仍能独立解析原件的权限及可用状态。
 func (s *Service) loadMessageBranchContext(
 	ctx context.Context,
 	conversationID uint,
@@ -163,26 +162,24 @@ func (s *Service) loadMessageBranchContext(
 			break
 		}
 
-		pageStart := 0
 		if appcompact.SnapshotHasCoverage(snapshot) {
 			for index := range page {
 				if page[index].ID == snapshot.CoveredUntilMessageID &&
 					strings.TrimSpace(page[index].PublicID) == strings.TrimSpace(snapshot.CoveredUntilPublicID) {
-					pageStart = index
 					boundaryFound = true
 					break
 				}
 			}
 		}
 
-		segment := page[pageStart:]
+		segment := page
 		loadedCount += len(segment)
 		loadedBytes += contextMessagesPayloadBytes(segment)
 		if loadedCount > contextAncestorMaxCount || loadedBytes > contextAncestorMaxBytes {
 			return errContextAncestorSafetyLimit
 		}
 		path = append(append(make([]model.Message, 0, len(segment)+len(path)), segment...), path...)
-		if boundaryFound || len(page) < contextAncestorPageSize || page[0].ParentMessageID == nil {
+		if len(page) < contextAncestorPageSize || page[0].ParentMessageID == nil {
 			break
 		}
 		leafID = *page[0].ParentMessageID
@@ -333,21 +330,19 @@ func filterDefaultBranchContextMessages(messages []model.Message, currentMessage
 
 func conversationImageTokenReserveByMessage(messages []model.Message) map[int]int64 {
 	reserve := make(map[int]int64)
-	remaining := maxConversationImageContextCount
-	for messageIndex := len(messages) - 1; messageIndex >= 0 && remaining > 0; messageIndex-- {
+	for messageIndex := len(messages) - 1; messageIndex >= 0; messageIndex-- {
 		message := messages[messageIndex]
 		if !strings.EqualFold(strings.TrimSpace(message.Role), "user") {
 			continue
 		}
 		refs := parseAttachmentSnapshotRefs(message.Attachments)
-		for attachmentIndex := len(refs) - 1; attachmentIndex >= 0 && remaining > 0; attachmentIndex-- {
+		for attachmentIndex := len(refs) - 1; attachmentIndex >= 0; attachmentIndex-- {
 			ref := refs[attachmentIndex]
 			mimeType := textutil.FirstNonEmpty(ref.DetectedMIME, ref.MimeType)
 			if normalizeAttachmentKind(ref.Kind, mimeType) != "image" {
 				continue
 			}
 			reserve[messageIndex] += estimatedConversationImageTokens
-			remaining--
 		}
 	}
 	return reserve

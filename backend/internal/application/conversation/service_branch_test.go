@@ -58,7 +58,7 @@ func buildBranchContextMessages(count int) []model.Message {
 	return messages
 }
 
-func TestLoadMessageBranchContextStopsAtVerifiedSnapshotBoundary(t *testing.T) {
+func TestLoadMessageBranchContextPreservesAncestorsBeforeSnapshotForAttachments(t *testing.T) {
 	messages := buildBranchContextMessages(600)
 	repo := &branchContextRepositoryStub{messages: messages}
 	service := &Service{repo: repo, logger: zap.NewNop()}
@@ -75,14 +75,14 @@ func TestLoadMessageBranchContextStopsAtVerifiedSnapshotBoundary(t *testing.T) {
 	if err := service.loadMessageBranchContext(t.Context(), 9, branch, snapshot); err != nil {
 		t.Fatalf("loadMessageBranchContext() error = %v", err)
 	}
-	if repo.calls != 2 {
-		t.Fatalf("expected two bounded ancestor pages, got %d", repo.calls)
+	if repo.calls != 3 {
+		t.Fatalf("expected three bounded ancestor pages, got %d", repo.calls)
 	}
-	if len(branch.ExistingMessages) != 301 {
-		t.Fatalf("expected boundary through leaf, got %d messages", len(branch.ExistingMessages))
+	if len(branch.ExistingMessages) != 600 {
+		t.Fatalf("expected complete attachment ancestry, got %d messages", len(branch.ExistingMessages))
 	}
-	if branch.ExistingMessages[0].ID != 300 || branch.ExistingMessages[len(branch.ExistingMessages)-1].ID != 600 {
-		t.Fatalf("expected active path 300..600, got %d..%d", branch.ExistingMessages[0].ID, branch.ExistingMessages[len(branch.ExistingMessages)-1].ID)
+	if branch.ExistingMessages[0].ID != 1 || branch.ExistingMessages[len(branch.ExistingMessages)-1].ID != 600 {
+		t.Fatalf("expected active path 1..600, got %d..%d", branch.ExistingMessages[0].ID, branch.ExistingMessages[len(branch.ExistingMessages)-1].ID)
 	}
 }
 

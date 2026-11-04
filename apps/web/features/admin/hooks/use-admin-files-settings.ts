@@ -1,5 +1,5 @@
-import * as React from "react";
 import { useTranslations } from "next-intl";
+import * as React from "react";
 import { toast } from "sonner";
 
 import {
@@ -12,6 +12,8 @@ import {
   listAdminSettings,
   patchAdminSettings,
 } from "@/features/admin/api";
+import type { ServiceRuntimeActionName } from "@/features/admin/components/shared/settings-runtime-panel";
+import { parseInputLimits } from "@/features/admin/model/file-input-limits";
 import {
   applySettingsDefaults,
   denormalizeMBValue,
@@ -36,11 +38,10 @@ import {
   TIKA_SERVICE_SOURCES,
   usesTika,
 } from "@/features/admin/model/files-settings";
-import type { ServiceRuntimeActionName } from "@/features/admin/components/shared/settings-runtime-panel";
 import { resolveAdminErrorMessage } from "@/features/admin/utils/admin-error";
+import { configuredSettingsMap, settingHasValue } from "@/features/admin/utils/settings-meta";
 import type { PatchSettingItem } from "@/shared/api/settings-types";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
-import { configuredSettingsMap, settingHasValue } from "@/features/admin/utils/settings-meta";
 
 const SERVICE_LOADERS: Record<ServiceName, (token: string) => Promise<ServiceRuntimeData>> = {
   tika: getAdminTikaRuntime,
@@ -71,6 +72,7 @@ export function useAdminFilesSettings({
   const [settingsMap, setSettingsMap] = React.useState<Record<string, string>>(() => applySettingsDefaults({}));
   const [savedMap, setSavedMap] = React.useState<Record<string, string>>(() => applySettingsDefaults({}));
   const [configuredMap, setConfiguredMap] = React.useState<Record<string, boolean>>({});
+  const [inputLimitsDefaultValue, setInputLimitsDefaultValue] = React.useState("");
   const [serviceStates, setServiceStates] = React.useState<Record<ServiceName, ServiceState>>(INITIAL_SERVICE_STATES);
   const loadServiceRuntime = React.useCallback(async (name: ServiceName) => {
     setServiceStates((prev) => ({ ...prev, [name]: { ...prev[name], loading: true } }));
@@ -112,6 +114,7 @@ export function useAdminFilesSettings({
         return;
       }
       const grouped = await listAdminSettings(token);
+      setInputLimitsDefaultValue(grouped.file?.find((item) => item.key === "input_limits")?.defaultValue ?? "");
       const flattened = applySettingsDefaults(flattenSettings(SETTINGS_GROUPS, grouped));
       setConfiguredMap(configuredSettingsMap(grouped));
       setSettingsMap(flattened);
@@ -427,7 +430,14 @@ export function useAdminFilesSettings({
         const grouped = await patchAdminSettings(token, { items });
         const flattened = applySettingsDefaults(flattenSettings(SETTINGS_GROUPS, grouped));
         setConfiguredMap(configuredSettingsMap(grouped));
-        setSettingsMap(flattened);
+        const savedFieldIDs = new Set(items.map((item) => `${item.namespace}.${item.key}`));
+        setSettingsMap((current) => {
+          const next = { ...flattened };
+          for (const [fieldID, value] of Object.entries(current)) {
+            if (!savedFieldIDs.has(fieldID) && value !== (savedMap[fieldID] ?? "")) next[fieldID] = value;
+          }
+          return next;
+        });
         setSavedMap(flattened);
         setServiceStates(INITIAL_SERVICE_STATES);
         if (embeddingModelWillChange) {
@@ -460,7 +470,35 @@ export function useAdminFilesSettings({
     [clearEmbeddingStatus, configuredMap, dirtyFieldIDs, loadEmbeddingStatus, savedMap, settingsMap, t],
   );
 
+  const handleSaveInputLimits = React.useCallback(async () => {
+    const value = settingsMap["file.input_limits"] ?? "";
+    if (!parseInputLimits(value)) {
+      toast.error(t("toast.saveFailed"), { description: t("inputLimits.invalidConfig") });
+      return;
+    }
+    setSaving(true);
+    try {
+      const token = await resolveAccessToken();
+      if (!token) {
+        toast.error(t("toast.sessionExpired"), { description: t("toast.sessionExpiredDescription") });
+        return;
+      }
+      const grouped = await patchAdminSettings(token, { items: [{ namespace: "file", key: "input_limits", value }] });
+      const flattened = flattenSettings(SETTINGS_GROUPS, grouped);
+      const nextValue = flattened["file.input_limits"] ?? value;
+      setConfiguredMap(configuredSettingsMap(grouped));
+      setSettingsMap((current) => ({ ...current, "file.input_limits": nextValue }));
+      setSavedMap((current) => ({ ...current, "file.input_limits": nextValue }));
+      toast.success(t("toast.groupUpdated", { group: t("inputLimits.title") }));
+    } catch (error) {
+      toast.error(t("toast.saveFailed"), { description: resolveAdminErrorMessage(error, t("toast.unknownError")) });
+    } finally {
+      setSaving(false);
+    }
+  }, [settingsMap, t]);
+
   return {
+    inputLimitsDefaultValue,
     loading,
     saving,
     settingsMap,
@@ -472,5 +510,6 @@ export function useAdminFilesSettings({
     handleFieldChange,
     handleSaveAllowedMIMETypes,
     handleSaveGroup,
+    handleSaveInputLimits,
   };
 }

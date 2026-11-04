@@ -53,6 +53,7 @@ type Description struct {
 	Status  int
 	Code    string
 	Message string
+	Details any
 }
 
 // Describe 从错误链读取类型化应用错误。普通错误不会向客户端泄露，也不会参与错误码推断。
@@ -81,7 +82,7 @@ func ErrorFrom(c *gin.Context, status int, err error) {
 
 // ErrorDescribed 写出已确定的错误描述。
 func ErrorDescribed(c *gin.Context, description Description) {
-	write(c, description.Status, description.Code, description.Message, nil)
+	write(c, description.Status, description.Code, description.Message, description.Details)
 }
 
 // InternalError 返回通用内部错误响应（500 / internal.error）。

@@ -5,21 +5,19 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"math"
 	"mime/multipart"
 	"net/http"
 	"strings"
 	"sync"
 
 	appconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/conversation"
+	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/background"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 )
-
-const temporaryChatMaxRequestBytes = 8 << 20
 
 // StreamTemporaryChatMessage godoc
 // @Summary 流式发送临时对话消息
@@ -67,7 +65,7 @@ func (h *Handler) StreamTemporaryChatMessage(c *gin.Context) {
 			Content: item.Content,
 		})
 	}
-	if err := appconversation.ValidateTemporaryChatInput(input); err != nil {
+	if err := appconversation.ValidateTemporaryChatInput(input, appconversation.TemporaryChatAttachmentLimit(h.cfg.Snapshot())); err != nil {
 		response.ErrorFrom(c, http.StatusBadRequest, errInvalidTemporaryChatMessages)
 		return
 	}
@@ -154,9 +152,12 @@ func (h *Handler) bindTemporaryChatRequest(c *gin.Context) (
 	bool,
 ) {
 	noop := func() {}
+	cfg := h.cfg.Snapshot()
+	maxAttachments := appconversation.TemporaryChatAttachmentLimit(cfg)
+	maxRequestBytes := appconversation.TemporaryChatRequestLimit(cfg)
 	contentType := strings.ToLower(strings.TrimSpace(c.GetHeader("Content-Type")))
 	if !strings.HasPrefix(contentType, "multipart/form-data") {
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, temporaryChatMaxRequestBytes)
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxRequestBytes)
 		var req TemporaryChatMessageRequest
 		if err := c.ShouldBindJSON(&req); err != nil {
 			writeTemporaryChatBindError(c, err)
@@ -165,21 +166,8 @@ func (h *Handler) bindTemporaryChatRequest(c *gin.Context) (
 		return req, nil, noop, true
 	}
 
-	policy, err := h.service.GetChatFilePolicy(c.Request.Context(), middleware.MustUserID(c))
-	if err != nil {
-		response.InternalError(c, err)
-		return TemporaryChatMessageRequest{}, nil, noop, false
-	}
-	maxUploadBytes := policy.MaxUploadFileBytes
-	if maxUploadBytes <= 0 {
-		maxUploadBytes = 20 * 1024 * 1024
-	}
-	requestLimit := int64(temporaryChatMaxRequestBytes)
-	if maxUploadBytes > (math.MaxInt64-requestLimit)/appconversation.TemporaryChatMaxAttachments {
-		requestLimit = math.MaxInt64
-	} else {
-		requestLimit += maxUploadBytes * appconversation.TemporaryChatMaxAttachments
-	}
+	requestLimit := appupload.MaxUploadRequestBytes(cfg, int64(maxAttachments), maxRequestBytes, multipartUploadOverheadBytes)
+	var err error
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, requestLimit)
 	if err = c.Request.ParseMultipartForm(1 << 20); err != nil {
 		writeTemporaryChatBindError(c, err)
@@ -192,7 +180,13 @@ func (h *Handler) bindTemporaryChatRequest(c *gin.Context) (
 	}
 
 	var req TemporaryChatMessageRequest
-	if err = json.Unmarshal([]byte(c.PostForm("payload")), &req); err != nil {
+	payload := c.PostForm("payload")
+	if int64(len(payload)) > maxRequestBytes {
+		removeMultipartFiles()
+		writeTemporaryChatBindError(c, &http.MaxBytesError{Limit: maxRequestBytes})
+		return TemporaryChatMessageRequest{}, nil, noop, false
+	}
+	if err = json.Unmarshal([]byte(payload), &req); err != nil {
 		removeMultipartFiles()
 		response.InvalidRequestBody(c, err)
 		return TemporaryChatMessageRequest{}, nil, noop, false
@@ -209,12 +203,12 @@ func (h *Handler) bindTemporaryChatRequest(c *gin.Context) (
 		return TemporaryChatMessageRequest{}, nil, noop, false
 	}
 	fileHeaders := c.Request.MultipartForm.File["attachments"]
-	if len(fileHeaders) == 0 || len(fileHeaders) != len(messageIndexes) || len(fileHeaders) > appconversation.TemporaryChatMaxAttachments {
+	if len(fileHeaders) == 0 || len(fileHeaders) != len(messageIndexes) || len(fileHeaders) > maxAttachments {
 		removeMultipartFiles()
 		response.ErrorFrom(c, http.StatusBadRequest, errInvalidFileReference)
 		return TemporaryChatMessageRequest{}, nil, noop, false
 	}
-	maxFilesPerMessage := policy.MaxMessageFiles
+	maxFilesPerMessage := cfg.MaxMessageFiles
 	if maxFilesPerMessage <= 0 {
 		maxFilesPerMessage = 10
 	}

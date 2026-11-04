@@ -36,6 +36,7 @@ import {
   type SettingsFieldServiceRuntime,
 } from "../../shared/settings-runtime-panel";
 import { FilesEmbeddingStatusPanel } from "./files-embedding-status";
+import { FilesInputLimits } from "./files-input-limits";
 
 function resolveMinerUFileTypeOptionMeta(value: string, label: string, settingsMap: Record<string, string>) {
   const meta = resolveMinerUFileTypeFormats(value, settingsMap["extract.mineru_source"] ?? "").join("/");
@@ -50,8 +51,11 @@ function toEditorField(field: SettingsField, translate: (key: string) => string,
     label: translate(`${fieldKey}.label`),
     description: translate(`${fieldKey}.description`),
     type: field.type,
-    placeholder: field.placeholder ? translate(`${fieldKey}.placeholder`) : undefined,
+    placeholder: field.namespace === "file" && ["image_max_bytes", "doc_max_bytes", "audio_max_bytes", "video_max_bytes"].includes(field.key)
+      ? settingsMap["storage.max_upload_file_bytes"] ?? ""
+      : field.placeholder ? translate(`${fieldKey}.placeholder`) : undefined,
     valueUnit: field.valueUnit,
+    valueSuffix: field.valueUnit === "mb" ? "MB" : field.key === "image_max_dimension" ? "px" : undefined,
     options: field.options?.map((option) => {
       const label = translate(`${fieldKey}.options.${option.value}`);
       const meta =
@@ -80,6 +84,7 @@ export function AdminFilesPage() {
     handleReindex,
   } = useAdminFilesEmbeddingStatus();
   const {
+    inputLimitsDefaultValue,
     loading,
     saving,
     settingsMap,
@@ -91,6 +96,7 @@ export function AdminFilesPage() {
     handleFieldChange,
     handleSaveAllowedMIMETypes,
     handleSaveGroup,
+    handleSaveInputLimits,
   } = useAdminFilesSettings({ loadEmbeddingStatus, clearEmbeddingStatus });
 
   const resolveServiceRuntime = React.useCallback(
@@ -252,6 +258,20 @@ export function AdminFilesPage() {
                 )}
               </SettingsSection>
             )}
+            {group.key === "uploadLimits" ? (
+              <>
+                <SettingsSectionSeparator />
+                <FilesInputLimits
+                  defaultValue={inputLimitsDefaultValue}
+                  value={settingsMap["file.input_limits"] ?? ""}
+                  savedValue={savedMap["file.input_limits"] ?? ""}
+                  loading={loading}
+                  saving={saving}
+                  onChange={(value) => handleFieldChange("file.input_limits", value)}
+                  onSave={() => void handleSaveInputLimits()}
+                />
+              </>
+            ) : null}
             {index < SETTINGS_GROUPS.length - 1 ? <SettingsSectionSeparator /> : null}
           </React.Fragment>
         );

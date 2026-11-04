@@ -42,12 +42,13 @@ func toSettingValidationDetailsResponse(details appsettings.SettingValidationDet
 
 // SettingResponse 单个配置项响应。
 type SettingResponse struct {
-	Key         string `json:"key"`
-	Value       string `json:"value"`
-	ValueType   string `json:"valueType"`
-	Description string `json:"description"`
-	Sensitive   bool   `json:"sensitive"`
-	Configured  bool   `json:"configured"`
+	Key          string `json:"key"`
+	Value        string `json:"value"`
+	DefaultValue string `json:"defaultValue,omitempty"`
+	ValueType    string `json:"valueType"`
+	Description  string `json:"description"`
+	Sensitive    bool   `json:"sensitive"`
+	Configured   bool   `json:"configured"`
 }
 
 type LoginPageSettingsResponse struct {
@@ -179,12 +180,13 @@ func toSettingResponseList(items []appsettings.SettingItem) []SettingResponse {
 	result := make([]SettingResponse, 0, len(items))
 	for _, item := range items {
 		result = append(result, SettingResponse{
-			Key:         item.Key,
-			Value:       item.Value,
-			ValueType:   item.ValueType,
-			Description: item.Description,
-			Sensitive:   item.Sensitive,
-			Configured:  item.Configured,
+			Key:          item.Key,
+			Value:        item.Value,
+			DefaultValue: item.DefaultValue,
+			ValueType:    item.ValueType,
+			Description:  item.Description,
+			Sensitive:    item.Sensitive,
+			Configured:   item.Configured,
 		})
 	}
 	return result

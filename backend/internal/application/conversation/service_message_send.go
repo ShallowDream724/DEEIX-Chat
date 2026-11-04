@@ -10,13 +10,17 @@ import (
 	appcompact "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/compact"
 	appcm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/contentmoderation"
 	apprag "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/rag"
+	domainchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/channel"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	domainmemory "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/memory"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 	platformtracing "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/observability/tracing"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/textutil"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/background"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/inputlimits"
 	"github.com/google/uuid"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -55,13 +59,29 @@ func (s *Service) reasoningContentPassbackEnabled(ctx context.Context, userID ui
 	return err == nil && value != "false"
 }
 
-func messageRouteConfig(route *channel.ResolvedRoute, attributionReferer string, attributionTitle string) llm.RouteConfig {
-	return routeConfigFromResolved(route, llm.DefaultEndpointForAdapter(route.Protocol), attributionReferer, attributionTitle)
+func messageRouteConfig(route *channel.ResolvedRoute, attributionReferer string, attributionTitle string, configuration ...config.Config) llm.RouteConfig {
+	return routeConfigFromResolved(route, llm.DefaultEndpointForAdapter(route.Protocol), attributionReferer, attributionTitle, configuration...)
+}
+
+func resolvedRouteContextWindow(route *channel.ResolvedRoute) int {
+	if route == nil {
+		return 0
+	}
+	caps := domainchannel.ResolveModelCapsFromCapabilitiesWithFallback(route.UpstreamModel, route.ModelCapabilitiesJSON, 0)
+	if caps.Source == domainchannel.ModelCapsSourceFallback {
+		return 0
+	}
+	return caps.ContextWindow
 }
 
 // routeConfigFromResolved 是把解析后的路由转换为上游调用配置的唯一入口。
 // UntrustedEndpoint 必须原样传递：用户自带 Key 的端点只能走强制 SSRF 防护的客户端。
-func routeConfigFromResolved(route *channel.ResolvedRoute, endpoint string, attributionReferer string, attributionTitle string) llm.RouteConfig {
+func routeConfigFromResolved(route *channel.ResolvedRoute, endpoint string, attributionReferer string, attributionTitle string, configuration ...config.Config) llm.RouteConfig {
+	rawLimits := ""
+	if len(configuration) > 0 {
+		rawLimits = configuration[0].InputLimitsJSON
+	}
+	limits := inputlimits.Resolve(rawLimits, llm.NormalizeAdapter(route.Protocol), route.BaseURL, route.UpstreamID)
 	return llm.RouteConfig{
 		Protocol:            route.Protocol,
 		BaseURL:             route.BaseURL,
@@ -75,6 +95,8 @@ func routeConfigFromResolved(route *channel.ResolvedRoute, endpoint string, attr
 		AttributionReferer:  attributionReferer,
 		AttributionTitle:    attributionTitle,
 		UntrustedEndpoint:   route.UntrustedEndpoint,
+		InputLimits:         &limits,
+		ContextWindowTokens: resolvedRouteContextWindow(route),
 	}
 }
 
@@ -220,7 +242,6 @@ func (s *Service) sendMessageInternal(
 	var traceRecorder *messageTraceRecorder
 	var toolCallRows []model.ToolCall
 	var persistedToolCallKeys map[string]struct{}
-	var totalServerSideToolUsage map[string]int64
 	var totalMCPToolUsage []MCPToolUsageItem
 	var completedAssistantText string
 	// plan 在路由解析后固化本轮请求形状；在此之前中断时其零值即“尚无有效请求参数”。
@@ -280,7 +301,7 @@ func (s *Service) sendMessageInternal(
 				TraceRecorder:            traceRecorder,
 				Route:                    runState.route,
 				EffectiveOptions:         plan.filteredOptions,
-				ServerSideToolUsage:      totalServerSideToolUsage,
+				ServerSideToolUsage:      runner.nativeToolUsage,
 				MCPToolUsage:             totalMCPToolUsage,
 				StartedAt:                startedAt,
 				ReuseUserMessage:         reuseUserMessage,
@@ -451,54 +472,6 @@ func (s *Service) sendMessageInternal(
 	// 避免默认分支定位和 Prompt 规划分别水合同一批附件与引用。
 	contextMessages := buildModelContextMessages(branchState, userMessage, normalizedBranchReason)
 
-	// 软阈值压缩仍可按配置在响应后异步执行；只有当前请求已经越过所选模型的
-	// 有效输入预算时，才同步生成滚动快照，避免本轮先被静默截断、下一轮才补摘要。
-	preflightCompactInput := appcompact.MaybeCompactConversationInput{
-		ConversationID:   input.ConversationID,
-		UserID:           input.UserID,
-		RunID:            runID,
-		Messages:         contextMessages,
-		ExistingSnapshot: prefetch.snapshot,
-		PromptTokenEstimate: estimatePromptScopeTokens(
-			contextMessages,
-			prefetch.snapshot,
-			compactPolicy,
-			reasoningContentPassback,
-		),
-		ContextModelName: route.UpstreamModel,
-		CapabilitiesJSON: route.ModelCapabilitiesJSON,
-		PlatformModelName: s.resolveTextTaskModel(ctx, textTaskRouteInput{
-			ConfiguredModel:   cfg.CompactTaskModel,
-			ConversationModel: conversation.Model,
-			UserID:            input.UserID,
-			ConversationID:    input.ConversationID,
-			RequestID:         input.RequestID,
-		}),
-		Force: true,
-	}
-	if compactPolicy.EffectiveEnabled() && s.compactSvc.ContextBudgetExceeded(preflightCompactInput) {
-		preflightSnapshot, compactErr := s.compactSvc.MaybeCompactConversation(ctx, preflightCompactInput)
-		if compactErr != nil {
-			retErr = compactErr
-			return nil, compactErr
-		}
-		if preflightSnapshot != nil {
-			prefetch.snapshot = preflightSnapshot
-			s.invalidateSnapshotCache(input.ConversationID)
-			_ = s.repo.UpdateConversationLastResponseID(ctx, input.ConversationID, "")
-			s.persistSnapshotContextArtifact(ctx, snapshotContextArtifactInput{
-				ConversationID: input.ConversationID,
-				UserID:         input.UserID,
-				MessageID:      assistantMessage.ID,
-				RunID:          runID,
-				Snapshot:       preflightSnapshot,
-			})
-			if traceRecorder != nil {
-				summary, markdown, payload := buildCompactionProcessTrace(preflightSnapshot)
-				traceRecorder.appendProcessSection(summary, markdown, payload, messageTraceStatusStreaming)
-			}
-		}
-	}
 	promptScope := buildPromptScope(contextMessages, prefetch.snapshot, compactPolicy)
 	promptMessages := promptScope.activeMessages()
 	ragQuery := buildRAGQuery(promptMessages, input.Content, cfg.RAGQueryHistoryTurns)
@@ -516,15 +489,16 @@ func (s *Service) sendMessageInternal(
 		}()
 	}
 
-	conversationFileIDs := collectConversationFileIDs(promptMessages, input.FileIDs)
+	attachmentMessages := promptScope.attachmentMessages()
+	conversationFileIDs := collectConversationFileIDs(attachmentMessages, input.FileIDs)
 	conversationAttachments, err := s.resolveConversationFileContext(ctx, input.UserID, conversationFileIDs, input.FileIDs)
 	if err != nil {
 		retErr = err
 		return nil, err
 	}
-	conversationAttachments = bindAttachmentMessageRoles(conversationAttachments, promptMessages)
+	conversationAttachments = bindAttachmentMessageRoles(conversationAttachments, attachmentMessages)
 	nativeInputCache := newNativeInputCache()
-	initialNative := s.resolveNativeInputs(ctx, route, conversationAttachments, nativeInputCache)
+	initialNative := s.resolveNativeInputs(ctx, route, conversationAttachments, nativeInputCache, cfg)
 	if err = validateCurrentNativeReads(conversationAttachments, initialNative); err != nil {
 		retErr = err
 		return nil, err
@@ -619,10 +593,6 @@ func (s *Service) sendMessageInternal(
 	// 文件上下文展示按本次路由的最终决定呈现（原生 PDF、模型不支持的图片），而不只是路由无关的文件规划；
 	// 原生文档在这里读取一次，路由提示词与故障转移共用同一份缓存，展示与实际请求一致。
 	fileTrace := attachmentRouteTrace{fileMode: fileMode, items: attachmentProcessTraceItems(fileContextPlan.Attachments), skipImages: imageAttachmentRoutingActive}
-	fileTrace.resolve(ctx, s, route, fileContextPlan.Attachments, nativeInputCache)
-	if traceRecorder != nil && fileTrace.visible() {
-		traceRecorder.appendProcessSection(fileTrace.summary, fileTrace.markdown, fileTrace.payload, messageTraceStatusStreaming)
-	}
 
 	rag, err := s.retrieveMessageRAGContext(ctx, messageRAGRetrievalInput{
 		input:              input,
@@ -729,7 +699,11 @@ func (s *Service) sendMessageInternal(
 		normalizedBranchReason: normalizedBranchReason,
 		attributionReferer:     attributionReferer,
 		attributionTitle:       attributionTitle,
+		contextObservationScope: repository.HistoricalMessageScope{
+			ConversationID: input.ConversationID, UserID: input.UserID, LeafMessageID: userMessage.ID,
+		},
 	}
+	fileTrace.recordPlannedMessages(promptPlan.Messages)
 	plan = s.prepareRouteGeneration(ctx, routeGenerationPreparationInput{
 		Generation:               gen,
 		Route:                    route,
@@ -738,6 +712,62 @@ func (s *Service) sendMessageInternal(
 		Mode:                     routeGenerationInitial,
 		TraceRecorder:            traceRecorder,
 	})
+	// 完整请求已准备好，才能用同路由、同媒体的实测输入校准硬预算判断。
+	// fullContextPromptTokens 保留裁剪前的规模；需要压缩时先生成摘要，再重建请求。
+	preflightCompactInput := appcompact.MaybeCompactConversationInput{
+		ConversationID: input.ConversationID, UserID: input.UserID, RunID: runID,
+		Messages: contextMessages, ExistingSnapshot: prefetch.snapshot,
+		PromptTokenEstimate: plan.fullContextPromptTokens,
+		ContextModelName:    route.UpstreamModel, CapabilitiesJSON: route.ModelCapabilitiesJSON,
+		Force: true,
+	}
+	if compactPolicy.EffectiveEnabled() && s.compactSvc.ContextBudgetExceeded(preflightCompactInput) {
+		preflightCompactInput.PlatformModelName = s.resolveTextTaskModel(ctx, textTaskRouteInput{
+			ConfiguredModel: cfg.CompactTaskModel, ConversationModel: conversation.Model,
+			UserID: input.UserID, ConversationID: input.ConversationID, RequestID: input.RequestID,
+		})
+		preflightSnapshot, compactErr := s.compactSvc.MaybeCompactConversation(ctx, preflightCompactInput)
+		if compactErr != nil {
+			retErr = compactErr
+			return nil, compactErr
+		}
+		if preflightSnapshot != nil {
+			prefetch.snapshot = preflightSnapshot
+			s.invalidateSnapshotCache(input.ConversationID)
+			_ = s.repo.UpdateConversationLastResponseID(ctx, input.ConversationID, "")
+			conversation.LastResponseID = ""
+			s.persistSnapshotContextArtifact(ctx, snapshotContextArtifactInput{
+				ConversationID: input.ConversationID, UserID: input.UserID,
+				MessageID: assistantMessage.ID, RunID: runID, Snapshot: preflightSnapshot,
+			})
+			if traceRecorder != nil {
+				summary, markdown, payload := buildCompactionProcessTrace(preflightSnapshot)
+				traceRecorder.appendProcessSection(summary, markdown, payload, messageTraceStatusStreaming)
+			}
+			promptScope = buildPromptScope(contextMessages, preflightSnapshot, compactPolicy)
+			routePromptInput.DomainMessages = promptScope.activeMessages()
+			routePromptInput.DynamicContext.Snapshot = &snapshotContext{
+				Summary: preflightSnapshot.SummaryText, FromTurn: preflightSnapshot.FromTurn,
+				ToTurn: preflightSnapshot.ToTurn, Strategy: preflightSnapshot.Strategy,
+			}
+			routePromptInput.DynamicContext.UIStates = resolveBranchUIStates(cfg, routePromptInput.DomainMessages, input.UIStates)
+			promptPlan, reasoningContentPassback, err = s.planRoutePrompt(ctx, input.UserID, routePromptInput, route)
+			if err != nil {
+				retErr = err
+				return nil, err
+			}
+			fileTrace.recordPlannedMessages(promptPlan.Messages)
+			plan = s.prepareRouteGeneration(ctx, routeGenerationPreparationInput{
+				Generation: gen, Route: route, PromptPlan: promptPlan,
+				ReasoningContentPassback: reasoningContentPassback,
+				Mode:                     routeGenerationInitial, TraceRecorder: traceRecorder,
+			})
+		}
+	}
+	fileTrace.resolveFinal(ctx, s, route, fileContextPlan.Attachments, nativeInputCache, plan.fullLLMMessages, cfg)
+	if traceRecorder != nil && fileTrace.visible() {
+		traceRecorder.appendProcessSection(fileTrace.summary, fileTrace.markdown, fileTrace.payload, messageTraceStatusStreaming)
+	}
 	runState.applyReasoningEffort(plan.reasoningEffort)
 	runner.routeConfig = plan.routeConfig
 	if plan.generateInput.ResponsesBackground {
@@ -793,17 +823,13 @@ func (s *Service) sendMessageInternal(
 		route = nextRoute
 		attemptedRouteIDs = append(attemptedRouteIDs, route.RouteID)
 		routeFailureRecorded = false
-		if traceRecorder != nil && fileTrace.visible() {
-			previousSummary, previousMarkdown := fileTrace.summary, fileTrace.markdown
-			fileTrace.resolve(ctx, s, route, fileContextPlan.Attachments, nativeInputCache)
-			traceRecorder.replaceProcessSection(previousSummary, previousMarkdown, fileTrace.summary, fileTrace.markdown, fileTrace.payload)
-		}
 		nextPromptPlan, nextReasoningContentPassback, buildErr := s.planRoutePrompt(ctx, input.UserID, routePromptInput, route)
 		if buildErr != nil {
 			retErr = buildErr
 			return nil, buildErr
 		}
 		runState.applyRoute(route)
+		fileTrace.recordPlannedMessages(nextPromptPlan.Messages)
 		plan = s.prepareRouteGeneration(ctx, routeGenerationPreparationInput{
 			Generation:               gen,
 			Route:                    route,
@@ -812,6 +838,11 @@ func (s *Service) sendMessageInternal(
 			Mode:                     routeGenerationFailover,
 			TraceRecorder:            traceRecorder,
 		})
+		previousSummary, previousMarkdown := fileTrace.summary, fileTrace.markdown
+		fileTrace.resolveFinal(ctx, s, route, fileContextPlan.Attachments, nativeInputCache, plan.fullLLMMessages, cfg)
+		if traceRecorder != nil && fileTrace.visible() {
+			traceRecorder.replaceProcessSection(previousSummary, previousMarkdown, fileTrace.summary, fileTrace.markdown, fileTrace.payload)
+		}
 		runState.applyReasoningEffort(plan.reasoningEffort)
 		runner.beginRouteFailover(plan.routeConfig)
 		sendSpan.SetAttributes(
@@ -827,6 +858,13 @@ func (s *Service) sendMessageInternal(
 				zap.Int("attempt", len(attemptedRouteIDs)),
 				zap.Error(failedErr),
 			)
+		}
+		if budgetErr := s.ensureUsageBudgetCoversEstimate(ctx, input.UsageAuthorization, route, plan.filteredOptions, usageBudgetEstimate{
+			InputTokens:  plan.estimatedPromptTokens,
+			OutputTokens: messageRequestMaxOutputTokens(plan.filteredOptions),
+		}); budgetErr != nil {
+			retErr = budgetErr
+			return nil, budgetErr
 		}
 		upstreamOutput, err = runner.runRouteAttempt(ctx, &plan, sendSpan)
 		if generationCanceled(ctx, err) {
@@ -861,7 +899,6 @@ func (s *Service) sendMessageInternal(
 	} else {
 		runner.usage.setObservedUsage(totalUsage)
 	}
-	totalServerSideToolUsage = addServerSideToolUsage(nil, upstreamOutput.ServerSideToolUsage)
 	remainingToolCalls := max(s.resolveMaxToolCallsPerRun()-len(imageProcessing.Rows), 0)
 	llmCallCount := runner.llmRequestCount
 	toolLedger := newToolExecutionLedger()
@@ -871,7 +908,7 @@ func (s *Service) sendMessageInternal(
 	ensureFollowUpBudget := func(nextInput llm.GenerateInput) error {
 		return s.ensureUsageBudgetCoversEstimate(ctx, input.UsageAuthorization, route, filteredOptions, followUpUsageBudgetEstimate(
 			runner.usage.billedUsage(),
-			estimateBillableInputTokens(nextInput, llmMessages),
+			runner.estimateContextInput(fullContextObservationInput(nextInput, llmMessages)),
 			filteredOptions,
 		))
 	}
@@ -898,6 +935,7 @@ func (s *Service) sendMessageInternal(
 			route.UpstreamModel,
 			route.ModelCapabilitiesJSON,
 			cfg.ContextWindowFallbackTokens,
+			runner.estimateContextInput,
 		)
 		toolCtx, toolSpan := platformtracing.Start(ctx, "conversation.tool.execute",
 			trace.WithAttributes(
@@ -957,6 +995,7 @@ func (s *Service) sendMessageInternal(
 			route.UpstreamModel,
 			route.ModelCapabilitiesJSON,
 			cfg.ContextWindowFallbackTokens,
+			runner.estimateContextInput,
 		)
 		if toolHistoryTrimmed {
 			toolHistoryTrimmedForRun = true
@@ -969,6 +1008,7 @@ func (s *Service) sendMessageInternal(
 			route.UpstreamModel,
 			route.ModelCapabilitiesJSON,
 			cfg.ContextWindowFallbackTokens,
+			runner.estimateContextInput,
 		)
 		if toolResultsRebalanced {
 			sendSpan.SetAttributes(attribute.Bool("conversation.tool.results_rebalanced", true))
@@ -1006,7 +1046,6 @@ func (s *Service) sendMessageInternal(
 		}
 		s.routeResolver.MarkRouteSuccess(ctx, route)
 		totalUsage = mergeFollowUpUsage(totalUsage, nextOutput, runner.usage)
-		totalServerSideToolUsage = addServerSideToolUsage(totalServerSideToolUsage, nextOutput.ServerSideToolUsage)
 		upstreamOutput = nextOutput
 		generatedFiles = mergeAssistantGeneratedFiles(generatedFiles, nextOutput.GeneratedFiles)
 		llmCallCount = runner.llmRequestCount
@@ -1037,7 +1076,6 @@ func (s *Service) sendMessageInternal(
 		}
 		s.routeResolver.MarkRouteSuccess(ctx, route)
 		totalUsage = mergeFollowUpUsage(totalUsage, nextOutput, runner.usage)
-		totalServerSideToolUsage = addServerSideToolUsage(totalServerSideToolUsage, nextOutput.ServerSideToolUsage)
 		upstreamOutput = nextOutput
 		generatedFiles = mergeAssistantGeneratedFiles(generatedFiles, nextOutput.GeneratedFiles)
 		llmCallCount++
@@ -1164,6 +1202,7 @@ func (s *Service) sendMessageInternal(
 		return nil, err
 	}
 
+	runner.persistContextObservation(ctx, assistantMessage)
 	compactMessages := append([]model.Message(nil), contextMessages...)
 	compactMessages[len(compactMessages)-1] = *userMessage
 	compactMessages = append(compactMessages, *assistantMessage)
@@ -1175,7 +1214,7 @@ func (s *Service) sendMessageInternal(
 		RunID:               runID,
 		Messages:            compactMessages,
 		ExistingSnapshot:    prefetch.snapshot,
-		PromptTokenEstimate: plan.fullContextPromptTokens + effectiveOutputTokens,
+		PromptTokenEstimate: runner.contextTokenEstimate(assistantText, assistantReasoningContent, plan.fullContextPromptTokens),
 		ContextModelName:    route.UpstreamModel,
 		CapabilitiesJSON:    route.ModelCapabilitiesJSON,
 	}
@@ -1243,7 +1282,7 @@ func (s *Service) sendMessageInternal(
 		RawUsageJSON:          totalUsage.RawUsageJSON,
 		CacheWrite5mTokens:    totalUsage.CacheWrite5mTokens,
 		CacheWrite1hTokens:    totalUsage.CacheWrite1hTokens,
-		ServerSideToolUsage:   totalServerSideToolUsage,
+		ServerSideToolUsage:   runner.nativeToolUsage,
 		MCPToolUsage:          totalMCPToolUsage,
 		LLMCallCount:          runner.completedLLMCallCount,
 		LatencyMS:             time.Since(startedAt).Milliseconds(),

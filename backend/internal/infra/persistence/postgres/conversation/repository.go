@@ -1734,14 +1734,18 @@ func conversationEventDetailSelectColumns(db *gorm.DB) []string {
 }
 
 func conversationToolCallDetailSelectColumns(db *gorm.DB) []string {
+	inputSize := conversationEventJSONSizeExpression(db, "input_json")
 	outputSize := conversationEventJSONSizeExpression(db, "output_json")
 	errorSize := conversationEventJSONSizeExpression(db, "error_json")
-	totalSize := "(" + outputSize + " + " + errorSize + ")"
+	totalSize := "(" + inputSize + " + " + outputSize + " + " + errorSize + ")"
 	return []string{
 		"run_id",
 		"tool_call_id",
 		"tool_name",
 		"status",
+		inputSize + " AS input_size_bytes",
+		fmt.Sprintf("CASE WHEN %s > 0 AND %s > %d THEN TRUE ELSE FALSE END AS input_omitted", inputSize, totalSize, maxConversationToolCallDetailJSONBytes),
+		fmt.Sprintf("CASE WHEN %s <= %d THEN input_json ELSE '' END AS input_json", totalSize, maxConversationToolCallDetailJSONBytes),
 		outputSize + " AS output_size_bytes",
 		fmt.Sprintf("CASE WHEN %s > 0 AND %s > %d THEN TRUE ELSE FALSE END AS output_omitted", outputSize, totalSize, maxConversationToolCallDetailJSONBytes),
 		fmt.Sprintf("CASE WHEN %s <= %d THEN output_json ELSE '' END AS output_json", totalSize, maxConversationToolCallDetailJSONBytes),
@@ -2113,6 +2117,9 @@ func (r *Repo) GetConversationToolCallDetail(
 		ToolCallID:      item.ToolCallID,
 		ToolName:        item.ToolName,
 		Status:          item.Status,
+		InputJSON:       item.InputJSON,
+		InputSizeBytes:  item.InputSizeBytes,
+		InputOmitted:    item.InputOmitted,
 		OutputJSON:      item.OutputJSON,
 		OutputSizeBytes: item.OutputSizeBytes,
 		OutputOmitted:   item.OutputOmitted,

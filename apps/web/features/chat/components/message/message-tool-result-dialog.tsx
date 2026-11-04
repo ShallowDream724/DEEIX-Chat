@@ -21,7 +21,7 @@ import { JsonCodeEditor } from "@/shared/components/json-code-editor";
 import { formatBytes } from "@/entities/file";
 
 type ToolResultSection = {
-  key: "output" | "error";
+  key: "input" | "output" | "error";
   label: string;
   value: string;
   editorValue: string | null;
@@ -81,10 +81,21 @@ export function MessageToolResultDialog({
       return [];
     }
     const output = detail.outputJSON;
+    const input = detail.inputJSON;
+    const preparedInput = prepareJSONResult(input);
     const error = detail.errorJSON;
     const preparedOutput = prepareJSONResult(output);
     const preparedError = prepareJSONResult(error);
     return [
+      {
+        key: "input" as const,
+        label: t("request"),
+        value: input,
+        editorValue: preparedInput?.value ?? null,
+        largeJSON: preparedInput?.large ?? false,
+        omitted: detail.inputOmitted,
+        omittedSize: detail.inputSizeBytes,
+      },
       {
         key: "output" as const,
         label: t("response"),
@@ -142,6 +153,7 @@ export function MessageToolResultDialog({
             </DialogHeader>
 
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-2">
+              {detail ? <p className="mb-3 text-xs text-muted-foreground">{t("statusLabel")}: {detail.status}</p> : null}
               {loading || waitingForDetail ? (
                 <div className="flex min-h-36 items-center justify-center rounded-md bg-muted/20">
                   <Spinner label={t("loadingFullResult")} className="size-4 text-muted-foreground" />
@@ -154,7 +166,7 @@ export function MessageToolResultDialog({
                 <div className="space-y-3">
                   {sections.map((section) => (
                     <section key={section.key} className="space-y-1.5">
-                      {sections.length > 1 ? (
+                      {section.label ? (
                         <h3 className="text-xs font-medium text-muted-foreground">{section.label}</h3>
                       ) : null}
                       {section.omitted ? (
@@ -177,6 +189,9 @@ export function MessageToolResultDialog({
                       )}
                     </section>
                   ))}
+                  {!detail?.outputJSON && !detail?.outputOmitted && !detail?.errorJSON && !detail?.errorOmitted ? (
+                    <p className="text-xs leading-5 text-muted-foreground">{t("fullResultNoOutput")}</p>
+                  ) : null}
                 </div>
               ) : (
                 <p className="flex min-h-36 items-center justify-center rounded-md bg-muted/20 text-xs text-muted-foreground">

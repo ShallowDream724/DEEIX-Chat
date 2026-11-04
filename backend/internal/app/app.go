@@ -398,6 +398,7 @@ func NewAppWithOptions(opts Options) (*App, error) {
 	billingService.SetPlatformModelIdentityResolver(channelService)
 	billingService.SetModelPricingCatalogProvider(channelService)
 	billingService.SetNativeToolCatalogProvider(channelService)
+	settingsService.SetNativeToolCatalogProvider(channelService)
 	settingsHandler.SetNativeToolCatalogProvider(channelService)
 	channelHandler := channelhttp.NewHandler(channelService)
 	channelModule := channelhttp.NewModule(channelHandler)

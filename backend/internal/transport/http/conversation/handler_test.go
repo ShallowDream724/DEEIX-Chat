@@ -17,6 +17,25 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func TestInputBudgetErrorCarriesSafeDetailsInHTTPAndStream(t *testing.T) {
+	err := fmt.Errorf("private secret URL: %w", llm.NewInputLimitError("requestBytes", 1001, 1000))
+	description := describeSendMessageError(err)
+	if description.Status != http.StatusRequestEntityTooLarge || description.Code != "file.too_large" {
+		t.Fatalf("unexpected description: %#v", description)
+	}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	response.ErrorDescribed(ctx, description)
+	if body := recorder.Body.String(); !strings.Contains(body, `"dimension":"requestBytes"`) || !strings.Contains(body, `"actual":1001`) || strings.Contains(body, "secret") {
+		t.Fatalf("unsafe or missing details: %s", body)
+	}
+	payload := streamErrorPayload(nil, err)
+	encoded, _ := json.Marshal(payload)
+	if !strings.Contains(string(encoded), `"limit":1000`) || strings.Contains(string(encoded), "secret") {
+		t.Fatalf("unsafe stream details: %s", encoded)
+	}
+}
+
 func TestStreamErrorPayloadWithResultPreservesPersistedResult(t *testing.T) {
 	result := &appconversation.SendMessageResult{}
 	payload := streamErrorPayloadWithResult(nil, errors.New("store generated video"), result)

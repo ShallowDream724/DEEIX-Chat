@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"time"
 
@@ -37,12 +38,18 @@ const (
 	MediaImageTaskEdit MediaImageTaskType = "image_edit"
 )
 
-const maxMediaImageEditInputImages = 16
-
 // maxGeneratedImageBytes 是单张生成图片的上限，独立于管理员配置的上传上限：
 // 上传上限约束用户提交的文件，而 4K PNG 输出通常就有 20 MiB 以上。
-// 与历史图片的读取上限保持一致，保存下来的图片在后续对话和编辑中都能再次读取。
-const maxGeneratedImageBytes = maxConversationImageSourceBytes
+const maxGeneratedImageBytes = 50 * 1024 * 1024
+
+func (s *Service) generatedImageMaxBytes() int64 {
+	if s != nil && s.cfg != nil {
+		if limit := s.cfg.Snapshot().GeneratedImageMaxBytes; limit > 0 {
+			return limit
+		}
+	}
+	return maxGeneratedImageBytes
+}
 
 type mediaImageCapabilities struct {
 	Image struct {
@@ -345,7 +352,7 @@ func (s *Service) StreamMediaImage(ctx context.Context, input MediaImageInput) (
 
 	cfg := s.cfg.Snapshot()
 	attributionReferer, attributionTitle := s.llmAttribution()
-	routeConfig := routeConfigFromResolved(route, endpoint, attributionReferer, attributionTitle)
+	routeConfig := routeConfigFromResolved(route, endpoint, attributionReferer, attributionTitle, cfg)
 	filteredOptions := filterModelOptions(input.Options, route.Protocol, modelOptionPolicyConfig{
 		Mode:                  cfg.ModelOptionPolicyMode,
 		AllowedPathsJSON:      cfg.ModelOptionAllowedPaths,
@@ -473,7 +480,7 @@ func (s *Service) StreamMediaImage(ctx context.Context, input MediaImageInput) (
 			MimeType:     mimeType,
 			DeclaredSize: int64(len(data)),
 			Reader:       bytes.NewReader(data),
-			MaxBytes:     maxGeneratedImageBytes,
+			MaxBytes:     s.generatedImageMaxBytes(),
 		})
 		if uploadErr != nil {
 			retErr = uploadErr
@@ -654,11 +661,8 @@ func (s *Service) resolveMediaImageEditInputs(ctx context.Context, input MediaIm
 	if err != nil {
 		return nil, nil, err
 	}
-	if len(attachments) == 0 || len(attachments) > maxMediaImageEditInputImages {
-		if len(attachments) == 0 {
-			return nil, nil, ErrMediaImageEditInputRequired
-		}
-		return nil, nil, ErrMediaImageEditTooManyInputs
+	if len(attachments) == 0 {
+		return nil, nil, ErrMediaImageEditInputRequired
 	}
 	parts := make([]llm.ContentPart, 0, len(attachments))
 	for _, attachment := range attachments {
@@ -694,7 +698,8 @@ func (s *Service) readMediaImageEditFile(ctx context.Context, userID uint, fileI
 	defer content.Reader.Close() //nolint:errcheck
 
 	// 编辑输入可能是之前生成的图片，按生成图片的上限读取，管理员配置得更大时以其为准。
-	limit := max(s.cfg.Snapshot().MaxUploadFileBytes, maxGeneratedImageBytes)
+	cfg := s.cfg.Snapshot()
+	limit := max(cfg.MaxUploadFileBytes, cfg.FileImageMaxBytes, s.generatedImageMaxBytes())
 	data, err := io.ReadAll(io.LimitReader(content.Reader, limit+1))
 	if err != nil {
 		return llm.ContentPart{}, err
@@ -813,11 +818,16 @@ func (s *Service) readGeneratedImage(ctx context.Context, image llm.GeneratedIma
 		mimeType = "image/png"
 	}
 	if b64 := strings.TrimSpace(image.B64JSON); b64 != "" {
-		data, err := base64.StdEncoding.DecodeString(stripBase64DataURLPrefix(b64))
+		encoded := stripBase64DataURLPrefix(b64)
+		readLimit := s.generatedImageMaxBytes()
+		if readLimit < math.MaxInt64 {
+			readLimit++
+		}
+		data, err := io.ReadAll(io.LimitReader(base64.NewDecoder(base64.StdEncoding, strings.NewReader(encoded)), readLimit))
 		if err != nil {
 			return nil, mimeType, newGeneratedMediaArtifactError("image", "decode", err)
 		}
-		if len(data) > maxGeneratedImageBytes {
+		if int64(len(data)) > s.generatedImageMaxBytes() {
 			return nil, mimeType, ErrFileTooLarge
 		}
 		validated, detectedMIME, validationErr := validateGeneratedImageBytes(data, mimeType)
@@ -834,7 +844,7 @@ func (s *Service) readGeneratedImage(ctx context.Context, image llm.GeneratedIma
 	if downloader == nil {
 		return nil, mimeType, newGeneratedMediaArtifactError("image", "configuration", fmt.Errorf("generated media downloader is not configured"))
 	}
-	data, downloadedMIME, err := downloader.DownloadImage(ctx, url, source.endpoint, maxGeneratedImageBytes)
+	data, downloadedMIME, err := downloader.DownloadImage(ctx, url, source.endpoint, s.generatedImageMaxBytes())
 	if err != nil {
 		if isMediaArtifactResponseTooLarge(err) {
 			return nil, mimeType, ErrFileTooLarge

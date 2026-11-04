@@ -11,6 +11,7 @@ import (
 	platformtracing "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/observability/tracing"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
@@ -26,16 +27,17 @@ const (
 
 // routeGenerationContext 汇集与具体路由无关、整条消息共享的请求形状输入。
 type routeGenerationContext struct {
-	input                  SendMessageInput
-	conversation           *model.Conversation
-	cfg                    config.Config
-	tools                  []llm.ToolDefinition
-	promptCacheSessionKey  string
-	statefulContextConfig  string
-	statefulContextState   string
-	normalizedBranchReason string
-	attributionReferer     string
-	attributionTitle       string
+	input                   SendMessageInput
+	conversation            *model.Conversation
+	cfg                     config.Config
+	tools                   []llm.ToolDefinition
+	promptCacheSessionKey   string
+	statefulContextConfig   string
+	statefulContextState    string
+	normalizedBranchReason  string
+	attributionReferer      string
+	attributionTitle        string
+	contextObservationScope repository.HistoricalMessageScope
 }
 
 type routeGenerationPreparationInput struct {
@@ -68,6 +70,8 @@ type routeGenerationPlan struct {
 	statefulContinuation      bool
 	promptMode                string
 	promptShape               promptShape
+	contextIdentity           string
+	contextInputEstimator     func(llm.GenerateInput) int64
 }
 
 // prepareRouteGeneration 把路由级提示词规划固化为一次上游调用的请求形状：过滤模型参数、配置提示词
@@ -85,7 +89,7 @@ func (s *Service) prepareRouteGeneration(ctx context.Context, input routeGenerat
 	conversation := gen.conversation
 	plan := routeGenerationPlan{
 		route:                    route,
-		routeConfig:              messageRouteConfig(route, gen.attributionReferer, gen.attributionTitle),
+		routeConfig:              messageRouteConfig(route, gen.attributionReferer, gen.attributionTitle, cfg),
 		promptPlan:               promptPlan,
 		reasoningContentPassback: reasoningContentPassback,
 	}
@@ -122,13 +126,18 @@ func (s *Service) prepareRouteGeneration(ctx context.Context, input routeGenerat
 		Messages:               cloneLLMMessages(llmMessages),
 		Tools:                  gen.tools,
 		Options:                filteredOptions,
+		NativeToolKeys:         authorizedNativeToolKeys(route.Protocol, filteredOptions, route.ModelCapabilitiesJSON),
 	}
+	plan.contextIdentity = contextObservationRouteIdentity(route, gen.statefulContextConfig)
+	estimateContextInput := s.contextInputEstimator(ctx, gen.contextObservationScope, plan.contextIdentity)
+	plan.contextInputEstimator = estimateContextInput
 	generateInput, budgetFit := fitGenerateInputToModelBudget(
 		generateInput,
 		route.UpstreamModel,
 		route.ModelCapabilitiesJSON,
 		cfg.ContextWindowFallbackTokens,
 		cfg.ContextTokenBudgetEnabled,
+		estimateContextInput,
 	)
 	llmMessages = cloneLLMMessages(generateInput.Messages)
 	if budgetFit.Trimmed {
@@ -140,7 +149,7 @@ func (s *Service) prepareRouteGeneration(ctx context.Context, input routeGenerat
 	}
 	fullLLMMessages := cloneLLMMessages(llmMessages)
 	applyOpenAIResponsesInstructions(route, plan.routeConfig.Endpoint, &generateInput)
-	plan.estimatedPromptTokens = estimateGenerateInputTokens(generateInput)
+	plan.estimatedPromptTokens = estimateContextInput(generateInput)
 	// 有状态 Responses 续传只发送本轮增量，但压缩决策必须继续观察完整上下文；
 	// 同时保留预算裁剪前的规模，让被裁掉的历史在回复后及时进入滚动摘要。
 	plan.fullContextPromptTokens = maxPromptTokenEstimate(budgetFit.TokensBefore, plan.estimatedPromptTokens)
@@ -201,15 +210,16 @@ func (s *Service) prepareRouteGeneration(ctx context.Context, input routeGenerat
 // messageGenerationRunner 执行一条消息内的每次上游 LLM 调用，并累计跨调用的运行观测：
 // 请求计数、用量、可见输出、首字延迟与后台 Responses 恢复状态。中断收尾与最终结果都从这里读取。
 type messageGenerationRunner struct {
-	service       *Service
-	input         SendMessageInput
-	runID         string
-	startedAt     time.Time
-	preferStream  bool
-	onDelta       func(string) error
-	maxLLMCalls   int
-	usage         *messageUsageAccumulator
-	traceRecorder *messageTraceRecorder
+	nativeToolUsage map[string]int64
+	service         *Service
+	input           SendMessageInput
+	runID           string
+	startedAt       time.Time
+	preferStream    bool
+	onDelta         func(string) error
+	maxLLMCalls     int
+	usage           *messageUsageAccumulator
+	traceRecorder   *messageTraceRecorder
 	// routeConfig 是当前路由的调用配置，路由故障转移时随之更新。
 	routeConfig llm.RouteConfig
 
@@ -223,6 +233,10 @@ type messageGenerationRunner struct {
 	streamedText                strings.Builder
 	responsesBackgroundRecovery openAIResponsesBackgroundRecoveryState
 	lastAttemptObservation      *generationAttemptObservation
+	contextIdentity             string
+	contextObservation          contextInputObservation
+	contextObservations         []contextInputObservation
+	contextInputEstimator       func(llm.GenerateInput) int64
 }
 
 // emitVisibleDelta 把一段可见增量交给客户端回调，并记录首字延迟与累计可见文本。
@@ -327,7 +341,10 @@ func (c *generationCall) handleStreamEvent(generationCtx context.Context, curren
 		// 上游流式 usage 通常是“本次 LLM 调用累计值”，但一条消息可能包含多轮 LLM 调用。
 		// 这里先换算成本次调用内增量，再累加成本轮消息总量，保证实时展示和最终账单口径一致。
 		usageDelta := diffLLMUsage(event.Usage, c.streamUsage)
-		c.streamUsage = event.Usage
+		// Keep the largest per-call snapshot so duplicate or older cumulative
+		// events cannot make the next snapshot charge the same interval again.
+		c.streamUsage = addLLMUsage(c.streamUsage, usageDelta)
+		r.usage.observeContextInput(c.streamUsage)
 		if currentInput.ResponsesBackground {
 			r.responsesBackgroundRecovery.ObservedUsage = c.streamUsage
 		}
@@ -407,6 +424,15 @@ func (c *generationCall) handleStreamEvent(generationCtx context.Context, curren
 // generate 执行一次上游调用：优先流式，流式不受支持或在产生任何副作用前失败时回退到非流式。
 // fullMessages 是本次调用对应的完整上下文，有状态续传时用于估算上游实际计费的输入规模。
 func (r *messageGenerationRunner) generate(ctx context.Context, currentInput llm.GenerateInput, fullMessages []llm.Message) (*llm.GenerateOutput, error) {
+	// The retained context shares the media budget even when Responses sends
+	// only a delta. Validate before recording an attempted upstream call.
+	mediaInput := fullContextObservationInput(currentInput, fullMessages)
+	if err := llm.ValidateInputMedia(llm.EffectiveInputMediaLimits(r.routeConfig), mediaInput); err != nil {
+		return nil, err
+	}
+	if err := llm.ValidateProviderInput(r.routeConfig, mediaInput); err != nil {
+		return nil, err
+	}
 	call := &generationCall{
 		runner:              r,
 		observation:         &generationAttemptObservation{},
@@ -421,7 +447,9 @@ func (r *messageGenerationRunner) generate(ctx context.Context, currentInput llm
 	streamRequested := r.preferStream && r.onDelta != nil
 	streamSupported := llm.SupportsStreamingAdapter(r.routeConfig.Protocol)
 	callPromptShape := summarizePromptShape(callPromptMode, currentInput.Messages, currentInput.Messages, currentInput.PreviousResponseID)
-	r.usage.beginCall(estimateBillableInputTokens(currentInput, fullMessages))
+	estimatedInputTokens := r.estimateContextInput(fullContextObservationInput(currentInput, fullMessages))
+	r.usage.beginCall(estimatedInputTokens)
+	r.contextObservation = describeContextInput(r.contextIdentity, currentInput, fullMessages)
 	if currentInput.ResponsesBackground {
 		r.responsesBackgroundRecovery = openAIResponsesBackgroundRecoveryState{Enabled: true}
 	} else {
@@ -450,15 +478,21 @@ func (r *messageGenerationRunner) generate(ctx context.Context, currentInput llm
 		r.upstreamCallStarted = true
 		r.llmRequestCount++
 		output, err := r.service.llmClient.Generate(generationCtx, r.routeConfig, currentInput)
+		r.recordNativeToolUsage(output)
 		generateErr = err
+		if err != nil {
+			call.recordPartialUsage(output)
+		}
 		if err == nil {
 			generateErr = call.finalizeNonStreamingOutput(output, streamRequested)
 			if generateErr != nil {
+				call.recordPartialUsage(output)
 				return output, generateErr
 			}
 		}
 		if generateErr == nil {
 			r.completedLLMCallCount++
+			call.recordContextObservation(output)
 			r.usage.finishCall(
 				output != nil && output.Usage.HasObservedInput(),
 				output != nil && output.Usage.HasObservedOutput(),
@@ -472,7 +506,11 @@ func (r *messageGenerationRunner) generate(ctx context.Context, currentInput llm
 	output, streamErr := r.service.llmClient.GenerateStream(generationCtx, r.routeConfig, currentInput, func(event llm.GenerateStreamEvent) error {
 		return call.handleStreamEvent(generationCtx, currentInput, event)
 	})
+	r.recordNativeToolUsage(output)
 	generateErr = streamErr
+	if streamErr != nil {
+		call.recordPartialUsage(output)
+	}
 	if generateErr == nil {
 		visibleTail, thinkTail := call.thinkingRouter.flush()
 		r.usage.recordCallReasoningText(thinkTail)
@@ -493,12 +531,14 @@ func (r *messageGenerationRunner) generate(ctx context.Context, currentInput llm
 		call.observation.canRetry(generateErr, shouldFallbackToNonStreaming) {
 		r.llmRequestCount++
 		output, generateErr = r.service.llmClient.Generate(generationCtx, r.routeConfig, currentInput)
+		r.recordNativeToolUsage(output)
 		if generateErr == nil {
 			generateErr = call.finalizeNonStreamingOutput(output, true)
 		}
 	}
 	if generateErr == nil {
 		r.completedLLMCallCount++
+		call.recordContextObservation(output)
 		r.usage.finishCall(
 			call.streamUsage.HasObservedInput() || (output != nil && output.Usage.HasObservedInput()),
 			call.streamUsage.HasObservedOutput() || (output != nil && output.Usage.HasObservedOutput()),
@@ -507,10 +547,41 @@ func (r *messageGenerationRunner) generate(ctx context.Context, currentInput llm
 	return output, generateErr
 }
 
+// Provider counters in the returned output are final per-request snapshots.
+// Record each request once, including accepted requests that end in cancellation.
+func (r *messageGenerationRunner) recordNativeToolUsage(output *llm.GenerateOutput) {
+	if output != nil {
+		r.nativeToolUsage = addServerSideToolUsage(r.nativeToolUsage, output.ServerSideToolUsage)
+		for _, count := range output.ServerSideToolUsage {
+			if count > 0 {
+				r.attemptHadSideEffect = true
+				if r.lastAttemptObservation != nil {
+					r.lastAttemptObservation.markObservable()
+				}
+				break
+			}
+		}
+	}
+}
+
+func (c *generationCall) recordPartialUsage(output *llm.GenerateOutput) {
+	if output == nil || output.Usage == (llm.Usage{}) {
+		return
+	}
+	delta := diffLLMUsage(output.Usage, c.streamUsage)
+	c.streamUsage = addLLMUsage(c.streamUsage, delta)
+	c.runner.usage.addObservedUsage(delta)
+	c.runner.usage.observeContextInput(c.streamUsage)
+	c.runner.attemptHadSideEffect = true
+	c.observation.markObservable()
+}
+
 // runRouteAttempt 在当前路由上发起首次调用，并按上游拒绝原因就地降级重试：
 // 先放弃后台 Responses 模式，再放弃 previous_response_id 续传改发完整上下文。
 // 降级会写回 plan，使后续工具回灌沿用降级后的请求形状。
 func (r *messageGenerationRunner) runRouteAttempt(ctx context.Context, plan *routeGenerationPlan, sendSpan trace.Span) (*llm.GenerateOutput, error) {
+	r.contextIdentity = plan.contextIdentity
+	r.contextInputEstimator = plan.contextInputEstimator
 	output, attemptErr := r.generate(ctx, plan.generateInput, plan.fullLLMMessages)
 	if !r.attemptHadSideEffect && r.llmRequestCount < r.maxLLMCalls && plan.generateInput.ResponsesBackground &&
 		r.lastAttemptObservation.canRetry(attemptErr, shouldRetryWithoutResponsesBackground) {
@@ -544,6 +615,18 @@ func (r *messageGenerationRunner) runRouteAttempt(ctx context.Context, plan *rou
 		output, attemptErr = r.generate(ctx, plan.generateInput, plan.fullLLMMessages)
 	}
 	return output, attemptErr
+}
+
+func (c *generationCall) recordContextObservation(output *llm.GenerateOutput) {
+	usage := c.streamUsage
+	if output != nil && output.Usage.HasObservedInput() {
+		usage = output.Usage
+	}
+	c.runner.usage.observeContextInput(usage)
+	if usage.HasObservedInput() {
+		c.runner.contextObservation.InputTokens = usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
+		c.runner.contextObservations = append(c.runner.contextObservations, c.runner.contextObservation)
+	}
 }
 
 // mergeFollowUpUsage 把工具回灌后一次调用的用量并入本条消息累计：上游有观测值时以累计观测为准，

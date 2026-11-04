@@ -587,7 +587,7 @@ export function SettingsFieldEditor({
                       placeholder={field.type === "password" && configured && !value ? t("input.configuredPasswordPlaceholder") : field.placeholder}
                       inputMode={field.valueUnit === "mb" ? "decimal" : field.type === "int" ? "numeric" : "text"}
                       disabled={disabled}
-                      className={cn("min-w-0 text-left md:text-right", field.valueSuffix ? "pr-8" : "")}
+                      className={cn("min-w-0 text-left md:text-right", field.valueSuffix ? "pr-12" : "")}
                     />
                     {field.valueSuffix ? (
                       <span className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-xs text-muted-foreground">

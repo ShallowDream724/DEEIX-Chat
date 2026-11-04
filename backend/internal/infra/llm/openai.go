@@ -157,7 +157,7 @@ func (c *Client) generateStreamOpenAICompatible(
 	idleReader := newIdleTimeoutReader(resp.Body, idleTimeout)
 	streamBody := newUpstreamBodyRecorder(idleReader)
 	if err = consumeOpenAIGenerateStream(endpoint, route.Protocol, streamBody, result, onEvent, deepSeekTextEncodedToolCallsEnabled(route)); err != nil {
-		return nil, portllm.MarkRequestAccepted(attachUpstreamDebug(err, upstreamDebugSnapshot(req, payload, resp, streamErrorBody(streamBody, err))))
+		return result, portllm.MarkRequestAccepted(attachUpstreamDebug(err, upstreamDebugSnapshot(req, payload, resp, streamErrorBody(streamBody, err))))
 	}
 	return result, nil
 }
@@ -535,6 +535,18 @@ func consumeOpenAIGenerateStream(
 		if err := json.Unmarshal([]byte(payloadText), &parsed); err != nil {
 			return err
 		}
+		// Terminal Responses failures can still report successful native operations.
+		// Retain those counters before the generic error envelope short-circuits parsing.
+		terminalType := getString(parsed["type"])
+		if terminalType == "" {
+			terminalType = currentEvent
+		}
+		if normalizeEndpoint(endpoint) == portllm.EndpointResponses && (terminalType == "response.completed" || terminalType == "response.failed" || terminalType == "response.incomplete") {
+			result.Usage = parseOpenAICompatibleUsageForAdapter(adapter, asMap(parsed["response"]))
+			if usage := parseServerSideToolUsage(asMap(parsed["response"])); usage != nil {
+				result.ServerSideToolUsage = usage
+			}
+		}
 		if err := parseStreamUpstreamError(parsed, payloadText); err != nil {
 			return err
 		}
@@ -672,7 +684,9 @@ func mergeGenerateOutput(dst *portllm.GenerateOutput, src *portllm.GenerateOutpu
 		dst.ToolCalls = append(dst.ToolCalls[:0], src.ToolCalls...)
 	}
 	if len(src.ServerToolCalls) > 0 {
-		dst.ServerToolCalls = append(dst.ServerToolCalls[:0], src.ServerToolCalls...)
+		for _, call := range src.ServerToolCalls {
+			appendResponsesServerToolCall(dst, call)
+		}
 	}
 	if len(src.ServerSideToolUsage) > 0 {
 		dst.ServerSideToolUsage = cloneInt64Map(src.ServerSideToolUsage)

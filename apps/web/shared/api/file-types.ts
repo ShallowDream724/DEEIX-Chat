@@ -27,12 +27,18 @@ export type FileExtractDTO = {
 
 export type ChatFilePolicyDTO = {
   maxMessageFiles: number;
+  temporaryChatMaxAttachments: number;
+  temporaryChatRequestMaxBytes: number;
   maxUploadFileBytes: number;
   allowedMIMETypes: string[];
   imageMaxBytes: number;
   docMaxBytes: number;
+  audioMaxBytes: number;
+  videoMaxBytes: number;
   effectiveImageMaxBytes: number;
   effectiveDocMaxBytes: number;
+  effectiveAudioMaxBytes: number;
+  effectiveVideoMaxBytes: number;
   fullContextMaxBytes: number;
   fullContextMaxTokens: number;
   fullContextPDFMaxPages: number;

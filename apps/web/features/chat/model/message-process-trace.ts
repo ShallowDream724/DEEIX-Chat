@@ -185,6 +185,7 @@ function readFileContextBadges(
   label: string,
   description: string,
   tab: "extract" | "preview",
+  labels?: ProcessTraceLabels,
 ): FileContextBadge[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((item) => {
@@ -195,7 +196,17 @@ function readFileContextBadges(
     if (!isRecord(item)) return [];
     const fileID = firstStringFromRecord(item, ["file_id", "fileID", "id"]);
     const name = firstStringFromRecord(item, ["file_name", "fileName", "name", "title"]) || fileID;
-    return name ? [{ fileID, name, label, description, tab }] : [];
+    const reason = readString(item.reason);
+    const reasonDescription = labels?.fileBadges.exclusionReasons[reason];
+    let explanation = typeof reasonDescription === "string" && reasonDescription ? reasonDescription : description;
+    if (reason === "input_budget" && labels && isRecord(item.limit)) {
+      const { dimension, actual, limit } = item.limit;
+      if (typeof dimension === "string" && typeof actual === "number" && typeof limit === "number" && Number.isSafeInteger(actual) && Number.isSafeInteger(limit) && actual >= -1 && limit > 0) {
+        const detail = labels.fileBadges.budgetDetails(dimension, actual, limit);
+        if (detail) explanation = `${explanation} ${detail}`;
+      }
+    }
+    return name ? [{ fileID, name, label, description: explanation, tab }] : [];
   });
 }
 
@@ -215,11 +226,11 @@ export function parseFileContextBadges(payloadJson: string | undefined, labels: 
       labels.fileBadges.descriptions.fullContext,
       "extract",
     ),
-    ...readFileContextBadges(groups.unsupported, labels.fileBadges.unsupported, labels.fileBadges.descriptions.unsupported, "preview"),
-    ...readFileContextBadges(groups.skipped, labels.fileBadges.skipped, labels.fileBadges.descriptions.skipped, "extract"),
+    ...readFileContextBadges(groups.unsupported, labels.fileBadges.unsupported, labels.fileBadges.descriptions.unsupported, "preview", labels),
+    ...readFileContextBadges(groups.skipped, labels.fileBadges.skipped, labels.fileBadges.descriptions.skipped, "extract", labels),
   ];
   if (badges.length > 0) return badges;
-  const refs = readFileContextBadges(parsed.file_refs, labels.fileBadges.file, labels.fileBadges.descriptions.file, "extract");
+  const refs = readFileContextBadges(parsed.file_refs, labels.fileBadges.file, labels.fileBadges.descriptions.file, "extract", labels);
   if (refs.length > 0) return refs;
   return readStringArray(parsed.file_names).map((name) => ({
     name,

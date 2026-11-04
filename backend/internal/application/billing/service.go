@@ -174,6 +174,16 @@ type UsagePricingInput struct {
 	BillingAt    time.Time
 }
 
+func (input UsagePricingInput) AuthorizationNativeToolSnapshot() map[string]domainbilling.NativeToolPrice {
+	result := make(map[string]domainbilling.NativeToolPrice)
+	if input.Authorization != nil {
+		for key := range input.Authorization.NativeToolKeys {
+			result[key] = input.Authorization.NativeToolPricing[key]
+		}
+	}
+	return result
+}
+
 func upstreamUsageSnapshot(input UsagePricingInput) any {
 	raw := strings.TrimSpace(input.RawUsageJSON)
 	if raw == "" {
@@ -1255,7 +1265,10 @@ func (s *Service) AuthorizeUsage(ctx context.Context, userID uint, platformModel
 		return nil, err
 	}
 	mode = strings.TrimSpace(mode)
-	authorization := &domainbilling.UsageAuthorization{Mode: mode, RefNo: strings.TrimSpace(refNo)}
+	authorization := &domainbilling.UsageAuthorization{UserID: userID, Mode: mode, RefNo: strings.TrimSpace(refNo)}
+	if err := s.freezeNativeToolPricing(ctx, authorization); err != nil {
+		return nil, err
+	}
 	if mode != "usage" && mode != "period" {
 		return authorization, nil
 	}
@@ -1269,6 +1282,11 @@ func (s *Service) AuthorizeUsage(ctx context.Context, userID uint, platformModel
 			return nil, err
 		}
 	}
+	return s.reserveUsageAuthorization(ctx, authorization)
+}
+
+func (s *Service) reserveUsageAuthorization(ctx context.Context, authorization *domainbilling.UsageAuthorization) (*domainbilling.UsageAuthorization, error) {
+	userID, mode := authorization.UserID, authorization.Mode
 	reservationNanousd, err := s.repo.GetBillingPrepaidAmountNanousd(ctx)
 	if err != nil {
 		return nil, err
@@ -1304,6 +1322,63 @@ func (s *Service) AuthorizeUsage(ctx context.Context, userID uint, platformModel
 	}
 	authorization.Reservation = reservation
 	return authorization, nil
+}
+
+func (s *Service) freezeNativeToolPricing(ctx context.Context, authorization *domainbilling.UsageAuthorization) error {
+	enabled, err := s.repo.GetNativeToolBillingEnabled(ctx)
+	if err != nil {
+		return err
+	}
+	raw, err := s.repo.GetNativeToolPricingJSON(ctx)
+	if err != nil {
+		return err
+	}
+	definitions, err := s.nativeToolDefinitions(ctx)
+	if err != nil {
+		return err
+	}
+	authorization.NativeToolBillingEnabled = enabled
+	authorization.NativeToolPricingSource = nativeToolPricingSourceForSnapshot(raw, definitions)
+	authorization.NativeToolPricing = make(map[string]domainbilling.NativeToolPrice)
+	authorization.NativeToolKeys = make(map[string]bool)
+	for _, price := range nativetool.PricingDefinitionsWithOverridesFromDefinitions(raw, definitions) {
+		amount := int64(0)
+		if enabled && price.Billable && price.Unit == "call" {
+			amount = price.PriceNanousd
+		}
+		authorization.NativeToolPricing[price.ToolKey] = domainbilling.NativeToolPrice{Provider: strings.ToLower(price.Provider), ServiceName: price.Label, NanousdPerCall: amount}
+	}
+	return nil
+}
+
+// AuthorizeNativeTools records only tools selected by the resolved model policy.
+// Prices remain fixed across retries, route changes and administrator edits.
+func (s *Service) AuthorizeNativeTools(authorization *domainbilling.UsageAuthorization, keys map[string]string) int64 {
+	if authorization == nil || authorization.NativeToolPricing == nil {
+		return 0
+	}
+	if authorization.NativeToolKeys == nil {
+		authorization.NativeToolKeys = make(map[string]bool)
+	}
+	for _, key := range keys {
+		if _, ok := authorization.NativeToolPricing[key]; ok {
+			authorization.NativeToolKeys[key] = true
+		}
+	}
+	var estimate int64
+	for key := range authorization.NativeToolKeys {
+		estimate += authorization.NativeToolPricing[key].NanousdPerCall
+	}
+	return estimate
+}
+
+// EnsureNativeToolReservation also protects paid tools attached to a free model.
+func (s *Service) EnsureNativeToolReservation(ctx context.Context, authorization *domainbilling.UsageAuthorization, estimate int64) error {
+	if authorization == nil || estimate <= 0 || authorization.Reservation != nil || (authorization.Mode != "usage" && authorization.Mode != "period") {
+		return nil
+	}
+	_, err := s.reserveUsageAuthorization(ctx, authorization)
+	return err
 }
 
 // errModelPricingFree 是 ensureModelPricingAuthorizable 的内部信号：模型免费，无需预留预算。
@@ -1963,21 +2038,32 @@ func (s *Service) BuildUsageLedger(ctx context.Context, input UsagePricingInput)
 	if err != nil {
 		return nil, err
 	}
-	nativeToolBillingEnabled, err := s.repo.GetNativeToolBillingEnabled(ctx)
-	if err != nil {
-		return nil, err
-	}
-	nativeToolPricingJSON, err := s.repo.GetNativeToolPricingJSON(ctx)
-	if err != nil {
-		return nil, err
-	}
-	nativeToolDefinitions, err := s.nativeToolDefinitions(ctx)
-	if err != nil {
-		return nil, err
+	var nativeToolBillingEnabled bool
+	var nativeToolPricingJSON string
+	var nativeToolDefinitions []nativetool.Definition
+	if input.Authorization != nil && input.Authorization.NativeToolPricing != nil {
+		nativeToolBillingEnabled = input.Authorization.NativeToolBillingEnabled
+	} else {
+		nativeToolBillingEnabled, err = s.repo.GetNativeToolBillingEnabled(ctx)
+		if err != nil {
+			return nil, err
+		}
+		nativeToolPricingJSON, err = s.repo.GetNativeToolPricingJSON(ctx)
+		if err != nil {
+			return nil, err
+		}
+		nativeToolDefinitions, err = s.nativeToolDefinitions(ctx)
+		if err != nil {
+			return nil, err
+		}
 	}
 	nativeToolPricingOverrides, err := nativetool.ParsePricingOverridesJSONForDefinitions(nativeToolPricingJSON, nativeToolDefinitions)
 	if err != nil {
 		nativeToolPricingOverrides = map[string]nativetool.PricingOverride{}
+	}
+	nativePricingSource := nativeToolPricingSourceForSnapshot(nativeToolPricingJSON, nativeToolDefinitions)
+	if input.Authorization != nil && input.Authorization.NativeToolPricing != nil {
+		nativePricingSource = input.Authorization.NativeToolPricingSource
 	}
 	nativeToolItems, nativeToolBilledNanousd := buildNativeToolServiceItems(nativeToolServiceItemsInput{
 		Usage:            input,
@@ -2062,8 +2148,9 @@ func (s *Service) BuildUsageLedger(ctx context.Context, input UsagePricingInput)
 		"upstream_usage":                           upstreamUsageSnapshot(input),
 		"server_side_tool_usage":                   normalizeUsageCountMap(input.ServerSideToolUsage),
 		"native_tool_billing_enabled":              nativeToolBillingEnabled,
-		"native_tool_pricing_source":               nativeToolPricingSourceForSnapshot(nativeToolPricingJSON, nativeToolDefinitions),
+		"native_tool_pricing_source":               nativePricingSource,
 		"native_tool_billed_nanousd":               nativeToolBilledNanousd,
+		"native_tool_authorization":                input.AuthorizationNativeToolSnapshot(),
 		"mcp_tool_usage":                           mcpToolUsageSnapshots(input.MCPToolUsage),
 		"mcp_tool_billed_nanousd":                  mcpToolBilledNanousd,
 		"base_service_billed_nanousd":              serviceBilledNanousd,
@@ -3490,7 +3577,7 @@ type nativeToolServiceItemsInput struct {
 
 func buildNativeToolServiceItems(request nativeToolServiceItemsInput) ([]domainbilling.UsageServiceItem, int64) {
 	input := request.Usage
-	if request.BillingMode == "self" || request.FreeModel || !request.BillingEnabled || len(input.ServerSideToolUsage) == 0 {
+	if request.BillingMode == "self" || !request.BillingEnabled || len(input.ServerSideToolUsage) == 0 {
 		return []domainbilling.UsageServiceItem{}, 0
 	}
 	counts := normalizeUsageCountMap(input.ServerSideToolUsage)
@@ -3524,6 +3611,13 @@ func buildNativeToolServiceItems(request nativeToolServiceItemsInput) ([]domainb
 
 // nativeToolDefaultCallPrice 返回当前已适配厂商原生工具的官方默认按次价格。
 func nativeToolDefaultCallPrice(input UsagePricingInput, toolName string, pricingOverrides map[string]nativetool.PricingOverride, definitions []nativetool.Definition) (nativetool.UsagePrice, bool) {
+	if authorization := input.Authorization; authorization != nil && authorization.NativeToolPricing != nil {
+		if !authorization.NativeToolKeys[toolName] {
+			return nativetool.UsagePrice{}, false
+		}
+		price, ok := authorization.NativeToolPricing[toolName]
+		return nativetool.UsagePrice{Provider: price.Provider, ServiceName: price.ServiceName, NanousdPerCall: price.NanousdPerCall}, ok
+	}
 	return nativetool.UsagePriceForToolWithOverrides(input.ProviderProtocol, toolName, definitions, pricingOverrides)
 }
 
@@ -3538,6 +3632,7 @@ func nativeToolPricingSourceForSnapshot(raw string, definitions []nativetool.Def
 func nativeToolServiceCode(provider string, toolName string) string {
 	provider = strings.TrimSpace(provider)
 	tool := strings.TrimSpace(toolName)
+	tool = strings.TrimPrefix(tool, provider+".")
 	if provider == "" {
 		provider = "unknown"
 	}

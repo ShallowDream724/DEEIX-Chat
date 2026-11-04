@@ -761,6 +761,9 @@ type ConversationToolCallDetailResponse struct {
 	ToolCallID      string `json:"toolCallID"`
 	ToolName        string `json:"toolName"`
 	Status          string `json:"status"`
+	InputJSON       string `json:"inputJSON"`
+	InputSizeBytes  int64  `json:"inputSizeBytes"`
+	InputOmitted    bool   `json:"inputOmitted"`
 	OutputJSON      string `json:"outputJSON"`
 	OutputSizeBytes int64  `json:"outputSizeBytes"`
 	OutputOmitted   bool   `json:"outputOmitted"`
@@ -771,6 +774,9 @@ type ConversationToolCallDetailResponse struct {
 
 func toConversationToolCallDetailResponse(item *model.ToolCallDetail) ConversationToolCallDetailResponse {
 	return ConversationToolCallDetailResponse{
+		InputJSON: item.InputJSON,
+		InputSizeBytes: item.InputSizeBytes,
+		InputOmitted: item.InputOmitted,
 		RunID:           item.RunID,
 		ToolCallID:      item.ToolCallID,
 		ToolName:        item.ToolName,
@@ -1516,38 +1522,50 @@ func toFileExtractResponse(d *appconversation.FileExtractResult) FileExtractResp
 
 // ChatFilePolicyResponse 聊天文件策略响应 DTO。
 type ChatFilePolicyResponse struct {
-	MaxMessageFiles        int      `json:"maxMessageFiles"`
-	MaxUploadFileBytes     int64    `json:"maxUploadFileBytes"`
-	AllowedMIMETypes       []string `json:"allowedMIMETypes"`
-	ImageMaxBytes          int64    `json:"imageMaxBytes"`
-	DocMaxBytes            int64    `json:"docMaxBytes"`
-	EffectiveImageMaxBytes int64    `json:"effectiveImageMaxBytes"`
-	EffectiveDocMaxBytes   int64    `json:"effectiveDocMaxBytes"`
-	FullContextMaxBytes    int64    `json:"fullContextMaxBytes"`
-	FullContextMaxTokens   int      `json:"fullContextMaxTokens"`
-	FullContextPDFMaxPages int      `json:"fullContextPDFMaxPages"`
-	RAGAvailable           bool     `json:"ragAvailable"`
-	RAGAvailabilityReason  string   `json:"ragAvailabilityReason"`
-	CapabilityMode         string   `json:"capabilityMode"`
-	FileMode               string   `json:"fileMode"`
+	MaxMessageFiles              int      `json:"maxMessageFiles"`
+	TemporaryChatMaxAttachments  int      `json:"temporaryChatMaxAttachments"`
+	TemporaryChatRequestMaxBytes int64    `json:"temporaryChatRequestMaxBytes"`
+	MaxUploadFileBytes           int64    `json:"maxUploadFileBytes"`
+	AllowedMIMETypes             []string `json:"allowedMIMETypes"`
+	ImageMaxBytes                int64    `json:"imageMaxBytes"`
+	DocMaxBytes                  int64    `json:"docMaxBytes"`
+	AudioMaxBytes                int64    `json:"audioMaxBytes"`
+	VideoMaxBytes                int64    `json:"videoMaxBytes"`
+	EffectiveImageMaxBytes       int64    `json:"effectiveImageMaxBytes"`
+	EffectiveDocMaxBytes         int64    `json:"effectiveDocMaxBytes"`
+	EffectiveAudioMaxBytes       int64    `json:"effectiveAudioMaxBytes"`
+	EffectiveVideoMaxBytes       int64    `json:"effectiveVideoMaxBytes"`
+	FullContextMaxBytes          int64    `json:"fullContextMaxBytes"`
+	FullContextMaxTokens         int      `json:"fullContextMaxTokens"`
+	FullContextPDFMaxPages       int      `json:"fullContextPDFMaxPages"`
+	RAGAvailable                 bool     `json:"ragAvailable"`
+	RAGAvailabilityReason        string   `json:"ragAvailabilityReason"`
+	CapabilityMode               string   `json:"capabilityMode"`
+	FileMode                     string   `json:"fileMode"`
 }
 
 func toChatFilePolicyResponse(d *appconversation.ChatFilePolicyDTO) ChatFilePolicyResponse {
 	return ChatFilePolicyResponse{
-		MaxMessageFiles:        d.MaxMessageFiles,
-		MaxUploadFileBytes:     d.MaxUploadFileBytes,
-		AllowedMIMETypes:       d.AllowedMIMETypes,
-		ImageMaxBytes:          d.ImageMaxBytes,
-		DocMaxBytes:            d.DocMaxBytes,
-		EffectiveImageMaxBytes: d.EffectiveImageMaxBytes,
-		EffectiveDocMaxBytes:   d.EffectiveDocMaxBytes,
-		FullContextMaxBytes:    d.FullContextMaxBytes,
-		FullContextMaxTokens:   d.FullContextMaxTokens,
-		FullContextPDFMaxPages: d.FullContextPDFMaxPages,
-		RAGAvailable:           d.RAGAvailable,
-		RAGAvailabilityReason:  d.RAGAvailabilityReason,
-		CapabilityMode:         d.CapabilityMode,
-		FileMode:               d.FileMode,
+		MaxMessageFiles:              d.MaxMessageFiles,
+		TemporaryChatMaxAttachments:  d.TemporaryChatMaxAttachments,
+		TemporaryChatRequestMaxBytes: d.TemporaryChatRequestMaxBytes,
+		MaxUploadFileBytes:           d.MaxUploadFileBytes,
+		AllowedMIMETypes:             d.AllowedMIMETypes,
+		ImageMaxBytes:                d.ImageMaxBytes,
+		DocMaxBytes:                  d.DocMaxBytes,
+		AudioMaxBytes:                d.AudioMaxBytes,
+		VideoMaxBytes:                d.VideoMaxBytes,
+		EffectiveImageMaxBytes:       d.EffectiveImageMaxBytes,
+		EffectiveDocMaxBytes:         d.EffectiveDocMaxBytes,
+		EffectiveAudioMaxBytes:       d.EffectiveAudioMaxBytes,
+		EffectiveVideoMaxBytes:       d.EffectiveVideoMaxBytes,
+		FullContextMaxBytes:          d.FullContextMaxBytes,
+		FullContextMaxTokens:         d.FullContextMaxTokens,
+		FullContextPDFMaxPages:       d.FullContextPDFMaxPages,
+		RAGAvailable:                 d.RAGAvailable,
+		RAGAvailabilityReason:        d.RAGAvailabilityReason,
+		CapabilityMode:               d.CapabilityMode,
+		FileMode:                     d.FileMode,
 	}
 }
 

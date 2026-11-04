@@ -51,6 +51,12 @@ func (s promptScope) activeMessages() []model.Message {
 	return s.FullBranchMessages
 }
 
+// attachmentMessages 保留当前祖先路径上的文件身份。摘要替代的是聊天文字，
+// 不授予文件权限，也不移除引用；发送前仍通过文件仓储重新验证所属用户与有效状态。
+func (s promptScope) attachmentMessages() []model.Message {
+	return s.FullBranchMessages
+}
+
 // estimatePromptScopeTokens 精确镜像下一次上游请求可用的
 // 滚动快照范围。将该估算放在
 // buildPromptScope 旁边，可防止硬预算预检重复计算

@@ -1,6 +1,7 @@
 export type SettingItem = {
   key: string;
   value: string;
+  defaultValue?: string;
   valueType: "string" | "int" | "bool" | "json";
   description: string;
   sensitive: boolean;

@@ -15,6 +15,7 @@ import (
 	domainbilling "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/billing"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/lifecycle"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/middleware"
@@ -145,6 +146,13 @@ var sendMessageErrorStatuses = []sendMessageErrorStatus{
 }
 
 func describeSendMessageError(err error) response.Description {
+	if errors.Is(err, llm.ErrInputTooLarge) {
+		description := response.Describe(http.StatusRequestEntityTooLarge, appconversation.ErrFileTooLarge)
+		if details := llm.InputLimitDetails(err); details != nil {
+			description.Details = details
+		}
+		return description
+	}
 	switch {
 	case appconversation.IsUpstreamRateLimitError(err):
 		return response.DescribeCode(http.StatusTooManyRequests, appconversation.MessageErrorCodeUpstreamRateLimited)
@@ -178,6 +186,9 @@ func streamErrorPayload(c *gin.Context, err error) map[string]any {
 		"status":    mapped.Status,
 		"message":   mapped.Message,
 		"errorCode": mapped.Code,
+	}
+	if mapped.Details != nil {
+		payload["details"] = mapped.Details
 	}
 	if c != nil {
 		// 用户主动停止不是故障：不记入访问日志的错误字段，也就不会进入错误日志。

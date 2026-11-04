@@ -156,6 +156,10 @@ var definitions = []Definition{
 		UsageAliases:   []string{"code_interpreter"},
 	},
 	{
+		Protocol: "openai_responses", Provider: "DeepSeek", Type: "web_search", Key: "deepseek.tool_search", Label: "DeepSeek Search", Description: "DeepSeek native search; metered successful operations.", Payload: map[string]any{"type": "web_search"}, Billable: true, BillingUnit: "call", PriceLabel: "custom", UsageAliases: []string{"tool_search"},
+	},
+	{Protocol: "openai_responses", Provider: "DeepSeek", Type: "web_fetch", Key: "deepseek.tool_fetch", Label: "DeepSeek Fetch", Description: "DeepSeek native page retrieval; metered successful operations.", Payload: map[string]any{"type": "web_fetch"}, Billable: true, BillingUnit: "call", PriceLabel: "custom", UsageAliases: []string{"tool_fetch"}},
+	{
 		Protocol:       "anthropic_messages",
 		Provider:       "Anthropic",
 		Type:           "web_search_20250305",

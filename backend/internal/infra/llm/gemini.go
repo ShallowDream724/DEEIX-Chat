@@ -728,9 +728,6 @@ func (c *Client) generateGemini(
 	if err != nil {
 		return nil, err
 	}
-	if err := validateGeminiInlineRequestSize(len(payload)); err != nil {
-		return nil, err
-	}
 
 	requestCtx, cancel := context.WithTimeout(ctx, resolveReadTimeout(route.ReadTimeoutMS))
 	defer cancel()
@@ -776,6 +773,7 @@ func parseGeminiResponse(body []byte) (*portllm.GenerateOutput, error) {
 	text := extractGeminiText(parsed)
 	result := &portllm.GenerateOutput{
 		ResponseID:          strings.TrimSpace(getString(parsed["responseId"])),
+		ModelVersion:        strings.TrimSpace(getString(parsed["modelVersion"])),
 		Text:                text,
 		Reasoning:           extractGeminiReasoning(parsed),
 		Usage:               parseGeminiUsage(parsed),
@@ -1261,9 +1259,6 @@ func (c *Client) generateGeminiStream(
 	if err != nil {
 		return nil, err
 	}
-	if err := validateGeminiInlineRequestSize(len(payload)); err != nil {
-		return nil, err
-	}
 
 	firstByteCtx, firstByteCancel := context.WithCancel(ctx)
 	defer firstByteCancel()
@@ -1296,7 +1291,7 @@ func (c *Client) generateGeminiStream(
 	idleReader := newIdleTimeoutReader(resp.Body, resolveStreamIdleTimeout(route.StreamIdleTimeoutMS))
 	streamBody := newUpstreamBodyRecorder(idleReader)
 	if err = consumeGeminiStream(streamBody, result, onEvent); err != nil {
-		return nil, portllm.MarkRequestAccepted(attachUpstreamDebug(err, upstreamDebugSnapshot(req, payload, resp, streamErrorBody(streamBody, err))))
+		return result, portllm.MarkRequestAccepted(attachUpstreamDebug(err, upstreamDebugSnapshot(req, payload, resp, streamErrorBody(streamBody, err))))
 	}
 	return result, nil
 }
@@ -1362,6 +1357,9 @@ func applyGeminiStreamChunk(
 	result *portllm.GenerateOutput,
 	onEvent func(portllm.GenerateStreamEvent) error,
 ) error {
+	if version := strings.TrimSpace(getString(parsed["modelVersion"])); version != "" {
+		result.ModelVersion = version
+	}
 	if responseID := strings.TrimSpace(getString(parsed["responseId"])); responseID != "" {
 		result.ResponseID = responseID
 	}

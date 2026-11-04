@@ -21,6 +21,56 @@ func turnDocumentTestFile(fileID string, name string, text string, mode string) 
 	}
 }
 
+func TestCompactedThirdTurnAndSecondTurnBranchRetainNativeAncestorBytes(t *testing.T) {
+	path := []model.Message{
+		{ID: 1, PublicID: "u1", Role: "user", Content: "read attachments", Attachments: `[{"file_id":"pdf"},{"file_id":"audio"},{"file_id":"video"}]`},
+		{ID: 2, PublicID: "a1", Role: "assistant", Content: "first answer"},
+		{ID: 3, PublicID: "u2", Role: "user", Content: "second question"},
+		{ID: 4, PublicID: "a2", Role: "assistant", Content: "second answer"},
+		{ID: 5, PublicID: "u3", Role: "user", Content: "third question"},
+	}
+	files := []AttachmentInput{}
+	native := nativeInputs{Parts: map[string]llm.ContentPart{}}
+	for _, item := range []struct{ id, kind, mime string }{
+		{"pdf", llm.ContentPartDocument, "application/pdf"},
+		{"audio", llm.ContentPartAudio, "audio/wav"},
+		{"video", llm.ContentPartVideo, "video/mp4"},
+	} {
+		files = append(files, AttachmentInput{FileID: item.id, FileName: item.id, ContextMode: fileContextModeNativeDocument})
+		native.Parts[item.id] = llm.ContentPart{Kind: item.kind, Data: []byte(item.id + " original bytes"), MimeType: item.mime}
+	}
+	for _, test := range []struct {
+		name     string
+		messages []model.Message
+		snapshot *model.ContextSnapshot
+	}{
+		{"compacted third turn", path, promptScopeSnapshot(path[:2])},
+		{"branch at second turn", path[:3], promptScopeSnapshot(path[:4])},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scope := buildPromptScope(test.messages, test.snapshot, contextCompactionPolicy{AdminEnabled: true, UserEnabled: true})
+			active := scope.activeMessages()
+			request := placeTurnDocuments(historyMessagesFromDomain(active, historyMessageOptions{}), active, files, turnDocumentOptions{Native: native})
+			seen := map[string]int{}
+			for _, message := range request.Messages {
+				for _, part := range message.Parts {
+					if isBinaryContentPart(part) {
+						seen[string(part.Data)]++
+					}
+				}
+			}
+			for _, id := range []string{"pdf", "audio", "video"} {
+				if seen[id+" original bytes"] != 1 {
+					t.Fatalf("actual prompt lost/duplicated %s: %#v", id, seen)
+				}
+			}
+			if len(scope.attachmentMessages()) != len(test.messages) {
+				t.Fatal("attachment scope lost ancestors")
+			}
+		})
+	}
+}
+
 // turnParts 把用户消息拆成「文件块文本」与「用户原文」，并校验文件块位于原文之前。
 func turnParts(t *testing.T, message llm.Message) (string, string) {
 	t.Helper()

@@ -10,6 +10,7 @@ import (
 	appprocessing "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/processing"
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/pagination"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/filecontent"
@@ -107,14 +108,12 @@ func (h *Handler) UploadFile(c *gin.Context) {
 }
 
 func (h *Handler) maxUploadRequestBytes() int64 {
-	maxUploadBytes := int64(20 * 1024 * 1024)
+	var cfg config.Config
 	if h != nil && h.cfg != nil {
-		if configured := h.cfg.Snapshot().MaxUploadFileBytes; configured > 0 {
-			maxUploadBytes = configured
-		}
+		cfg = h.cfg.Snapshot()
 	}
 	// multipart 边界和字段头会占用额外字节，预留固定开销后再交给 service 校验真实文件大小。
-	return maxUploadBytes + multipartUploadOverheadBytes
+	return appupload.MaxUploadRequestBytes(cfg, 1, multipartUploadOverheadBytes)
 }
 
 // ListFiles godoc

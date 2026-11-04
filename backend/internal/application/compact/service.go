@@ -184,7 +184,10 @@ func (s *Service) MaybeCompactConversation(
 				toTurn = existing.ToTurn + countUserTurns(summarySourceMessages)
 			}
 			coveredMessageCount = existing.CoveredMessageCount + len(summarySourceMessages)
-			sourceTokens = existing.SourceTokens + estimateMessageTokenTotal(summarySourceMessages)
+			// Count the text actually summarized in this operation. The prior
+			// snapshot's SourceTokens may contain legacy billing totals and is
+			// neither a current-context measurement nor part of this input.
+			sourceTokens = tokenestimate.Estimate(previousSummary) + estimateMessageTokenTotal(summarySourceMessages)
 			coveragePathHash = ExtendCoveragePathHash(existing.CoveragePathHash, summarySourceMessages)
 		}
 	}

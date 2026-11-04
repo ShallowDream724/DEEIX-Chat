@@ -771,6 +771,25 @@
   },
   "processTrace": {
     "fileBadges": {
+      "exclusionReasons": {
+        "unsupported": "当前模型或路由不支持该文件类型。",
+        "inputBudget": "该文件超出本次请求的输入限制。",
+        "contextBudget": "为适应模型上下文窗口，文件内容已从本次请求中移除。",
+        "readFailed": "无法从存储中读取原始文件。",
+        "noRetrievedContent": "本轮未检索到该文件的内容。",
+        "contentUnavailable": "本轮没有可用的文件内容。"
+      },
+      "limitDimensions": {
+        "nativeCount": "原生文件数量",
+        "nativeBytes": "原生文件总字节数",
+        "nonPDFBytes": "音视频总字节数",
+        "requestBytes": "编码后的请求字节数",
+        "pdfSingleBytes": "单份 PDF 字节数",
+        "pdfBytes": "PDF 总字节数",
+        "pdfPages": "PDF 页数"
+      },
+      "limitExceeded": "{dimension}：{actual, number}；上限：{limit, number}。",
+      "limitUnknown": "无法确认{dimension}；上限：{limit, number}。",
       "directRead": "直读",
       "budget": "预算",
       "retrieval": "检索",
@@ -786,7 +805,7 @@
         "fullContext": "文件以全文注入方式纳入本轮上下文。",
         "native": "原始文件已随消息发送给模型，模型直接读取排版、表格和图表。",
         "unsupported": "当前模型不支持该类型的输入，文件未提供给模型。",
-        "skipped": "文件未纳入本轮上下文，通常是超出预算或没有可用提取文本。",
+        "skipped": "文件未纳入本轮上下文。",
         "file": "文件已参与本轮上下文处理。"
       }
     },
@@ -849,7 +868,9 @@
         "loadingFullResult": "正在加载完整结果",
         "fullResultLoadFailed": "无法加载完整结果，请稍后重试。",
         "fullResultOmitted": "该结果大小为 {size}，超过安全查看上限，未加载到页面。",
-        "fullResultEmpty": "该工具调用没有返回内容。",
+        "statusLabel": "状态",
+        "fullResultNoOutput": "上游未返回输出。执行状态与已保存的请求见上方。",
+        "fullResultEmpty": "此记录未保存请求、输出或错误详情。",
         "close": "关闭"
       }
     },

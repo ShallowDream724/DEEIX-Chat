@@ -578,14 +578,15 @@ func (s *Service) callConversationMetadataLLM(ctx context.Context, input convers
 	}
 	attributionReferer, attributionTitle := s.llmAttribution()
 	messages := []llm.Message{{Role: "user", Content: input.Prompt}}
+	cfg := s.cfg.Snapshot()
 	var lastErr error
 	for _, route := range routes {
 		if route == nil || strings.TrimSpace(route.PlatformModelName) == "" {
 			continue
 		}
-		routeConfig := routeConfigFromResolved(route, llm.DefaultEndpointForAdapter(route.Protocol), attributionReferer, attributionTitle)
+		routeConfig := routeConfigFromResolved(route, llm.DefaultEndpointForAdapter(route.Protocol), attributionReferer, attributionTitle, cfg)
 		startedAt := time.Now()
-		generateInput := buildTextTaskGenerateInput(route, s.cfg.Snapshot(), messages)
+		generateInput := buildTextTaskGenerateInput(route, cfg, messages)
 		authorization, authorizeErr := s.authorizeBasicServiceUsage(ctx, input.UserID, route.PlatformModelName, input.ServiceCode)
 		if authorizeErr != nil {
 			lastErr = fmt.Errorf("metadata usage authorization: %w", authorizeErr)

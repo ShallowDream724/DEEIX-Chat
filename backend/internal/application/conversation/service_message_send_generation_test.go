@@ -12,6 +12,36 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 )
 
+type partialNativeFailureGateway struct {
+	temporaryLLMGatewayStub
+	calls int
+}
+
+func (g *partialNativeFailureGateway) GenerateStream(context.Context, llm.RouteConfig, llm.GenerateInput, func(llm.GenerateStreamEvent) error) (*llm.GenerateOutput, error) {
+	g.calls++
+	return &llm.GenerateOutput{Usage: llm.Usage{InputTokens: 17}, ServerSideToolUsage: map[string]int64{"deepseek.tool_search": 2}}, &llm.UpstreamError{StatusCode: 400, Message: "stream unsupported"}
+}
+
+func (g *partialNativeFailureGateway) Generate(context.Context, llm.RouteConfig, llm.GenerateInput) (*llm.GenerateOutput, error) {
+	g.calls++
+	return &llm.GenerateOutput{Text: "should not retry"}, nil
+}
+
+func TestConfirmedPartialNativeUsagePreventsSecondUpstreamRequest(t *testing.T) {
+	gateway := &partialNativeFailureGateway{}
+	runner := &messageGenerationRunner{service: &Service{llmClient: gateway}, preferStream: true, onDelta: func(string) error { return nil }, maxLLMCalls: 3, usage: &messageUsageAccumulator{}, routeConfig: llm.RouteConfig{Protocol: llm.AdapterOpenAIResponses}}
+	_, err := runner.generate(context.Background(), llm.GenerateInput{}, nil)
+	if err == nil || gateway.calls != 1 {
+		t.Fatalf("native side effects retried: calls=%d err=%v", gateway.calls, err)
+	}
+	if !runner.attemptHadSideEffect || runner.lastAttemptObservation.canRetry(err, func(error) bool { return true }) {
+		t.Fatal("confirmed operations not marked observable")
+	}
+	if runner.usage.usage().InputTokens != 17 || runner.nativeToolUsage["deepseek.tool_search"] != 2 {
+		t.Fatalf("partial accounting lost: %#v %#v", runner.usage.usage(), runner.nativeToolUsage)
+	}
+}
+
 func testRouteGenerationContext(conversation *model.Conversation) routeGenerationContext {
 	return routeGenerationContext{
 		input:                  SendMessageInput{UserID: 7, ConversationID: 11, Content: "second question"},
@@ -31,6 +61,22 @@ func testRoutePromptPlan() PromptPlan {
 		{Role: "assistant", Content: "first answer"},
 		{Role: "user", Content: "second question"},
 	}}
+}
+
+func TestConfirmedNativeUsageRetainsInterruptedGenerationWithoutText(t *testing.T) {
+	for _, interrupted := range []error{ErrMessageGenerationCanceled, errors.New("upstream failed")} {
+		runner := &messageGenerationRunner{}
+		// Each output is one provider request; streamed snapshots are not added here.
+		runner.recordNativeToolUsage(&llm.GenerateOutput{ServerSideToolUsage: map[string]int64{"deepseek.tool_search": 2}})
+		runner.recordNativeToolUsage(nil)
+		input := persistInterruptedMessageGenerationInput{Error: interrupted, UserMessage: &model.Message{}, AssistantMessage: &model.Message{}, ServerSideToolUsage: runner.nativeToolUsage}
+		if !shouldPersistInterruptedMessageGeneration(input) {
+			t.Fatalf("confirmed native operations dropped after %v", interrupted)
+		}
+		if runner.nativeToolUsage["deepseek.tool_search"] != 2 {
+			t.Fatalf("unexpected counts: %#v", runner.nativeToolUsage)
+		}
+	}
 }
 
 func TestPrepareRouteGenerationFailoverAlwaysSendsFullContext(t *testing.T) {

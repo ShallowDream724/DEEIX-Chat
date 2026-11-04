@@ -4,7 +4,26 @@ import (
 	"context"
 	"sort"
 	"strings"
+
+	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 )
+
+// TemporaryChatAttachmentLimit resolves the request-wide ephemeral attachment policy.
+func TemporaryChatAttachmentLimit(cfg config.Config) int {
+	if cfg.TemporaryChatMaxAttachments > 0 {
+		return cfg.TemporaryChatMaxAttachments
+	}
+	return 20
+}
+
+// TemporaryChatRequestLimit bounds JSON context and multipart metadata, excluding file bytes.
+func TemporaryChatRequestLimit(cfg config.Config) int64 {
+	if cfg.TemporaryChatRequestMaxBytes > 0 {
+		return cfg.TemporaryChatRequestMaxBytes
+	}
+	return 8 << 20
+}
 
 const (
 	fileCategoryImage        = "image"
@@ -37,19 +56,8 @@ type chatFileCapability struct {
 	CapabilityMode         string
 	EffectiveImageMaxBytes int64
 	EffectiveDocMaxBytes   int64
-}
-
-func minPositiveInt64(values ...int64) int64 {
-	var result int64
-	for _, value := range values {
-		if value <= 0 {
-			continue
-		}
-		if result == 0 || value < result {
-			result = value
-		}
-	}
-	return result
+	EffectiveAudioMaxBytes int64
+	EffectiveVideoMaxBytes int64
 }
 
 func sortedAllowedMIMETypes(raw string) []string {
@@ -64,8 +72,10 @@ func sortedAllowedMIMETypes(raw string) []string {
 func (s *Service) resolveChatFileCapability(ctx context.Context) chatFileCapability {
 	cfg := s.cfg.Snapshot()
 	capability := chatFileCapability{
-		EffectiveImageMaxBytes: minPositiveInt64(cfg.MaxUploadFileBytes, cfg.FileImageMaxBytes),
-		EffectiveDocMaxBytes:   minPositiveInt64(cfg.MaxUploadFileBytes, cfg.FileDocMaxBytes),
+		EffectiveImageMaxBytes: appupload.EffectiveMaxBytes(cfg, "image/png", ""),
+		EffectiveDocMaxBytes:   appupload.EffectiveMaxBytes(cfg, "text/plain", ""),
+		EffectiveAudioMaxBytes: appupload.EffectiveMaxBytes(cfg, "audio/mpeg", ""),
+		EffectiveVideoMaxBytes: appupload.EffectiveMaxBytes(cfg, "video/mp4", ""),
 	}
 
 	ragAvailable, reason := s.embeddingSvc.Available(ctx)

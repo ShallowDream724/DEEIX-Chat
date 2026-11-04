@@ -17,10 +17,13 @@ import (
 // 被中断的那次调用取其已上报部分与尾段文本预估的较大者，既不用全文预估覆盖观测值，
 // 也不漏掉尚未上报的尾段。
 type messageUsageAccumulator struct {
-	observedUsage                   llm.Usage
-	inputObserved                   bool
-	estimatedUnobservedInputTokens  int64
-	currentCallEstimatedInputTokens int64
+	observedUsage                     llm.Usage
+	inputObserved                     bool
+	estimatedUnobservedInputTokens    int64
+	currentCallEstimatedInputTokens   int64
+	latestContextEstimatedInputTokens int64
+	latestContextObservedInputTokens  int64
+	latestContextInputObserved        bool
 
 	estimatedUnobservedOutputTokens    int64
 	estimatedUnobservedReasoningTokens int64
@@ -32,9 +35,32 @@ type messageUsageAccumulator struct {
 
 func (a *messageUsageAccumulator) beginCall(estimatedInputTokens int64) {
 	a.currentCallEstimatedInputTokens = max(estimatedInputTokens, 0)
+	a.latestContextEstimatedInputTokens = max(estimatedInputTokens, 0)
+	a.latestContextObservedInputTokens = 0
+	a.latestContextInputObserved = false
 	a.completedObservedUsage = a.observedUsage
 	a.currentCallVisibleText.Reset()
 	a.currentCallReasoningText.Reset()
+}
+
+// observeContextInput consumes a single-call normalized snapshot, never the
+// accumulator's billed total. Cache read/write are disjoint input partitions in
+// llm.Usage; cached input still occupies the model context.
+func (a *messageUsageAccumulator) observeContextInput(usage llm.Usage) {
+	if usage.HasObservedInput() {
+		a.latestContextObservedInputTokens = usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
+		a.latestContextInputObserved = true
+	}
+}
+
+func (a *messageUsageAccumulator) latestContextInputTokens(fallback int64) int64 {
+	if a.latestContextInputObserved {
+		return a.latestContextObservedInputTokens
+	}
+	if a.latestContextEstimatedInputTokens > 0 {
+		return a.latestContextEstimatedInputTokens
+	}
+	return max(fallback, 0)
 }
 
 // recordCallVisibleText 记录当前调用已产出的可见文本，供上游未上报输出用量时预估。
@@ -261,11 +287,16 @@ func fitGenerateInputToModelBudget(
 	capabilitiesJSON string,
 	fallbackContextWindow int,
 	enabled bool,
+	estimators ...func(llm.GenerateInput) int64,
 ) (llm.GenerateInput, promptBudgetFit) {
+	estimate := estimateGenerateInputTokens
+	if len(estimators) > 0 && estimators[0] != nil {
+		estimate = estimators[0]
+	}
 	result := promptBudgetFit{
 		MessagesBefore: len(input.Messages),
 		MessagesAfter:  len(input.Messages),
-		TokensBefore:   estimateGenerateInputTokens(input),
+		TokensBefore:   estimate(input),
 	}
 	result.TokensAfter = result.TokensBefore
 	if !enabled {
@@ -281,12 +312,16 @@ func fitGenerateInputToModelBudget(
 		return input, result
 	}
 
-	trimmedMessages, trimmed := trimOldestPromptHistory(input.Messages, result.TokensBefore, result.Budget)
+	trimmedMessages, trimmed := trimOldestPromptHistory(input.Messages, result.TokensBefore, result.Budget, func(messages []llm.Message) int64 {
+		candidate := input
+		candidate.Messages = messages
+		return estimate(candidate)
+	})
 	if trimmed {
 		input.Messages = trimmedMessages
 		result.Trimmed = true
 		result.MessagesAfter = len(trimmedMessages)
-		result.TokensAfter = estimateGenerateInputTokens(input)
+		result.TokensAfter = estimate(input)
 	}
 	result.Exceeded = result.TokensAfter > result.Budget
 	return input, result
@@ -294,7 +329,7 @@ func fitGenerateInputToModelBudget(
 
 // trimOldestPromptHistory 删除最早的完整对话轮次，并始终保留前导系统消息与
 // 当前用户轮次。传入的 totalTokens 已包含 tools/instructions 等固定开销。
-func trimOldestPromptHistory(messages []llm.Message, totalTokens int64, budget int64) ([]llm.Message, bool) {
+func trimOldestPromptHistory(messages []llm.Message, totalTokens int64, budget int64, estimators ...func([]llm.Message) int64) ([]llm.Message, bool) {
 	if totalTokens <= budget || len(messages) == 0 {
 		return messages, false
 	}
@@ -310,10 +345,13 @@ func trimOldestPromptHistory(messages []llm.Message, totalTokens int64, budget i
 		if nextIndex < currentUserIndex && messages[nextIndex].Role != "user" {
 			continue
 		}
+		trimmed := make([]llm.Message, 0, systemEnd+len(messages)-nextIndex)
+		trimmed = append(trimmed, messages[:systemEnd]...)
+		trimmed = append(trimmed, messages[nextIndex:]...)
+		if len(estimators) > 0 && estimators[0] != nil {
+			remainingTokens = estimators[0](trimmed)
+		}
 		if remainingTokens <= budget || nextIndex == currentUserIndex {
-			trimmed := make([]llm.Message, 0, systemEnd+len(messages)-nextIndex)
-			trimmed = append(trimmed, messages[:systemEnd]...)
-			trimmed = append(trimmed, messages[nextIndex:]...)
 			return trimmed, true
 		}
 	}
@@ -329,8 +367,12 @@ func resolveToolResultTokenBudget(
 	modelName string,
 	capabilitiesJSON string,
 	fallbackContextWindow int,
+	estimators ...func(llm.GenerateInput) int64,
 ) int64 {
-	budgetMessages := toolResultPayloadPlaceholders(prioritizeCurrentToolMessages(messages))
+	budgetMessages := toolResultPayloadPlaceholders(messages)
+	if len(estimators) == 0 || estimators[0] == nil {
+		budgetMessages = toolResultPayloadPlaceholders(prioritizeCurrentToolMessages(messages))
+	}
 	placeholderResults := make([]llm.ToolResult, 0, len(pendingAssistant.ToolCalls))
 	for _, call := range pendingAssistant.ToolCalls {
 		placeholderResults = append(placeholderResults, llm.ToolResult{
@@ -345,7 +387,7 @@ func resolveToolResultTokenBudget(
 		llm.Message{Role: "tool", ToolResults: placeholderResults},
 	)
 	available := int64(domainchannel.EffectiveContextBudgetFromCapabilitiesWithFallback(modelName, capabilitiesJSON, fallbackContextWindow)) -
-		estimateToolFollowUpInputTokens(generateInput, budgetMessages)
+		estimateToolBudgetInput(generateInput, budgetMessages, estimators...)
 	if available < 0 {
 		return 0
 	}
@@ -359,9 +401,10 @@ func rebalanceToolFollowUpResults(
 	modelName string,
 	capabilitiesJSON string,
 	fallbackContextWindow int,
+	estimators ...func(llm.GenerateInput) int64,
 ) ([]llm.Message, bool) {
 	effectiveBudget := int64(domainchannel.EffectiveContextBudgetFromCapabilitiesWithFallback(modelName, capabilitiesJSON, fallbackContextWindow))
-	if estimateToolFollowUpInputTokens(generateInput, messages) <= effectiveBudget {
+	if estimateToolBudgetInput(generateInput, messages, estimators...) <= effectiveBudget {
 		return messages, false
 	}
 
@@ -370,7 +413,7 @@ func rebalanceToolFollowUpResults(
 		return messages, false
 	}
 	fixedMessages := toolResultPayloadPlaceholders(messages)
-	resultBudget := effectiveBudget - estimateToolFollowUpInputTokens(generateInput, fixedMessages)
+	resultBudget := effectiveBudget - estimateToolBudgetInput(generateInput, fixedMessages, estimators...)
 	if resultBudget < 0 {
 		resultBudget = 0
 	}
@@ -438,9 +481,10 @@ func trimToolFollowUpHistory(
 	modelName string,
 	capabilitiesJSON string,
 	fallbackContextWindow int,
+	estimators ...func(llm.GenerateInput) int64,
 ) ([]llm.Message, bool) {
 	effectiveBudget := int64(domainchannel.EffectiveContextBudgetFromCapabilitiesWithFallback(modelName, capabilitiesJSON, fallbackContextWindow))
-	estimatedTokens := estimateToolFollowUpInputTokens(generateInput, messages)
+	estimatedTokens := estimateToolBudgetInput(generateInput, messages, estimators...)
 	if estimatedTokens <= effectiveBudget {
 		return messages, false
 	}
@@ -450,19 +494,30 @@ func trimToolFollowUpHistory(
 		return messages, false
 	}
 	for cutFrom := systemEnd; cutFrom < currentUserIndex; cutFrom++ {
-		estimatedTokens -= estimateMessageTokens(messages[cutFrom])
 		nextIndex := cutFrom + 1
 		if nextIndex < currentUserIndex && messages[nextIndex].Role != "user" {
 			continue
 		}
-		if estimatedTokens <= effectiveBudget || nextIndex == currentUserIndex {
-			trimmed := make([]llm.Message, 0, systemEnd+len(messages)-nextIndex)
-			trimmed = append(trimmed, messages[:systemEnd]...)
-			trimmed = append(trimmed, messages[nextIndex:]...)
+		trimmed := make([]llm.Message, 0, systemEnd+len(messages)-nextIndex)
+		trimmed = append(trimmed, messages[:systemEnd]...)
+		trimmed = append(trimmed, messages[nextIndex:]...)
+		if estimateToolBudgetInput(generateInput, trimmed, estimators...) <= effectiveBudget || nextIndex == currentUserIndex {
 			return trimmed, true
 		}
 	}
 	return messages, false
+}
+
+func estimateToolBudgetInput(input llm.GenerateInput, messages []llm.Message, estimators ...func(llm.GenerateInput) int64) int64 {
+	if len(estimators) == 0 || estimators[0] == nil {
+		return estimateToolFollowUpInputTokens(input, messages)
+	}
+	input.Messages = messages
+	input.PreviousResponseID = ""
+	if strings.TrimSpace(input.Instructions) != "" {
+		_, input.Messages = extractOpenAIResponsesInstructions(input.Messages)
+	}
+	return estimators[0](input)
 }
 
 // prioritizeCurrentToolMessages 返回系统指令和当前用户轮次，供工具结果计算最大可用预算。

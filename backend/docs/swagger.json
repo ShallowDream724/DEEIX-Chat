@@ -20524,10 +20524,13 @@
             "type": "object",
             "required": [
                 "allowedMIMETypes",
+                "audioMaxBytes",
                 "capabilityMode",
                 "docMaxBytes",
+                "effectiveAudioMaxBytes",
                 "effectiveDocMaxBytes",
                 "effectiveImageMaxBytes",
+                "effectiveVideoMaxBytes",
                 "fileMode",
                 "fullContextMaxBytes",
                 "fullContextMaxTokens",
@@ -20536,7 +20539,10 @@
                 "maxMessageFiles",
                 "maxUploadFileBytes",
                 "ragAvailabilityReason",
-                "ragAvailable"
+                "ragAvailable",
+                "temporaryChatMaxAttachments",
+                "temporaryChatRequestMaxBytes",
+                "videoMaxBytes"
             ],
             "properties": {
                 "allowedMIMETypes": {
@@ -20545,16 +20551,25 @@
                         "type": "string"
                     }
                 },
+                "audioMaxBytes": {
+                    "type": "integer"
+                },
                 "capabilityMode": {
                     "type": "string"
                 },
                 "docMaxBytes": {
                     "type": "integer"
                 },
+                "effectiveAudioMaxBytes": {
+                    "type": "integer"
+                },
                 "effectiveDocMaxBytes": {
                     "type": "integer"
                 },
                 "effectiveImageMaxBytes": {
+                    "type": "integer"
+                },
+                "effectiveVideoMaxBytes": {
                     "type": "integer"
                 },
                 "fileMode": {
@@ -20583,6 +20598,15 @@
                 },
                 "ragAvailable": {
                     "type": "boolean"
+                },
+                "temporaryChatMaxAttachments": {
+                    "type": "integer"
+                },
+                "temporaryChatRequestMaxBytes": {
+                    "type": "integer"
+                },
+                "videoMaxBytes": {
+                    "type": "integer"
                 }
             }
         },
@@ -22295,6 +22319,9 @@
                 "errorJSON",
                 "errorOmitted",
                 "errorSizeBytes",
+                "inputJSON",
+                "inputOmitted",
+                "inputSizeBytes",
                 "outputJSON",
                 "outputOmitted",
                 "outputSizeBytes",
@@ -22311,6 +22338,15 @@
                     "type": "boolean"
                 },
                 "errorSizeBytes": {
+                    "type": "integer"
+                },
+                "inputJSON": {
+                    "type": "string"
+                },
+                "inputOmitted": {
+                    "type": "boolean"
+                },
+                "inputSizeBytes": {
                     "type": "integer"
                 },
                 "outputJSON": {

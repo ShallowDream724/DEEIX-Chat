@@ -21,9 +21,10 @@ type Request = extractionport.DocumentRequest
 
 // Client 提供 Apache Tika HTTP 提取能力。
 type Client struct {
-	baseURL    string
-	authToken  string
-	httpClient *http.Client
+	baseURL          string
+	authToken        string
+	httpClient       *http.Client
+	responseMaxBytes int64
 }
 
 const (
@@ -50,9 +51,10 @@ func New(cfg config.Config) *Client {
 		timeout = 60 * time.Second
 	}
 	return &Client{
-		baseURL:    baseURL,
-		authToken:  strings.TrimSpace(cfg.ExtractTikaAuthToken),
-		httpClient: platformtracing.NewHTTPClient(timeout),
+		responseMaxBytes: cfg.ExtractResponseMaxBytes,
+		baseURL:          baseURL,
+		authToken:        strings.TrimSpace(cfg.ExtractTikaAuthToken),
+		httpClient:       platformtracing.NewHTTPClient(timeout),
 	}
 }
 
@@ -196,7 +198,7 @@ func (c *Client) ExtractText(ctx context.Context, input Request) (string, error)
 		}
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 50*1024*1024))
+	body, err := extractionport.ReadBounded(resp.Body, c.responseMaxBytes)
 	if err != nil {
 		return "", err
 	}

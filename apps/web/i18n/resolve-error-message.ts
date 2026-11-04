@@ -578,6 +578,8 @@ export function resolveLocalizedErrorMessage(error: unknown, fallback?: string):
 export function resolveLocalizedErrorMessageWithoutReference(error: unknown, fallback?: string): string {
   const locale = readClientLocale();
   if (error instanceof ApiError && error.errorCode) {
+    const inputLimitMessage = resolveInputLimitMessage(error, locale);
+    if (inputLimitMessage) return inputLimitMessage;
     const featureDisabledMessage = resolveFeatureDisabledMessage(error, locale);
     if (featureDisabledMessage) {
       return featureDisabledMessage;
@@ -618,4 +620,31 @@ export function resolveLocalizedErrorMessageWithoutReference(error: unknown, fal
   }
 
   return fallback || FALLBACK_MESSAGES[locale];
+}
+
+function resolveInputLimitMessage(error: ApiError, locale: AppLocale): string | undefined {
+  if (error.errorCode !== "file.too_large" || !isRecord(error.details)) return undefined;
+  const { dimension, actual, limit } = error.details;
+  if (typeof dimension !== "string" || typeof actual !== "number" || typeof limit !== "number" || !Number.isSafeInteger(actual) || !Number.isSafeInteger(limit) || actual < -1 || limit <= 0) return undefined;
+  const labels: Record<string, [string, string]> = {
+    requestBytes: ["Encoded request size", "编码后的请求大小"],
+    imageSingleBytes: ["Single prepared image size", "单张处理后图片大小"],
+    imageCount: ["Image count", "图片数量"],
+    imageBytes: ["Total image size", "图片总大小"],
+    nativeCount: ["Native file count", "原生文件数量"],
+    nativeBytes: ["Total native file size", "原生文件总大小"],
+    pdfSingleBytes: ["Single PDF size", "单份 PDF 大小"],
+    pdfBytes: ["Total PDF size", "PDF 总大小"],
+    pdfPages: ["PDF page count", "PDF 页数"],
+    nonPDFBytes: ["Total audio/video size", "音视频总大小"],
+    imageEncodedBytes: ["Base64 image size", "图片 Base64 大小"],
+    imageWidth: ["Image width", "图片宽度"],
+    imageHeight: ["Image height", "图片高度"],
+  };
+  const key = dimension.replace(/^provider\./, "");
+  const label = labels[key]?.[locale === "zh-CN" ? 1 : 0];
+  if (!label) return undefined;
+  const format = (value: number) => `${new Intl.NumberFormat(locale).format(value)}${key.endsWith("Bytes") ? (locale === "zh-CN" ? " 字节" : " bytes") : key === "imageWidth" || key === "imageHeight" ? " px" : ""}`;
+  if (actual < 0) return locale === "zh-CN" ? `无法确认${label}，上限为 ${format(limit)}。请减少附件或缩小文件后重试。` : `${label} could not be verified (limit: ${format(limit)}). Reduce attachments or file sizes and try again.`;
+  return locale === "zh-CN" ? `${label}为 ${format(actual)}，超过上限 ${format(limit)}。请减少附件或缩小文件后重试。` : `${label} is ${format(actual)}, exceeding the limit of ${format(limit)}. Reduce attachments or file sizes and try again.`;
 }

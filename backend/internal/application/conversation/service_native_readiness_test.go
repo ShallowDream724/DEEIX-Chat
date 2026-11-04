@@ -125,7 +125,7 @@ func TestNativeReadFailureAndBudgetCannotSilentlyDropCurrentPDF(t *testing.T) {
 		t.Fatalf("read failure must stop generation, got %v", err)
 	}
 	att.FileSize, att.ExtractedText, att.ContextMode = 50_000_001, "", fileContextModeSkipped
-	if _, err := service.buildMessageRoutePrompt(t.Context(), route, messageRoutePromptInput{ConversationFiles: []AttachmentInput{att}}); !errors.Is(err, ErrFileProcessingNotReady) {
+	if _, err := service.buildMessageRoutePrompt(t.Context(), route, messageRoutePromptInput{ConversationFiles: []AttachmentInput{att}}); !errors.Is(err, ErrFileTooLarge) {
 		t.Fatalf("over-budget PDF without parsed fallback must stop generation, got %v", err)
 	}
 }

@@ -296,9 +296,21 @@ type UsageBalanceReservation struct {
 // RefNo 是本次调用的幂等编号：有预留时与预留编号一致，无预留（self 模式、免费模型）时
 // 仍作为账本的运行级幂等键，保证结算重试不会重复入账。
 type UsageAuthorization struct {
-	Mode        string
-	RefNo       string
-	Reservation *UsageBalanceReservation
+	UserID                   uint
+	Mode                     string
+	RefNo                    string
+	Reservation              *UsageBalanceReservation
+	NativeToolPricing        map[string]NativeToolPrice
+	NativeToolKeys           map[string]bool
+	NativeToolBillingEnabled bool
+	NativeToolPricingSource  string
+}
+
+// NativeToolPrice is frozen when the run is authorized, before any provider request.
+type NativeToolPrice struct {
+	Provider       string
+	ServiceName    string
+	NanousdPerCall int64
 }
 
 // ModelPricing 表示平台模型名对应的统一计费单价。

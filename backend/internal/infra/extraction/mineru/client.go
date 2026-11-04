@@ -51,11 +51,14 @@ const (
 
 // ClientConfig 表示 MinerU 服务接入配置。
 type ClientConfig struct {
-	Source         string
-	BaseURL        string
-	AuthToken      string
-	TimeoutSeconds int
-	OutboundPolicy security.OutboundPolicy
+	ArchiveMaxBytes  int64
+	TextMaxBytes     int64
+	ResponseMaxBytes int64
+	Source           string
+	BaseURL          string
+	AuthToken        string
+	TimeoutSeconds   int
+	OutboundPolicy   security.OutboundPolicy
 }
 
 // Request 表示一次 MinerU 文本提取请求，契约定义在 ports/extraction（MimeType 不参与请求）。
@@ -63,6 +66,9 @@ type Request = extractionport.DocumentRequest
 
 // Client 提供 MinerU HTTP 文本提取能力。
 type Client struct {
+	archiveMaxBytes    int64
+	textMaxBytes       int64
+	responseMaxBytes   int64
 	source             string
 	baseURL            string
 	authToken          string
@@ -79,6 +85,9 @@ func New(cfg ClientConfig) *Client {
 	source := normalizeSource(cfg.Source)
 	timeout := resolveHTTPTimeout(cfg.TimeoutSeconds, 180*time.Second)
 	return &Client{
+		archiveMaxBytes:    cfg.ArchiveMaxBytes,
+		textMaxBytes:       cfg.TextMaxBytes,
+		responseMaxBytes:   cfg.ResponseMaxBytes,
 		source:             source,
 		baseURL:            baseURL,
 		authToken:          strings.TrimSpace(cfg.AuthToken),
@@ -314,7 +323,7 @@ func (c *Client) extractTextSelfHosted(ctx context.Context, req Request) (string
 	}
 
 	var parsed selfHostedResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 20*1024*1024)).Decode(&parsed); err != nil {
+	if err := extractionport.DecodeBounded(resp.Body, &parsed, c.responseMaxBytes); err != nil {
 		return "", errMinerUInvalidResponse
 	}
 
@@ -375,7 +384,7 @@ func (c *Client) createBatch(ctx context.Context, req Request) (string, string, 
 	}
 
 	var parsed batchCreateResponse
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 2*1024*1024)).Decode(&parsed); err != nil {
+	if err := extractionport.DecodeBounded(resp.Body, &parsed, c.responseMaxBytes); err != nil {
 		return "", "", errMinerUInvalidResponse
 	}
 	if strings.TrimSpace(parsed.Data.BatchID) == "" || len(parsed.Data.FileURLs) == 0 || strings.TrimSpace(parsed.Data.FileURLs[0]) == "" {
@@ -440,7 +449,7 @@ func (c *Client) pollBatch(ctx context.Context, batchID string) (string, error) 
 		}
 
 		var parsed batchResultResponse
-		err = json.NewDecoder(io.LimitReader(resp.Body, 4*1024*1024)).Decode(&parsed)
+		err = extractionport.DecodeBounded(resp.Body, &parsed, c.responseMaxBytes)
 		resp.Body.Close()
 		if err != nil {
 			return "", errMinerUInvalidResponse
@@ -499,7 +508,11 @@ func (c *Client) downloadResult(ctx context.Context, zipURL string) (string, err
 		return "", &httpError{statusCode: resp.StatusCode, detail: string(body)}
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 100*1024*1024))
+	archiveLimit := c.archiveMaxBytes
+	if archiveLimit <= 0 {
+		archiveLimit = 100 * 1024 * 1024
+	}
+	body, err := extractionport.ReadBounded(resp.Body, archiveLimit)
 	if err != nil {
 		return "", err
 	}
@@ -517,10 +530,14 @@ func (c *Client) downloadResult(ctx context.Context, zipURL string) (string, err
 		if openErr != nil {
 			continue
 		}
-		content, readErr := io.ReadAll(io.LimitReader(rc, 20*1024*1024))
+		textLimit := c.textMaxBytes
+		if textLimit <= 0 {
+			textLimit = 20 * 1024 * 1024
+		}
+		content, readErr := extractionport.ReadBounded(rc, textLimit)
 		rc.Close()
 		if readErr != nil {
-			continue
+			return "", readErr
 		}
 		text := extractioninfra.NormalizeText(string(content))
 		if text != "" {

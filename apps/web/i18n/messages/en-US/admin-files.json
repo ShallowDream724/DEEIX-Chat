@@ -1,5 +1,123 @@
 {
+  "inputLimits": {
+    "inheritanceDescription": "Leave blank to use the default shown in gray; 0 adds no extra limit.",
+    "title": "Model input budgets",
+    "description": "Budgets apply to the complete model request, including conversation history. MB = 1,000,000 bytes. Set 0 for no additional limit; leave empty to inherit. Actual model input support still applies.",
+    "scope": "Configuration scope",
+    "profileDefaults": "Channel defaults",
+    "profile": "Channel",
+    "inheritanceProfile": "Inherited budget preview",
+    "overrideDescription": "Overrides apply to every model on this upstream. Empty fields inherit the model's channel budget; select a channel to preview its values.",
+    "protocolScope": "Protocol and task scope",
+    "protocolDescription": "Shared upstream values apply to all protocols. Protocol-specific values take precedence; empty fields inherit the next level.",
+    "allProtocols": "Shared across all protocols",
+    "providerConditions": "Provider conditions and budget sources",
+    "providerSource": "Official documentation · checked November 4, 2026",
+    "conditions": {
+      "openai": "Official image requests allow up to 512 MB and 1,500 images. PDFs remain below 50 MB each and 50 MB total. Operating budgets may be stricter and cannot relax provider or model conditions.",
+      "google_generate_content": "The 100 MB request and 200 PDF pages are current operating settings. Official inline documentation differs between 20 and 100 MB; 100 MB is not guaranteed for every endpoint. Official PDFs allow 50 MB each; model input support and context limits also apply.",
+      "gemini_interactions": "The current image path uses a 100 MB operating request budget. Native PDF, audio and video input is not connected for this protocol in this application; changing budgets does not add input support.",
+      "anthropic": "First-party API documentation specifies a 128 MB request, up to 600 images and 10 MB per Base64-encoded image. PDFs allow 100 or 600 pages depending on the model context; smaller windows may have stricter image counts. Verify third-party hosting separately.",
+      "openrouter": "Conservative native file budgets and the 100 MB request are application protection values, not provider guarantees. Actual conditions depend on the selected model and final route.",
+      "compatible": "These are application protection budgets for unverified compatible channels, not verified provider limits. Check the actual channel; model input support and provider conditions apply independently.",
+      "xai_image_edits": "Image editing accepts at most 3 input images. Other budgets use compatible-channel operational defaults.",
+      "xai_video": "Video generation accepts at most 1 input image. Other budgets use compatible-channel operational defaults.",
+      "openrouter_images": "Image editing accepts at most 16 input images. Provider and model conditions still apply independently."
+    },
+    "openSettings": "Open file settings",
+    "summaryScope": "Operating budgets for the saved default chat protocol, {protocol}. Model-specific protocols and provider conditions may be stricter.",
+    "summaryFailed": "Could not load budget summary. Open file settings to inspect it.",
+    "protocolOverride": "Using this upstream's protocol-specific value",
+    "upstreamOverride": "Using this upstream's shared value",
+    "channelDefault": "Inheriting the channel default",
+    "loadingUpstreams": "Loading upstreams…",
+    "upstreamsFailed": "Could not load upstreams. Channel defaults are still available.",
+    "retry": "Retry",
+    "loading": "Loading budgets…",
+    "invalidConfig": "The saved input budget configuration is invalid. Reload after correcting it; no values have been replaced.",
+    "invalidValue": "Enter a non-negative whole number, or MB with up to 6 decimal places.",
+    "fixInvalidValues": "Correct invalid values before saving, including fields in other scopes.",
+    "inherit": "Inherit",
+    "systemDefault": "System default",
+    "noExtraLimit": "No additional limit",
+    "inheritedValue": "Inherited: {value}",
+    "effectiveValue": "Operating value: {value}",
+    "units": {
+      "mb": "MB",
+      "count": "files",
+      "pages": "pages"
+    },
+    "profiles": {
+      "openai": "OpenAI official",
+      "google_generate_content": "Gemini GenerateContent",
+      "gemini_interactions": "Gemini Interactions",
+      "anthropic": "Anthropic",
+      "openrouter": "OpenRouter",
+      "compatible": "Other compatible channels",
+      "xai_image_edits": "xAI Image Edits",
+      "xai_video": "xAI Video",
+      "openrouter_images": "OpenRouter Images"
+    },
+    "fields": {
+      "requestBytes": {
+        "label": "Final request payload",
+        "description": "Maximum serialized request body, including encoded attachments, text, tools and other parameters."
+      },
+      "imageCount": {
+        "label": "Image count",
+        "description": "Maximum images across the complete request."
+      },
+      "imageSingleBytes": {
+        "label": "Single image",
+        "description": "Maximum prepared image size, measured before Base64 encoding."
+      },
+      "imageBytes": {
+        "label": "Total image size",
+        "description": "Combined prepared image size across the request, measured before Base64 encoding."
+      },
+      "nativeCount": {
+        "label": "Native file count",
+        "description": "Maximum files sent directly to the model, including PDFs, audio and video."
+      },
+      "nativeBytes": {
+        "label": "Total native file size",
+        "description": "Combined original size of files sent directly to the model."
+      },
+      "pdfSingleBytes": {
+        "label": "Single PDF",
+        "description": "Maximum original size of one native PDF."
+      },
+      "pdfBytes": {
+        "label": "Total PDF size",
+        "description": "Combined original size of native PDFs in the request."
+      },
+      "pdfPages": {
+        "label": "PDF pages",
+        "description": "Maximum total pages across native PDFs in the request."
+      },
+      "nonPDFBytes": {
+        "label": "Native audio and video size",
+        "description": "Combined original size of native files other than PDFs."
+      }
+    }
+  },
   "groups": {
+    "imageProcessing": {
+      "title": "Image processing",
+      "description": "Controls image copies prepared for model input."
+    },
+    "temporaryAttachments": {
+      "title": "Temporary chat attachments",
+      "description": "Attachment and base request limits for temporary chats."
+    },
+    "imageTools": {
+      "title": "Image tools",
+      "description": "Input and analysis budgets for image tools."
+    },
+    "generatedFiles": {
+      "title": "Generated files",
+      "description": "Storage limits for model-generated files."
+    },
     "uploadLimits": {
       "title": "Upload limits",
       "description": "Controls attachment count, MIME allowlist, and file size limits for chat messages."
@@ -171,13 +289,58 @@
       },
       "image_max_bytes": {
         "label": "Image size limit",
-        "description": "Override the size limit for image attachments. The UI uses MB; leave empty to use the default attachment limit.",
-        "placeholder": "Leave empty to use the default attachment limit"
+        "description": "Maximum size of one image attachment, in MB. Leave empty to use the default size limit.",
+        "placeholder": "Inherit default"
       },
       "doc_max_bytes": {
         "label": "Document size limit",
-        "description": "Override the size limit for document attachments. The UI uses MB; leave empty to use the default attachment limit.",
-        "placeholder": "Leave empty to use the default attachment limit"
+        "description": "Maximum size of one document attachment, in MB. Leave empty to use the default size limit.",
+        "placeholder": "Inherit default"
+      },
+      "audio_max_bytes": {
+        "label": "Audio size limit",
+        "description": "Maximum size of one audio attachment, in MB. Leave empty to use the default size limit."
+      },
+      "video_max_bytes": {
+        "label": "Video size limit",
+        "description": "Maximum size of one video attachment, in MB. Leave empty to use the default size limit."
+      },
+      "image_max_dimension": {
+        "label": "Maximum image edge for sending",
+        "description": "Resize the sending copy proportionally when its longest edge exceeds this pixel count. Set 0 to disable local resizing; the stored original is preserved.",
+        "placeholder": "1024"
+      },
+      "prepared_image_cache_max_entries": {
+        "label": "Cached image count",
+        "description": "Maximum cached image processing results; 0 disables caching. Eviction keeps the stored original."
+      },
+      "prepared_image_cache_max_bytes": {
+        "label": "Prepared image cache size",
+        "description": "Maximum total image processing cache size, in MB; 0 disables caching."
+      },
+      "temporary_chat_max_attachments": {
+        "label": "Request attachment count",
+        "description": "Maximum attachments across one temporary chat request. Per-message upload attachment limits still apply."
+      },
+      "temporary_chat_request_max_bytes": {
+        "label": "Base request budget",
+        "description": "Base JSON request body limit for temporary chats, in MB. Multipart uploads additionally include the applicable attachment budget."
+      },
+      "image_attachment_processor_max_bytes": {
+        "label": "Total image tool input",
+        "description": "Combined prepared image size sent to image tools, in MB; 0 adds no limit."
+      },
+      "image_attachment_analysis_max_chars": {
+        "label": "Single image analysis",
+        "description": "Maximum returned analysis characters per image; 0 adds no limit."
+      },
+      "image_attachment_analysis_total_max_chars": {
+        "label": "Total image analysis",
+        "description": "Maximum returned analysis characters across all images; 0 adds no limit."
+      },
+      "generated_image_max_bytes": {
+        "label": "Generated image save limit",
+        "description": "Maximum downloaded size of one generated image saved to file storage, in MB."
       },
       "full_context_limit_enabled": {
         "label": "Full-text injection limits",
@@ -185,17 +348,17 @@
       },
       "file_full_context_max_bytes": {
         "label": "Full-text size limit",
-        "description": "Maximum extracted text size allowed for full-context injection. The UI uses MB; leave empty or use 0 for no size limit.",
+        "description": "Maximum extracted text size for full-text injection of one file, in MB. Leave empty or use 0 for no size limit.",
         "placeholder": "Size limit (MB); empty or 0 means unlimited"
       },
       "full_context_max_tokens": {
         "label": "Full-text token limit",
-        "description": "Maximum token budget allowed for full-context injection. Leave empty or use 0 for no token limit.",
+        "description": "Maximum token count for full-text injection of one file. Leave empty or use 0 for no token limit.",
         "placeholder": "Empty or 0 means unlimited"
       },
       "full_context_pdf_max_pages": {
         "label": "Full-text page limit",
-        "description": "Maximum PDF pages allowed for full-context injection. Leave empty or use 0 for no page limit.",
+        "description": "Maximum pages for full-text injection of one PDF. Leave empty or use 0 for no page limit.",
         "placeholder": "Empty or 0 means unlimited"
       },
       "embedding_enabled": {
@@ -275,6 +438,22 @@
       }
     },
     "extract": {
+      "source_max_bytes": {
+        "label": "Extraction source read limit",
+        "description": "Maximum size of one source file read by extraction services. Must be greater than 0."
+      },
+      "response_max_bytes": {
+        "label": "Extraction response read limit",
+        "description": "Maximum response size read from extraction services. Must be greater than 0."
+      },
+      "ocr_source_max_bytes": {
+        "label": "OCR source read limit",
+        "description": "Maximum size of one source file read by OCR services. Must be greater than 0."
+      },
+      "ocr_response_max_bytes": {
+        "label": "OCR response read limit",
+        "description": "Maximum response size read from OCR services. Must be greater than 0."
+      },
       "engine": {
         "label": "Extraction engine",
         "description": "Primary engine used for file content extraction.",
@@ -508,6 +687,14 @@
         "label": "LLM OCR prompt",
         "description": "OCR instruction sent to the vision model.",
         "placeholder": "Prompt (optional)"
+      },
+      "mineru_archive_max_bytes": {
+        "label": "MinerU archive read limit",
+        "description": "Maximum downloaded MinerU result archive size. Must be greater than 0."
+      },
+      "mineru_text_max_bytes": {
+        "label": "MinerU text read limit",
+        "description": "Maximum MinerU result text size read. Must be greater than 0."
       }
     },
     "chat": {

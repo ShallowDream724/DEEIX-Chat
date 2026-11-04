@@ -12,6 +12,7 @@ import (
 	domainchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/channel"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/inputlimits"
 )
 
 const (
@@ -259,6 +260,12 @@ func (s *Service) probeRoute(ctx context.Context, row repository.ChannelUpstream
 	resolved := buildResolvedRoute(row, apiKey)
 	attributionReferer, attributionTitle := s.llmAttribution()
 	routeConfig := modelProbeRouteConfig(resolved, attributionReferer, attributionTitle)
+	rawLimits := ""
+	if s.cfg != nil {
+		rawLimits = s.cfg.Snapshot().InputLimitsJSON
+	}
+	limits := inputlimits.Resolve(rawLimits, llm.NormalizeAdapter(resolved.Protocol), resolved.BaseURL, resolved.UpstreamID)
+	routeConfig.InputLimits = &limits
 	input := llm.GenerateInput{
 		Messages: []llm.Message{
 			{Role: "user", Content: "Reply with OK."},
@@ -336,6 +343,7 @@ func modelProbeRouteConfig(route *ResolvedRoute, attributionReferer string, attr
 		UpstreamModel:       route.UpstreamModel,
 		AttributionReferer:  attributionReferer,
 		AttributionTitle:    attributionTitle,
+		UntrustedEndpoint:   route.UntrustedEndpoint,
 	}
 }
 

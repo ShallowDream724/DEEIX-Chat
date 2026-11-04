@@ -1,5 +1,123 @@
 {
+  "inputLimits": {
+    "inheritanceDescription": "留空使用灰字所示默认值；0 表示不额外限制。",
+    "title": "模型输入预算",
+    "description": "预算作用于包含历史消息的完整模型请求。MB = 1,000,000 字节。0 表示不设置额外上限，留空表示继承。实际输入仍需模型支持。",
+    "scope": "配置范围",
+    "profileDefaults": "渠道默认预算",
+    "profile": "渠道",
+    "inheritanceProfile": "继承预算预览",
+    "overrideDescription": "覆盖适用于此上游的所有模型。留空字段继承模型对应渠道的预算；选择渠道可预览继承值。",
+    "protocolScope": "协议与任务范围",
+    "protocolDescription": "渠道共同值适用于全部协议；协议特例优先于共同值，留空逐级继承。",
+    "allProtocols": "全部协议共同值",
+    "providerConditions": "供应商条件与预算来源",
+    "providerSource": "官方文档 · 核对日期 2026-11-04",
+    "conditions": {
+      "openai": "官方图片请求最多 512 MB、1500 张；PDF 仍需单份小于 50 MB、文件合计不超过 50 MB。运营预算可以更严格，不能放宽供应商或模型条件。",
+      "google_generate_content": "100 MB 请求与 200 页 PDF 是当前运营设置；官方 inline 请求存在 20/100 MB 文档口径差异，100 MB 不代表所有端点保证。PDF 官方单份 50 MB，实际发送还受模型能力与上下文限制。",
+      "gemini_interactions": "当前图片路径采用 100 MB 运营请求预算。本项目此协议尚未接通原生 PDF、音频和视频；调整预算不会增加输入能力。",
+      "anthropic": "第一方 API 文档给出请求 128 MB、最多 600 图、单图 Base64 编码后 10 MB。PDF 按实际模型窗口适用 100/600 页，较小模型窗口可有更严格图数。第三方托管平台需单独核实。",
+      "openrouter": "兼容渠道的保守原生文件与 100 MB 请求值是本站保护预算，不能视为供应商承诺。实际条件取决于所选模型与最终路由。",
+      "compatible": "这些是未知兼容渠道的本站保护预算，尚非供应商已验证上限。请按实际渠道核实；模型能力与供应商条件独立生效。",
+      "xai_image_edits": "图像编辑任务最多 3 张输入图；其他预算继承兼容渠道的运营默认值。",
+      "xai_video": "视频生成任务最多 1 张输入图；其他预算继承兼容渠道的运营默认值。",
+      "openrouter_images": "图片编辑任务最多 16 张输入图；实际供应商和模型条件仍独立生效。"
+    },
+    "openSettings": "前往文件设置",
+    "summaryScope": "按已保存的聊天默认协议 {protocol} 显示运营预算；模型指定协议及供应商条件可能更严格。",
+    "summaryFailed": "预算摘要加载失败，请前往文件设置查看。",
+    "protocolOverride": "使用本渠道的协议特例",
+    "upstreamOverride": "使用本渠道共同值",
+    "channelDefault": "继承渠道默认值",
+    "loadingUpstreams": "正在加载上游…",
+    "upstreamsFailed": "上游加载失败，仍可编辑渠道默认预算。",
+    "retry": "重试",
+    "loading": "正在加载预算…",
+    "invalidConfig": "已保存的输入预算配置无效。请修正后重新加载，当前配置未被替换。",
+    "invalidValue": "请输入非负整数；MB 最多支持 6 位小数。",
+    "fixInvalidValues": "请先修正所有范围中的无效数值，再保存。",
+    "inherit": "继承",
+    "systemDefault": "系统默认",
+    "noExtraLimit": "不设置额外上限",
+    "inheritedValue": "继承：{value}",
+    "effectiveValue": "运营值：{value}",
+    "units": {
+      "mb": "MB",
+      "count": "个",
+      "pages": "页"
+    },
+    "profiles": {
+      "openai": "OpenAI 官方",
+      "google_generate_content": "Gemini GenerateContent",
+      "gemini_interactions": "Gemini Interactions",
+      "anthropic": "Anthropic",
+      "openrouter": "OpenRouter",
+      "compatible": "其他兼容渠道",
+      "xai_image_edits": "xAI Image Edits",
+      "xai_video": "xAI Video",
+      "openrouter_images": "OpenRouter Images"
+    },
+    "fields": {
+      "requestBytes": {
+        "label": "最终请求体",
+        "description": "序列化后请求体的上限，包含编码后的附件、文本、工具及其他参数。"
+      },
+      "imageCount": {
+        "label": "图片数量",
+        "description": "完整请求中允许携带的图片总数。"
+      },
+      "imageSingleBytes": {
+        "label": "单张图片大小",
+        "description": "单张处理后图片发送副本的大小上限，按 Base64 编码前字节计。"
+      },
+      "imageBytes": {
+        "label": "图片总大小",
+        "description": "请求中所有处理后图片发送副本的合计大小，按 Base64 编码前字节计。"
+      },
+      "nativeCount": {
+        "label": "原生文件数量",
+        "description": "直接发送给模型的文件总数，包含 PDF、音频和视频。"
+      },
+      "nativeBytes": {
+        "label": "原生文件总大小",
+        "description": "直接发送给模型的所有文件的原始大小合计上限。"
+      },
+      "pdfSingleBytes": {
+        "label": "单份 PDF 大小",
+        "description": "单份原生 PDF 的原始大小上限。"
+      },
+      "pdfBytes": {
+        "label": "PDF 总大小",
+        "description": "请求中所有原生 PDF 的原始大小合计上限。"
+      },
+      "pdfPages": {
+        "label": "PDF 总页数",
+        "description": "请求中所有原生 PDF 的合计页数上限。"
+      },
+      "nonPDFBytes": {
+        "label": "原生音视频大小",
+        "description": "PDF 以外原生文件的原始大小合计上限。"
+      }
+    }
+  },
   "groups": {
+    "imageProcessing": {
+      "title": "图片处理",
+      "description": "设置发送给模型的图片副本处理方式。"
+    },
+    "temporaryAttachments": {
+      "title": "临时会话附件",
+      "description": "设置临时会话的附件与基础请求预算。"
+    },
+    "imageTools": {
+      "title": "图片工具",
+      "description": "设置图片工具的输入与分析结果预算。"
+    },
+    "generatedFiles": {
+      "title": "生成文件",
+      "description": "设置模型生成文件的保存限制。"
+    },
     "uploadLimits": {
       "title": "上传限制",
       "description": "控制对话附件数量、MIME 白名单和文件大小上限。"
@@ -171,13 +289,58 @@
       },
       "image_max_bytes": {
         "label": "图像大小上限",
-        "description": "用于单独覆盖图像附件的大小上限，页面单位为 MB；留空时回退到默认附件大小上限。",
-        "placeholder": "留空则回退默认附件大小上限"
+        "description": "用于设置单张图像附件的大小上限，页面单位为 MB；留空时使用默认大小上限。",
+        "placeholder": "留空使用默认值"
       },
       "doc_max_bytes": {
         "label": "文档大小上限",
-        "description": "用于单独覆盖文档附件的大小上限，页面单位为 MB；留空时回退到默认附件大小上限。",
-        "placeholder": "留空则回退默认附件大小上限"
+        "description": "用于设置单个文档附件的大小上限，页面单位为 MB；留空时使用默认大小上限。",
+        "placeholder": "留空使用默认值"
+      },
+      "audio_max_bytes": {
+        "label": "音频大小上限",
+        "description": "用于设置单个音频附件的大小上限，页面单位为 MB；留空时使用默认大小上限。"
+      },
+      "video_max_bytes": {
+        "label": "视频大小上限",
+        "description": "用于设置单个视频附件的大小上限，页面单位为 MB；留空时使用默认大小上限。"
+      },
+      "image_max_dimension": {
+        "label": "发送图片最大边长",
+        "description": "图片最长边超过此像素值时，等比例缩小发送副本；0 表示不进行本地缩放，存储原图保持不变。",
+        "placeholder": "1024"
+      },
+      "prepared_image_cache_max_entries": {
+        "label": "处理结果缓存数量",
+        "description": "图片缩放等处理结果的最大缓存条目数；0 表示禁用缓存。淘汰缓存不会删除原文件。"
+      },
+      "prepared_image_cache_max_bytes": {
+        "label": "处理结果缓存大小",
+        "description": "图片处理结果缓存的总大小上限，单位为 MB；0 表示禁用缓存。"
+      },
+      "temporary_chat_max_attachments": {
+        "label": "临时请求附件总数",
+        "description": "单个临时会话请求可携带的附件总数；每条消息仍受上传设置的附件数量限制。"
+      },
+      "temporary_chat_request_max_bytes": {
+        "label": "基础请求预算",
+        "description": "临时会话基础 JSON 请求体的大小上限，单位为 MB；multipart 上传另加适用的附件预算。"
+      },
+      "image_attachment_processor_max_bytes": {
+        "label": "图片工具输入总大小",
+        "description": "发送给图片工具的处理后图片合计大小上限，单位为 MB；0 表示不增加此项限制。"
+      },
+      "image_attachment_analysis_max_chars": {
+        "label": "单图分析文字上限",
+        "description": "每张图片返回的分析结果字符数上限；0 表示不增加此项限制。"
+      },
+      "image_attachment_analysis_total_max_chars": {
+        "label": "分析文字总上限",
+        "description": "所有图片返回的分析结果合计字符数上限；0 表示不增加此项限制。"
+      },
+      "generated_image_max_bytes": {
+        "label": "生成图片单文件保存上限",
+        "description": "从模型下载并保存到文件库的单张生成图片大小上限，单位为 MB。"
       },
       "full_context_limit_enabled": {
         "label": "全文注入限制",
@@ -185,17 +348,17 @@
       },
       "file_full_context_max_bytes": {
         "label": "全文大小上限",
-        "description": "用于限制全文注入允许的最大提取文本大小，页面单位为 MB；留空或填 0 表示不限制大小。",
+        "description": "用于限制单个文件全文注入时的提取文本大小，页面单位为 MB；留空或填 0 表示不限制大小。",
         "placeholder": "大小上限（MB）；留空或 0 表示不限制"
       },
       "full_context_max_tokens": {
         "label": "全文 Token 上限",
-        "description": "用于限制全文注入允许的最大 Token 预算；留空或填 0 表示不限制 Token。",
+        "description": "用于限制单个文件全文注入时的 Token 数量；留空或填 0 表示不限制 Token 数量。",
         "placeholder": "留空或 0 表示不限制"
       },
       "full_context_pdf_max_pages": {
         "label": "全文页数上限",
-        "description": "用于限制 PDF 走全文注入时允许的最大页数；留空或填 0 表示不限制页数。",
+        "description": "用于限制单个 PDF 全文注入时的页数；留空或填 0 表示不限制页数。",
         "placeholder": "留空或 0 表示不限制"
       },
       "embedding_enabled": {
@@ -275,6 +438,22 @@
       }
     },
     "extract": {
+      "source_max_bytes": {
+        "label": "提取源文件读入上限",
+        "description": "内容提取服务最多读入的单份源文件大小，须大于 0。"
+      },
+      "response_max_bytes": {
+        "label": "提取响应读入上限",
+        "description": "内容提取服务单次响应的最大读入大小，须大于 0。"
+      },
+      "ocr_source_max_bytes": {
+        "label": "OCR 源文件读入上限",
+        "description": "OCR 服务最多读入的单份源文件大小，须大于 0。"
+      },
+      "ocr_response_max_bytes": {
+        "label": "OCR 响应读入上限",
+        "description": "OCR 服务单次响应的最大读入大小，须大于 0。"
+      },
       "engine": {
         "label": "提取引擎",
         "description": "用于选择文件内容提取的主链路引擎。",
@@ -508,6 +687,14 @@
         "label": "LLM OCR 提示词",
         "description": "用于配置发送给视觉模型的 OCR 指令。",
         "placeholder": "提示词（可空）"
+      },
+      "mineru_archive_max_bytes": {
+        "label": "MinerU 结果包读入上限",
+        "description": "MinerU 下载结果包的最大大小，须大于 0。"
+      },
+      "mineru_text_max_bytes": {
+        "label": "MinerU 结果文本读入上限",
+        "description": "MinerU 结果文本的最大读入大小，须大于 0。"
       }
     },
     "chat": {

@@ -1,6 +1,7 @@
 package docling
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,9 +28,10 @@ const (
 
 // ClientConfig 表示 Docling 服务接入配置。
 type ClientConfig struct {
-	BaseURL        string
-	AuthToken      string
-	TimeoutSeconds int
+	ResponseMaxBytes int64
+	BaseURL          string
+	AuthToken        string
+	TimeoutSeconds   int
 }
 
 // Request 表示一次 Docling 文本提取请求，契约定义在 ports/extraction。
@@ -37,9 +39,10 @@ type Request = extractionport.DocumentRequest
 
 // Client 提供 Docling HTTP 文本提取能力。
 type Client struct {
-	baseURL    string
-	authToken  string
-	httpClient *http.Client
+	responseMaxBytes int64
+	baseURL          string
+	authToken        string
+	httpClient       *http.Client
 }
 
 // New 创建 Docling 客户端；未配置地址时返回 nil。
@@ -49,9 +52,10 @@ func New(cfg ClientConfig) *Client {
 		return nil
 	}
 	return &Client{
-		baseURL:    baseURL,
-		authToken:  strings.TrimSpace(cfg.AuthToken),
-		httpClient: platformtracing.NewHTTPClient(resolveHTTPTimeout(cfg.TimeoutSeconds, 60*time.Second)),
+		responseMaxBytes: cfg.ResponseMaxBytes,
+		baseURL:          baseURL,
+		authToken:        strings.TrimSpace(cfg.AuthToken),
+		httpClient:       platformtracing.NewHTTPClient(resolveHTTPTimeout(cfg.TimeoutSeconds, 60*time.Second)),
 	}
 }
 
@@ -165,7 +169,11 @@ func (c *Client) ExtractText(ctx context.Context, req Request) (string, error) {
 		}
 	}
 
-	text, err := parseResponse(io.LimitReader(resp.Body, 50*1024*1024), resp.Header.Get("Content-Type"))
+	body, err := extractionport.ReadBounded(resp.Body, c.responseMaxBytes)
+	if err != nil {
+		return "", err
+	}
+	text, err := parseResponse(bytes.NewReader(body), resp.Header.Get("Content-Type"))
 	if err != nil {
 		return "", err
 	}

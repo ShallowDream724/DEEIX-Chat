@@ -152,7 +152,14 @@ func (s *Service) ensureUsageBudgetCoversEstimate(
 	options map[string]any,
 	estimate usageBudgetEstimate,
 ) error {
-	if s.billingSvc == nil || authorization == nil || authorization.Reservation == nil || route == nil {
+	if s.billingSvc == nil || authorization == nil || route == nil {
+		return nil
+	}
+	nativeToolEstimate := s.billingSvc.AuthorizeNativeTools(authorization, authorizedNativeToolKeys(route.Protocol, options, route.ModelCapabilitiesJSON))
+	if err := s.billingSvc.EnsureNativeToolReservation(ctx, authorization, nativeToolEstimate); err != nil {
+		return err
+	}
+	if authorization.Reservation == nil {
 		return nil
 	}
 	requiredNanousd, err := s.billingSvc.EstimateUsageNanousd(ctx, authorization.Reservation.UserID, appbilling.UsageEstimateInput{
@@ -172,7 +179,7 @@ func (s *Service) ensureUsageBudgetCoversEstimate(
 	if err != nil {
 		return err
 	}
-	return s.billingSvc.EnsureUsageAuthorizationBudget(ctx, authorization, requiredNanousd)
+	return s.billingSvc.EnsureUsageAuthorizationBudget(ctx, authorization, requiredNanousd+nativeToolEstimate)
 }
 
 // messageRequestMaxOutputTokens 读取请求明确限定的最大输出 token 数，未限定返回 0。

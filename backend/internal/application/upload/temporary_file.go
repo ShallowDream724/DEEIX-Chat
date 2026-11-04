@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"strings"
 
@@ -58,16 +59,14 @@ func (s *Service) PrepareTemporaryFile(_ context.Context, input TemporaryFileInp
 		mimeType = "application/octet-stream"
 	}
 	cfg := s.snapshot()
-	maxUploadBytes := cfg.MaxUploadFileBytes
-	if maxUploadBytes <= 0 {
-		maxUploadBytes = 20 * 1024 * 1024
-	}
+	maxUploadBytes := MaxUploadBytes(cfg)
 	if input.DeclaredSize > maxUploadBytes {
 		return nil, s.errFileTooLarge()
 	}
 
 	fileID := "temporary_" + conv.NormalizePublicID(uuid.NewString())
-	staged, err := stageUploadedFile(input.Reader, fileID, fileName, maxUploadBytes, mimeType)
+	staged, err := stageUploadedFile(input.Reader, fileID, fileName, maxUploadBytes, mimeType,
+		func(detected string) int64 { return EffectiveMaxBytes(cfg, detected, fileName) })
 	if err != nil {
 		if errors.Is(err, errLocalFileTooLarge) {
 			return nil, s.errFileTooLarge()
@@ -84,7 +83,7 @@ func (s *Service) PrepareTemporaryFile(_ context.Context, input TemporaryFileInp
 		cleanup()
 		return nil, s.errMIMEBlocked()
 	}
-	if typeLimit := maxBytesForCategory(category, cfg); typeLimit > 0 && staged.sizeBytes > typeLimit {
+	if staged.sizeBytes > EffectiveMaxBytes(cfg, staged.detectedMIME, fileName) {
 		cleanup()
 		return nil, s.errFileTooLarge()
 	}
@@ -108,6 +107,7 @@ func stageUploadedFile(
 	fileName string,
 	maxUploadBytes int64,
 	declaredMIME string,
+	detectedMaxBytes func(string) int64,
 ) (stagedUpload, error) {
 	if maxUploadBytes <= 0 {
 		maxUploadBytes = 20 * 1024 * 1024
@@ -128,8 +128,15 @@ func stageUploadedFile(
 	bufferedReader := bufio.NewReader(reader)
 	header, _ := bufferedReader.Peek(512)
 	detectedMIME := detectContentMIME(header, declaredMIME, fileName)
+	if detectedMaxBytes != nil {
+		maxUploadBytes = detectedMaxBytes(detectedMIME)
+	}
 	hasher := sha256.New()
-	written, err := io.Copy(io.MultiWriter(tmpFile, hasher), io.LimitReader(bufferedReader, maxUploadBytes+1))
+	readLimit := maxUploadBytes
+	if readLimit < math.MaxInt64 {
+		readLimit++
+	}
+	written, err := io.Copy(io.MultiWriter(tmpFile, hasher), io.LimitReader(bufferedReader, readLimit))
 	if err != nil {
 		return stagedUpload{}, err
 	}

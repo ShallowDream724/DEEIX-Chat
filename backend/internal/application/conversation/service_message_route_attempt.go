@@ -75,7 +75,7 @@ func (s *Service) buildMessageRoutePrompt(ctx context.Context, route *channel.Re
 		ReasoningContentPassback: input.ReasoningContentPassback,
 	})
 	// 原生输入按路由判断：故障转移到另一条路由时重新计算，不把原生内容块发给不支持它的协议。
-	native := s.resolveNativeInputs(ctx, route, input.ConversationFiles, input.NativeInputs)
+	native := s.resolveNativeInputs(ctx, route, input.ConversationFiles, input.NativeInputs, input.Config)
 	if err := validateCurrentNativeReads(input.ConversationFiles, native); err != nil {
 		return PromptPlan{}, err
 	}
@@ -95,14 +95,25 @@ func (s *Service) buildMessageRoutePrompt(ctx context.Context, route *channel.Re
 	})
 	historyMessages = documents.Messages
 	dynamicContext := input.DynamicContext
-	if native.Policy.ImageUnsupported {
+	if native.Policy.ImageUnsupported || input.SkipImageAttachments {
 		// 模型不支持图片输入：本轮图片与检索命中的图片都不发送，所属轮次已留说明。
 		dynamicContext.Attachments = nil
+		dynamicContext.PreparedImages = nil
 	}
 	if !input.SkipImageAttachments && !native.Policy.ImageUnsupported {
 		var err error
-		historyMessages, err = s.injectConversationImageContext(ctx, historyMessages, routeMessages, input.ConversationFiles, input.Config)
+		historyMessages, err = s.injectConversationImageContext(ctx, historyMessages, routeMessages, input.ConversationFiles, input.Config, native.Policy.InputLimits)
 		if err != nil {
+			return PromptPlan{}, err
+		}
+		dynamicContext.PreparedImages, err = s.prepareUserContextImages(ctx, dynamicContext.Attachments, input.Config, native.Policy.InputLimits)
+		if err != nil {
+			return PromptPlan{}, err
+		}
+		// Count every occurrence in the actual request. History and this turn
+		// share one budget, including dynamically retrieved images.
+		imageMessages := append(cloneLLMMessages(historyMessages), llm.Message{Parts: dynamicContext.PreparedImages})
+		if err := validateConversationImageBudget(imageMessages, native.Policy.InputLimits); err != nil {
 			return PromptPlan{}, err
 		}
 	}

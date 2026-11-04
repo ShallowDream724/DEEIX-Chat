@@ -147,9 +147,10 @@ func (s *Service) callCompactLLM(ctx context.Context, platformModelName string, 
 	}
 
 	attributionReferer, attributionTitle := s.llmAttribution()
-	routeConfig := routeConfigFromResolved(route, llm.DefaultEndpointForAdapter(route.Protocol), attributionReferer, attributionTitle)
+	cfg := s.cfg.Snapshot()
+	routeConfig := routeConfigFromResolved(route, llm.DefaultEndpointForAdapter(route.Protocol), attributionReferer, attributionTitle, cfg)
 	startedAt := time.Now()
-	generateInput := buildTextTaskGenerateInput(route, s.cfg.Snapshot(), llmMsgs)
+	generateInput := buildTextTaskGenerateInput(route, cfg, llmMsgs)
 	var authorization *domainbilling.UsageAuthorization
 	billingCtx, hasBillingContext := ctx.Value(basicServiceBillingContextKey{}).(basicServiceBillingContext)
 	if hasBillingContext {

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/inputlimits"
 )
 
 const (
@@ -29,6 +31,11 @@ const (
 
 // RouteConfig 定义渠道路由调用参数。
 type RouteConfig struct {
+	// InputLimits contains resolved administrator budgets. Nil uses protocol defaults.
+	InputLimits *inputlimits.Limits
+	// ContextWindowTokens is a reliable capability of the actual request/model.
+	// Zero means unknown; an administrator's fallback is not provider evidence.
+	ContextWindowTokens int
 	Protocol            string
 	BaseURL             string
 	APIKey              string
@@ -60,12 +67,14 @@ const (
 
 // ContentPart 表示多模态消息中的一个内容片段。
 type ContentPart struct {
-	Kind         string        // text | image | audio | video | file | document
-	Text         string        // Kind=text 或 Kind=file 时的文本内容
-	MimeType     string        // Kind=image / audio / video / document 时的 MIME 类型（如 "image/jpeg"、"audio/mp3"、"application/pdf"）
-	Data         []byte        // Kind=image / audio / video / document 时的原始字节（发送时 base64 编码）
-	FileName     string        // Kind=file / audio / video / document 时的文件显示名
-	CacheControl *CacheControl // 支持块级缓存的 adapter 可读取该提示
+	// SourceFileIDs identifies source attachments for tracing; it is never sent upstream.
+	SourceFileIDs []string      `json:"-"`
+	Kind          string        // text | image | audio | video | file | document
+	Text          string        // Kind=text 或 Kind=file 时的文本内容
+	MimeType      string        // Kind=image / audio / video / document 时的 MIME 类型（如 "image/jpeg"、"audio/mp3"、"application/pdf"）
+	Data          []byte        // Kind=image / audio / video / document 时的原始字节（发送时 base64 编码）
+	FileName      string        // Kind=file / audio / video / document 时的文件显示名
+	CacheControl  *CacheControl // 支持块级缓存的 adapter 可读取该提示
 	// PageCount 为 Kind=document 时的页数（未知为 0），用于上下文预算估算。
 	PageCount int
 	// DurationSeconds 为 Kind=audio / video 时的时长（未知为 0），用于上下文预算估算。
@@ -106,6 +115,9 @@ type GenerateInput struct {
 	// 不支持原生指令字段的 adapter 应继续通过 messages 承载系统提示。
 	Instructions string
 	Tools        []ToolDefinition
+	// NativeToolKeys freezes the authorized provider identity for each enabled
+	// native tool type. It is internal metadata and never sent to the provider.
+	NativeToolKeys map[string]string
 	// DisableTools 表示本轮调用必须只生成文本，adapter 不再声明 MCP 或厂商原生工具。
 	DisableTools bool
 	// Options 承载本次调用的自由 JSON 参数。系统字段（model/messages/input/stream）
@@ -213,6 +225,7 @@ func appendRawUsageJSON(items []any, raw string) []any {
 // ToolCall 记录上游返回的工具调用请求。
 type ToolCall struct {
 	ToolCallID       string
+	ProviderItemID   string `json:"-"`
 	ToolType         string
 	ToolName         string
 	ArgumentsJSON    string
@@ -244,6 +257,7 @@ type ReasoningOutput struct {
 // GenerateOutput 定义上游推理结果。
 type GenerateOutput struct {
 	ResponseID          string
+	ModelVersion        string
 	Text                string
 	Reasoning           *ReasoningOutput
 	Usage               Usage

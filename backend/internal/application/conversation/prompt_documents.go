@@ -100,14 +100,22 @@ func placeTurnDocuments(history []llm.Message, domainMessages []model.Message, a
 		}
 	}
 
+	firstUserIndex := -1
 	lastUserIndex := -1
 	historyIndex := 0
+	retainedFileIDs := make(map[string]struct{})
 	for _, item := range domainMessages {
 		if !isPromptHistoryMessage(item) {
 			continue
 		}
 		if item.Role == "user" {
+			if firstUserIndex < 0 {
+				firstUserIndex = historyIndex
+			}
 			lastUserIndex = historyIndex
+		}
+		for _, fileID := range parseAttachmentSnapshotFileIDs(item.Attachments) {
+			retainedFileIDs[fileID] = struct{}{}
 		}
 		historyIndex++
 	}
@@ -118,6 +126,23 @@ func placeTurnDocuments(history []llm.Message, domainMessages []model.Message, a
 
 	result := cloneLLMMessages(history)
 	pendingFromAssistant := make([]turnDocument, 0)
+	// The attachment list is independently resolved from the active ancestor
+	// path. An owner whose text was summarized has no retained message slot;
+	// preserve its document at the first retained user turn instead. Subsequent
+	// turns keep that prefix stable, while siblings/future files never enter the
+	// branch-scoped attachment list in the first place.
+	coveredDocuments := make([]turnDocument, 0)
+	for _, att := range attachments {
+		if att.Current {
+			continue
+		}
+		if _, retained := retainedFileIDs[strings.TrimSpace(att.FileID)]; retained {
+			continue
+		}
+		if document, ok := newTurnDocument(att, stringsEqualFold(att.MessageRole, "assistant"), options); ok {
+			coveredDocuments = append(coveredDocuments, document)
+		}
+	}
 	historyIndex = -1
 	for _, item := range domainMessages {
 		if !isPromptHistoryMessage(item) {
@@ -137,6 +162,9 @@ func placeTurnDocuments(history []llm.Message, domainMessages []model.Message, a
 				fileIDs = appendMissingFileIDs(fileIDs, currentIDs)
 			}
 			documents := pendingFromAssistant
+			if historyIndex == firstUserIndex {
+				documents = append(append([]turnDocument(nil), coveredDocuments...), documents...)
+			}
 			pendingFromAssistant = make([]turnDocument, 0)
 			seen := make(map[string]struct{}, len(fileIDs))
 			for _, fileID := range fileIDs {
@@ -273,7 +301,16 @@ func renderTurnDocuments(documents []turnDocument) string {
 }
 
 func turnDocumentsPart(documents []turnDocument) llm.ContentPart {
-	return llm.ContentPart{Kind: llm.ContentPartFile, Text: renderTurnDocuments(documents)}
+	fileIDs := make([]string, 0, len(documents))
+	for _, document := range documents {
+		if document.Access != turnDocumentFull || strings.TrimSpace(document.Attachment.ExtractedText) == "" {
+			continue
+		}
+		if fileID := strings.TrimSpace(document.Attachment.FileID); fileID != "" {
+			fileIDs = appendMissingFileIDs(fileIDs, []string{fileID})
+		}
+	}
+	return llm.ContentPart{Kind: llm.ContentPartFile, Text: renderTurnDocuments(documents), SourceFileIDs: fileIDs}
 }
 
 // userTurnPartRank 规定用户消息内容块的固定顺序：文件说明 → 原生文件/图片 → 本轮动态上下文 → 用户原文。

@@ -205,6 +205,21 @@ func (s *Service) extractLocalFile(ctx context.Context, input ExtractInput, absP
 		err = withErrorCode(err)
 	}()
 	file := input.File
+	snapshot := config.Config{}
+	if s != nil && s.cfg != nil {
+		snapshot = s.cfg.Snapshot()
+	}
+	info, statErr := os.Stat(absPath)
+	if statErr != nil {
+		return Result{}, statErr
+	}
+	sourceLimit := snapshot.ExtractSourceMaxBytes
+	if input.File.FileCategory == "image" {
+		sourceLimit = snapshot.ExtractOCRSourceMaxBytes
+	}
+	if info.Size() > extractionport.ReadMaxBytes(sourceLimit) {
+		return Result{}, ErrStoredFileTooLarge
+	}
 	file.StoragePath = absPath
 	input.File = file
 	input.OCREngine = normalizeOCREngine(input.OCREngine)
@@ -331,7 +346,11 @@ func (s *Service) ReadExtractedText(ctx context.Context, relativePath string) (s
 		return "", err
 	}
 	defer reader.Close() //nolint:errcheck
-	data, err := io.ReadAll(io.LimitReader(reader, 50*1024*1024))
+	limit := int64(0)
+	if s != nil && s.cfg != nil {
+		limit = s.cfg.Snapshot().ExtractResponseMaxBytes
+	}
+	data, err := extractionport.ReadBounded(reader, limit)
 	if err != nil {
 		return "", err
 	}

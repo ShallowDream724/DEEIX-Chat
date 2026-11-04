@@ -19,6 +19,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/objectstorage"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/inputlimits"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/tokenestimate"
 )
 
@@ -35,11 +36,9 @@ const (
 	messageErrorCodeInternal                      = "internal.error"
 )
 
-const (
-	maxConversationImageContextCount = 10
-	maxConversationImageContextBytes = 20 * 1024 * 1024
-	maxConversationImageSourceBytes  = 50 * 1024 * 1024
-)
+// Generated media and moderation have their own artifact size guard. Uploaded
+// conversation images instead use the effective route's input limits.
+const maxConversationImageSourceBytes = 50 * 1024 * 1024
 
 func normalizePublicID(raw string) string {
 	return conv.NormalizePublicID(raw)
@@ -459,7 +458,7 @@ func (e *upstreamRequestError) Unwrap() []error {
 
 func wrapUpstreamRequestError(cause error) error {
 	if errors.Is(cause, llm.ErrInputTooLarge) {
-		return ErrFileTooLarge
+		return errors.Join(ErrFileTooLarge, cause)
 	}
 	if cause == nil {
 		return ErrUpstreamRequestFailed
@@ -620,6 +619,9 @@ func isStreamUnsupportedError(err *llm.UpstreamError) bool {
 
 type userContextInput struct {
 	Attachments []AttachmentInput
+	// PreparedImages are read and validated by route planning before prompt
+	// assembly. Attachments retain their identities for the context trace.
+	PreparedImages []llm.ContentPart
 	// Files 是依赖本轮问题的文件全文（检索失败或未命中后的回退），只随本轮发送。
 	Files []AttachmentInput
 	// UnretrievedFiles 是本轮检索过但没有提供任何内容的用户附件，只随本轮发送。
@@ -648,8 +650,8 @@ type conversationImageRef struct {
 	fileID       string
 }
 
-func conversationImageRefs(messages []domainconversation.Message, attachments []AttachmentInput, limit int) []conversationImageRef {
-	if len(messages) == 0 || limit <= 0 {
+func conversationImageRefs(messages []domainconversation.Message, attachments []AttachmentInput) []conversationImageRef {
+	if len(messages) == 0 {
 		return nil
 	}
 	available := make(map[string]AttachmentInput, len(attachments))
@@ -670,18 +672,29 @@ func conversationImageRefs(messages []domainconversation.Message, attachments []
 	}
 
 	refs := make([]conversationImageRef, 0)
+	referenced := make(map[string]struct{})
+	latestUserIndex := -1
+	for index, message := range messages {
+		if message.Role == "user" {
+			latestUserIndex = index
+		}
+	}
 	historyIndex := 0
-	for _, message := range messages {
-		if message.Role != "user" && message.Role != "assistant" && message.Role != "system" {
+	firstUserHistoryIndex := -1
+	for messageIndex, message := range messages {
+		if !isPromptHistoryMessage(message) {
 			continue
 		}
 		if message.Role == "user" {
+			if firstUserHistoryIndex < 0 {
+				firstUserHistoryIndex = historyIndex
+			}
 			for _, snapshot := range parseAttachmentSnapshotRefs(message.Attachments) {
 				fileID := strings.TrimSpace(snapshot.FileID)
 				if fileID == "" {
 					continue
 				}
-				if _, isCurrent := current[fileID]; isCurrent {
+				if _, isCurrent := current[fileID]; isCurrent && messageIndex == latestUserIndex {
 					continue
 				}
 				_, isAvailable := available[fileID]
@@ -690,12 +703,29 @@ func conversationImageRefs(messages []domainconversation.Message, attachments []
 					continue
 				}
 				refs = append(refs, conversationImageRef{messageIndex: historyIndex, fileID: fileID})
+				referenced[fileID] = struct{}{}
 			}
 		}
 		historyIndex++
 	}
-	if len(refs) > limit {
-		refs = refs[len(refs)-limit:]
+	// Summaries replace conversation text, not the branch's attachment rights.
+	// These files came from the full active ancestry; keep their originals even
+	// when their owning turn's text is covered by a summary.
+	if firstUserHistoryIndex >= 0 {
+		for _, att := range attachments {
+			fileID := strings.TrimSpace(att.FileID)
+			if fileID == "" || att.Current || !strings.EqualFold(strings.TrimSpace(att.MessageRole), "user") {
+				continue
+			}
+			if _, included := available[fileID]; !included {
+				continue
+			}
+			if _, exists := referenced[fileID]; exists {
+				continue
+			}
+			refs = append(refs, conversationImageRef{messageIndex: firstUserHistoryIndex, fileID: fileID})
+			referenced[fileID] = struct{}{}
+		}
 	}
 	return refs
 }
@@ -706,8 +736,9 @@ func (s *Service) injectConversationImageContext(
 	domainMessages []domainconversation.Message,
 	attachments []AttachmentInput,
 	cfg config.Config,
+	budgets ...inputlimits.Limits,
 ) ([]llm.Message, error) {
-	refs := conversationImageRefs(domainMessages, attachments, maxConversationImageContextCount)
+	refs := conversationImageRefs(domainMessages, attachments)
 	if len(refs) == 0 {
 		return messages, nil
 	}
@@ -716,20 +747,12 @@ func (s *Service) injectConversationImageContext(
 	for _, att := range attachments {
 		attachmentByFileID[strings.TrimSpace(att.FileID)] = att
 	}
+	limits := firstImageInputLimits(budgets)
 	maxDim := cfg.ImageMaxDimension
-	if maxDim <= 0 {
-		maxDim = 1024
-	}
-	cache := s.imageContextCache
-	if cache == nil {
-		cache = defaultPreparedConversationImageCache()
-	}
-	storeProvider := s.storeProvider
-
+	cache := s.conversationImageCache(cfg)
 	var store objectstorage.Store
 	partsByRef := make(map[int]llm.ContentPart, len(refs))
 	loadedByFileID := make(map[string]llm.ContentPart, len(refs))
-	totalBytes := 0
 	for index := len(refs) - 1; index >= 0; index-- {
 		ref := refs[index]
 		part, loaded := loadedByFileID[ref.fileID]
@@ -738,52 +761,16 @@ func (s *Service) injectConversationImageContext(
 			if !ok || strings.TrimSpace(att.StoragePath) == "" {
 				return nil, fmt.Errorf("%w: historical image %s", ErrInvalidFileReference, ref.fileID)
 			}
-			mime := resolveImageMimeType(textutil.FirstNonEmpty(att.DetectedMIME, att.MimeType))
-			cacheKey := preparedConversationImageCacheKey(att, maxDim, mime)
-			if cached, ok := cache.get(cacheKey); ok {
-				part = llm.ContentPart{Kind: llm.ContentPartImage, MimeType: cached.mimeType, Data: cached.data}
-			} else {
-				if store == nil {
-					if storeProvider == nil {
-						return nil, fmt.Errorf("%w: open object storage: %w", ErrFileNotFound, appstorage.ErrProviderNotConfigured)
-					}
-					openedStore, openErr := storeProvider.Open(ctx)
-					if openErr != nil {
-						return nil, fmt.Errorf("%w: open object storage: %w", ErrFileNotFound, openErr)
-					}
-					store = openedStore
-				}
-				reader, _, openErr := store.Open(ctx, strings.TrimSpace(att.StoragePath))
-				if openErr != nil {
-					return nil, fmt.Errorf("%w: historical image %s: %w", ErrFileNotFound, ref.fileID, openErr)
-				}
-				data, readErr := io.ReadAll(io.LimitReader(reader, maxConversationImageSourceBytes+1))
-				closeErr := reader.Close()
-				if readErr != nil {
-					return nil, fmt.Errorf("%w: read historical image %s: %w", ErrFileNotFound, ref.fileID, readErr)
-				}
-				if closeErr != nil {
-					return nil, fmt.Errorf("%w: close historical image %s: %w", ErrFileNotFound, ref.fileID, closeErr)
-				}
-				if len(data) == 0 {
-					return nil, fmt.Errorf("%w: historical image %s is empty", ErrInvalidFileReference, ref.fileID)
-				}
-				if len(data) > maxConversationImageSourceBytes {
-					return nil, fmt.Errorf("%w: historical image %s exceeds source limit", ErrFileTooLarge, ref.fileID)
-				}
-				resized, actualMIME := resizeImageIfNeeded(data, mime, maxDim)
-				part = llm.ContentPart{Kind: llm.ContentPartImage, MimeType: actualMIME, Data: resized}
-				cache.put(cacheKey, preparedConversationImage{data: resized, mimeType: actualMIME})
+			var err error
+			part, err = s.prepareConversationImage(ctx, &store, cache, att, maxDim, limits)
+			if err != nil {
+				return nil, err
 			}
 			loadedByFileID[ref.fileID] = part
 		}
 		if len(part.Data) == 0 {
 			return nil, fmt.Errorf("%w: historical image %s is empty", ErrInvalidFileReference, ref.fileID)
 		}
-		if totalBytes+len(part.Data) > maxConversationImageContextBytes {
-			return nil, fmt.Errorf("%w: historical image context exceeds %d bytes", ErrFileTooLarge, maxConversationImageContextBytes)
-		}
-		totalBytes += len(part.Data)
 		partsByRef[index] = part
 	}
 
@@ -795,7 +782,137 @@ func (s *Service) injectConversationImageContext(
 		}
 		result[ref.messageIndex] = addUserTurnParts(result[ref.messageIndex], part)
 	}
+	if err := validateConversationImageBudget(result, limits); err != nil {
+		return nil, err
+	}
 	return result, nil
+}
+
+func firstImageInputLimits(budgets []inputlimits.Limits) inputlimits.Limits {
+	if len(budgets) > 0 {
+		return budgets[0]
+	}
+	return inputlimits.Limits{}
+}
+
+func validateConversationImageBudget(messages []llm.Message, limits inputlimits.Limits) error {
+	count := 0
+	var total int64
+	for _, message := range messages {
+		for _, part := range message.Parts {
+			if part.Kind != llm.ContentPartImage {
+				continue
+			}
+			if limits.ImageSingleBytes > 0 && int64(len(part.Data)) > limits.ImageSingleBytes {
+				return llm.NewInputLimitError("imageSingleBytes", int64(len(part.Data)), limits.ImageSingleBytes)
+			}
+			count++
+			total += int64(len(part.Data))
+		}
+	}
+	if limits.ImageCount > 0 && count > limits.ImageCount {
+		return llm.NewInputLimitError("imageCount", int64(count), int64(limits.ImageCount))
+	}
+	if limits.ImageBytes > 0 && total > limits.ImageBytes {
+		return llm.NewInputLimitError("imageBytes", total, limits.ImageBytes)
+	}
+	return nil
+}
+
+// readConversationImageSource bounds reads by trusted object/file metadata and
+// verifies EOF, so a shortened prefix can never be sent as a complete image.
+func readConversationImageSource(ctx context.Context, store objectstorage.Store, att AttachmentInput) ([]byte, error) {
+	reader, info, err := store.Open(ctx, strings.TrimSpace(att.StoragePath))
+	if err != nil {
+		return nil, fmt.Errorf("%w: open image %s: %w", ErrFileNotFound, att.FileID, err)
+	}
+	defer func() {
+		if reader != nil {
+			_ = reader.Close()
+		}
+	}()
+	size := info.SizeBytes
+	if size <= 0 {
+		size = att.FileSize
+	}
+	if size <= 0 {
+		return nil, fmt.Errorf("%w: image %s has no valid source size", ErrInvalidFileReference, att.FileID)
+	}
+	if att.FileSize > 0 && info.SizeBytes > 0 && att.FileSize != info.SizeBytes {
+		return nil, fmt.Errorf("%w: image %s source size changed", ErrInvalidFileReference, att.FileID)
+	}
+	// Size limits from the administrator are exact JavaScript integers; the
+	// storage size still needs an overflow guard before adding the EOF probe.
+	if size == int64(^uint64(0)>>1) {
+		return nil, fmt.Errorf("%w: image %s source size is invalid", ErrInvalidFileReference, att.FileID)
+	}
+	data, readErr := io.ReadAll(io.LimitReader(reader, size+1))
+	closeErr := reader.Close()
+	reader = nil
+	if readErr != nil {
+		return nil, fmt.Errorf("%w: read image %s: %w", ErrFileNotFound, att.FileID, readErr)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("%w: close image %s: %w", ErrFileNotFound, att.FileID, closeErr)
+	}
+	if int64(len(data)) != size {
+		return nil, fmt.Errorf("%w: image %s source size does not match metadata", ErrInvalidFileReference, att.FileID)
+	}
+	return data, nil
+}
+
+func (s *Service) prepareConversationImage(ctx context.Context, store *objectstorage.Store, cache *preparedConversationImageCache, att AttachmentInput, maxDim int, limits inputlimits.Limits) (llm.ContentPart, error) {
+	if strings.TrimSpace(att.StoragePath) == "" {
+		return llm.ContentPart{}, fmt.Errorf("%w: image %s storage path is empty", ErrInvalidFileReference, att.FileID)
+	}
+	mime := resolveImageMimeType(textutil.FirstNonEmpty(att.DetectedMIME, att.MimeType))
+	cacheKey := preparedConversationImageCacheKey(att, maxDim, mime)
+	if cached, ok := cache.get(cacheKey); ok {
+		part := llm.ContentPart{Kind: llm.ContentPartImage, MimeType: cached.mimeType, Data: cached.data, FileName: att.FileName, SourceFileIDs: []string{strings.TrimSpace(att.FileID)}}
+		if err := validateConversationImageBudget([]llm.Message{{Parts: []llm.ContentPart{part}}}, inputlimits.Limits{ImageSingleBytes: limits.ImageSingleBytes}); err != nil {
+			return llm.ContentPart{}, err
+		}
+		return part, nil
+	}
+	if *store == nil {
+		if s.storeProvider == nil {
+			return llm.ContentPart{}, fmt.Errorf("%w: open object storage: %w", ErrFileNotFound, appstorage.ErrProviderNotConfigured)
+		}
+		opened, err := s.storeProvider.Open(ctx)
+		if err != nil {
+			return llm.ContentPart{}, fmt.Errorf("%w: open object storage: %w", ErrFileNotFound, err)
+		}
+		*store = opened
+	}
+	data, err := readConversationImageSource(ctx, *store, att)
+	if err != nil {
+		return llm.ContentPart{}, err
+	}
+	resized, actualMIME := resizeImageIfNeeded(data, mime, maxDim)
+	part := llm.ContentPart{Kind: llm.ContentPartImage, MimeType: actualMIME, Data: resized, FileName: att.FileName, SourceFileIDs: []string{strings.TrimSpace(att.FileID)}}
+	if err := validateConversationImageBudget([]llm.Message{{Parts: []llm.ContentPart{part}}}, inputlimits.Limits{ImageSingleBytes: limits.ImageSingleBytes}); err != nil {
+		return llm.ContentPart{}, err
+	}
+	cache.put(cacheKey, preparedConversationImage{data: resized, mimeType: actualMIME})
+	return part, nil
+}
+
+func (s *Service) prepareUserContextImages(ctx context.Context, attachments []AttachmentInput, cfg config.Config, limits inputlimits.Limits) ([]llm.ContentPart, error) {
+	cache := s.conversationImageCache(cfg)
+	var store objectstorage.Store
+	parts := make([]llm.ContentPart, 0, len(attachments))
+	for _, att := range attachments {
+		if normalizeAttachmentKind(att.Kind, textutil.FirstNonEmpty(att.DetectedMIME, att.MimeType)) != "image" {
+			continue
+		}
+		part, err := s.prepareConversationImage(ctx, &store, cache, att, cfg.ImageMaxDimension, limits)
+		if err != nil {
+			return nil, err
+		}
+		part.Dynamic = !att.Current
+		parts = append(parts, part)
+	}
+	return parts, nil
 }
 
 func imageAttachmentsForCurrentUser(attachments []AttachmentInput) []AttachmentInput {
@@ -818,7 +935,7 @@ func injectUserContext(
 	cfg config.Config,
 	storeProvider appstorage.Provider,
 ) []llm.Message {
-	if len(input.Attachments) == 0 &&
+	if len(input.Attachments) == 0 && len(input.PreparedImages) == 0 &&
 		len(input.ImageAnalyses) == 0 &&
 		len(input.RAGChunks) == 0 &&
 		strings.TrimSpace(input.RAGNotice) == "" &&
@@ -830,11 +947,6 @@ func injectUserContext(
 		len(input.UnretrievedFiles) == 0 &&
 		len(input.UIStates) == 0 {
 		return messages
-	}
-
-	maxDim := cfg.ImageMaxDimension
-	if maxDim <= 0 {
-		maxDim = 1024
 	}
 
 	// 找到最后一条用户消息，构建 ContentParts
@@ -850,42 +962,8 @@ func injectUserContext(
 	}
 
 	lastUserMsg := messages[lastUserIdx]
-	imageParts := make([]llm.ContentPart, 0, len(input.Attachments))
+	imageParts := input.PreparedImages
 	contextXML := buildUserContextXML(input)
-
-	for _, att := range input.Attachments {
-		kind := normalizeAttachmentKind(att.Kind, att.MimeType)
-		if kind == "image" {
-			// 图片：读取文件字节并缩放
-			storagePath := strings.TrimSpace(att.StoragePath)
-			if storagePath == "" {
-				continue
-			}
-			if storeProvider == nil {
-				continue
-			}
-			store, storeErr := storeProvider.Open(ctx)
-			if storeErr != nil {
-				continue
-			}
-			reader, _, readErr := store.Open(ctx, storagePath)
-			if readErr != nil {
-				continue
-			}
-			imgData, readErr := io.ReadAll(io.LimitReader(reader, 50*1024*1024))
-			_ = reader.Close()
-			if readErr != nil {
-				continue
-			}
-			mime := resolveImageMimeType(att.MimeType)
-			resized, actualMIME := resizeImageIfNeeded(imgData, mime, maxDim)
-			imageParts = append(imageParts, llm.ContentPart{
-				Kind:     llm.ContentPartImage,
-				MimeType: actualMIME,
-				Data:     resized,
-			})
-		}
-	}
 
 	if len(imageParts) == 0 && contextXML.empty() {
 		return messages
@@ -896,15 +974,37 @@ func injectUserContext(
 	message := addUserTurnParts(lastUserMsg, imageParts...)
 	if !contextXML.empty() {
 		message = addUserTurnParts(message, llm.ContentPart{
-			Kind:    llm.ContentPartText,
-			Text:    buildUserContextPrompt("", contextXML),
-			Dynamic: true,
+			Kind:          llm.ContentPartText,
+			Text:          buildUserContextPrompt("", contextXML),
+			Dynamic:       true,
+			SourceFileIDs: userContextSourceFileIDs(input),
 		})
 	}
 
 	result := cloneLLMMessages(messages)
 	result[lastUserIdx] = llm.Message{Role: lastUserMsg.Role, Parts: message.Parts, Content: message.Content}
 	return result
+}
+
+// Only content actually rendered into the dynamic block counts as file input.
+// Metadata-only notices intentionally carry no source identity.
+func userContextSourceFileIDs(input userContextInput) []string {
+	var ids []string
+	add := func(id, text string) {
+		if strings.TrimSpace(id) != "" && strings.TrimSpace(text) != "" {
+			ids = appendMissingFileIDs(ids, []string{strings.TrimSpace(id)})
+		}
+	}
+	for _, file := range input.Files {
+		add(file.FileID, file.ExtractedText)
+	}
+	for _, chunk := range input.RAGChunks {
+		add(chunk.FileID, chunk.Content)
+	}
+	for _, analysis := range input.ImageAnalyses {
+		add(analysis.FileID, analysis.Content)
+	}
+	return ids
 }
 
 func formatFallbackFileContext(attachments []AttachmentInput) []string {

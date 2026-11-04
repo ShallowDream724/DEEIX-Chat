@@ -55,13 +55,17 @@ func validateModelOptionPathsJSON(value string, key string) error {
 
 // validateNativeToolPricingJSON 校验官方原生工具计费覆盖配置，只允许后端已定义的计费项。
 func validateNativeToolPricingJSON(value string, key string) error {
+	return validateNativeToolPricingJSONWithParser(value, nativetool.ParsePricingOverridesJSON)
+}
+
+func validateNativeToolPricingJSONWithParser(value string, parse func(string) (map[string]nativetool.PricingOverride, error)) error {
 	if strings.TrimSpace(value) == "" {
 		return settingRule("required", "")
 	}
 	if len([]rune(value)) > 20000 {
 		return settingRule("max_length", "20000")
 	}
-	if _, err := nativetool.ParsePricingOverridesJSON(value); err != nil {
+	if _, err := parse(value); err != nil {
 		return settingRule("native_tool_pricing", "")
 	}
 	return nil

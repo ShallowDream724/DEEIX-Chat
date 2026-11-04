@@ -595,6 +595,9 @@ func (c *Client) doRouteGenerationRequest(route portllm.RouteConfig, request *ht
 	if request == nil || request.URL == nil {
 		return nil, fmt.Errorf("model provider request is nil")
 	}
+	if err := validateEncodedRequestSize(route, request.ContentLength); err != nil {
+		return nil, err
+	}
 	connectTimeoutMS := normalizeConnectTimeoutMS(route.ConnectTimeoutMS)
 	return doGenerationRequest(func(tracedRequest *http.Request) (*http.Response, error) {
 		if route.UntrustedEndpoint {
@@ -651,11 +654,16 @@ func (c *Client) CloseIdleConnections() {
 
 // Generate 调用上游适配器并解析响应（非流式）。
 func (c *Client) Generate(ctx context.Context, route portllm.RouteConfig, input portllm.GenerateInput) (*portllm.GenerateOutput, error) {
+	if err := validateInputMedia(route, input); err != nil {
+		return nil, err
+	}
 	adapter, err := c.adapterFor(route)
 	if err != nil {
 		return nil, err
 	}
-	return adapter.Generate(ctx, route, input)
+	output, err := adapter.Generate(ctx, route, input)
+	qualifyNativeToolUsage(output, input, route)
+	return output, err
 }
 
 // GenerateStream 调用上游适配器并实时回传增量文本。
@@ -665,11 +673,16 @@ func (c *Client) GenerateStream(
 	input portllm.GenerateInput,
 	onEvent func(portllm.GenerateStreamEvent) error,
 ) (*portllm.GenerateOutput, error) {
+	if err := validateInputMedia(route, input); err != nil {
+		return nil, err
+	}
 	adapter, err := c.adapterFor(route)
 	if err != nil {
 		return nil, err
 	}
-	return adapter.GenerateStream(ctx, route, input, onEvent)
+	output, err := adapter.GenerateStream(ctx, route, input, onEvent)
+	qualifyNativeToolUsage(output, input, route)
+	return output, err
 }
 
 // ListModels 调用上游 models 目录接口。

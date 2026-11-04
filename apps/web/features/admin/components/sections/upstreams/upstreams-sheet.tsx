@@ -76,6 +76,7 @@ import { COMPATIBLE_OPTIONS, resolveProtocolLabel } from "@/features/admin/utils
 import { JsonCodeEditor } from "@/shared/components/json-code-editor";
 import { useDialogSnapshot } from "@/shared/hooks/use-dialog-snapshot";
 import { isRecord } from "@/shared/lib/type-guards";
+import { UpstreamsInputLimitsSummary } from "./upstreams-input-limits-summary";
 
 const PROTOCOL_DEFAULT_KINDS = [
   "chat",
@@ -740,6 +741,8 @@ export function UpstreamSheet({
                 </div>
               </div>
             )}
+
+            {mode === "edit" && target ? <UpstreamsInputLimitsSummary upstream={target} onNavigate={() => onOpenChange(false)} /> : null}
 
             <Accordion
               type="multiple"

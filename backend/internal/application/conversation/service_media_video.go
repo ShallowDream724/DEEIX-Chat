@@ -26,8 +26,6 @@ import (
 	"go.uber.org/zap"
 )
 
-const maxMediaVideoInputImages = 1
-
 // MediaVideoTaskType 区分普通视频生成与基于源视频的扩展。
 type MediaVideoTaskType string
 
@@ -300,7 +298,7 @@ func (s *Service) StreamMediaVideo(ctx context.Context, input MediaVideoInput) (
 
 	cfg := s.cfg.Snapshot()
 	attributionReferer, attributionTitle := s.llmAttribution()
-	routeConfig := routeConfigFromResolved(route, videoEndpoint, attributionReferer, attributionTitle)
+	routeConfig := routeConfigFromResolved(route, videoEndpoint, attributionReferer, attributionTitle, cfg)
 	filteredOptions := filterModelOptions(input.Options, route.Protocol, modelOptionPolicyConfig{
 		Mode:                  cfg.ModelOptionPolicyMode,
 		AllowedPathsJSON:      cfg.ModelOptionAllowedPaths,
@@ -565,9 +563,6 @@ func (s *Service) resolveMediaVideoInputs(ctx context.Context, input MediaVideoI
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if len(attachments) > maxMediaVideoInputImages {
-		return nil, nil, nil, ErrMediaVideoTooManyInputs
-	}
 	if taskType == MediaVideoTaskExtension {
 		if len(attachments) != 1 {
 			return nil, nil, nil, ErrMediaVideoInputInvalid
@@ -599,7 +594,11 @@ func (s *Service) readMediaVideoExtensionSource(ctx context.Context, userID uint
 		return llm.ContentPart{}, err
 	}
 	defer content.Reader.Close() //nolint:errcheck
-	limit := s.cfg.Snapshot().MaxUploadFileBytes
+	cfg := s.cfg.Snapshot()
+	limit := cfg.FileVideoMaxBytes
+	if limit <= 0 {
+		limit = cfg.MaxUploadFileBytes
+	}
 	if limit <= 0 {
 		limit = 20 * 1024 * 1024
 	}

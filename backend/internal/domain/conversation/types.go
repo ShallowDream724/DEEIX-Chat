@@ -562,6 +562,9 @@ type ToolCallDetail struct {
 	ToolCallID      string
 	ToolName        string
 	Status          string
+	InputJSON       string
+	InputSizeBytes  int64
+	InputOmitted    bool
 	OutputJSON      string
 	OutputSizeBytes int64
 	OutputOmitted   bool

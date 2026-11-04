@@ -23,20 +23,24 @@ func NewTika(cfg config.Config) *tika.Client {
 // NewDocling 创建 Docling 客户端；未配置地址时返回 nil。
 func NewDocling(cfg config.Config) *docling.Client {
 	return docling.New(docling.ClientConfig{
-		BaseURL:        strings.TrimSpace(cfg.ExtractDoclingBaseURL),
-		AuthToken:      cfg.ExtractDoclingAuthToken,
-		TimeoutSeconds: cfg.ExtractDoclingTimeoutSeconds,
+		ResponseMaxBytes: cfg.ExtractResponseMaxBytes,
+		BaseURL:          strings.TrimSpace(cfg.ExtractDoclingBaseURL),
+		AuthToken:        cfg.ExtractDoclingAuthToken,
+		TimeoutSeconds:   cfg.ExtractDoclingTimeoutSeconds,
 	})
 }
 
 // NewMinerU 创建 MinerU 客户端；配置不完整时返回 nil。
 func NewMinerU(cfg config.Config) *mineru.Client {
 	return mineru.New(mineru.ClientConfig{
-		Source:         strings.TrimSpace(cfg.ExtractMinerUSource),
-		BaseURL:        strings.TrimSpace(cfg.ExtractMinerUBaseURL),
-		AuthToken:      cfg.ExtractMinerUAuthToken,
-		TimeoutSeconds: cfg.ExtractMinerUTimeoutSeconds,
-		OutboundPolicy: cfg.StrictOutboundPolicy(),
+		ArchiveMaxBytes:  cfg.ExtractMinerUArchiveMaxBytes,
+		TextMaxBytes:     cfg.ExtractMinerUTextMaxBytes,
+		ResponseMaxBytes: cfg.ExtractResponseMaxBytes,
+		Source:           strings.TrimSpace(cfg.ExtractMinerUSource),
+		BaseURL:          strings.TrimSpace(cfg.ExtractMinerUBaseURL),
+		AuthToken:        cfg.ExtractMinerUAuthToken,
+		TimeoutSeconds:   cfg.ExtractMinerUTimeoutSeconds,
+		OutboundPolicy:   cfg.StrictOutboundPolicy(),
 	})
 }
 
@@ -45,38 +49,48 @@ func NewOCR(provider string, cfg config.Config) *ocr.Client {
 	switch provider {
 	case extractionport.OCREngineTesseract:
 		return ocr.NewTesseract(ocr.ClientConfig{
-			BaseURL:        strings.TrimSpace(cfg.ExtractTesseractOCRBaseURL),
-			AuthToken:      cfg.ExtractTesseractOCRAuthToken,
-			TimeoutSeconds: cfg.ExtractTesseractOCRTimeoutSeconds,
+			SourceMaxBytes:   cfg.ExtractOCRSourceMaxBytes,
+			ResponseMaxBytes: cfg.ExtractOCRResponseMaxBytes,
+			BaseURL:          strings.TrimSpace(cfg.ExtractTesseractOCRBaseURL),
+			AuthToken:        cfg.ExtractTesseractOCRAuthToken,
+			TimeoutSeconds:   cfg.ExtractTesseractOCRTimeoutSeconds,
 		})
 	case extractionport.OCREngineRapidOCR:
 		return ocr.NewRapidOCR(ocr.ClientConfig{
-			BaseURL:        ocr.ResolveRapidOCRBaseURL(cfg),
-			AuthToken:      cfg.ExtractRapidOCRAuthToken,
-			TimeoutSeconds: cfg.ExtractRapidOCRTimeoutSeconds,
+			SourceMaxBytes:   cfg.ExtractOCRSourceMaxBytes,
+			ResponseMaxBytes: cfg.ExtractOCRResponseMaxBytes,
+			BaseURL:          ocr.ResolveRapidOCRBaseURL(cfg),
+			AuthToken:        cfg.ExtractRapidOCRAuthToken,
+			TimeoutSeconds:   cfg.ExtractRapidOCRTimeoutSeconds,
 		})
 	case extractionport.OCREnginePaddle:
 		return ocr.NewPaddle(ocr.ClientConfig{
-			BaseURL:        strings.TrimSpace(cfg.ExtractPaddleOCRBaseURL),
-			AuthToken:      cfg.ExtractPaddleOCRAuthToken,
-			TimeoutSeconds: cfg.ExtractPaddleOCRTimeoutSeconds,
+			SourceMaxBytes:   cfg.ExtractOCRSourceMaxBytes,
+			ResponseMaxBytes: cfg.ExtractOCRResponseMaxBytes,
+			BaseURL:          strings.TrimSpace(cfg.ExtractPaddleOCRBaseURL),
+			AuthToken:        cfg.ExtractPaddleOCRAuthToken,
+			TimeoutSeconds:   cfg.ExtractPaddleOCRTimeoutSeconds,
 		})
 	case extractionport.OCREngineMistral:
 		return ocr.NewMistral(ocr.ClientConfig{
-			BaseURL:        cfg.ExtractMistralOCRBaseURL,
-			AuthToken:      cfg.ExtractMistralOCRAuthToken,
-			Model:          cfg.ExtractMistralOCRModel,
-			TimeoutSeconds: cfg.ExtractMistralOCRTimeoutSeconds,
-			OutboundPolicy: cfg.TrustedOutboundPolicy(),
+			SourceMaxBytes:   cfg.ExtractOCRSourceMaxBytes,
+			ResponseMaxBytes: cfg.ExtractOCRResponseMaxBytes,
+			BaseURL:          cfg.ExtractMistralOCRBaseURL,
+			AuthToken:        cfg.ExtractMistralOCRAuthToken,
+			Model:            cfg.ExtractMistralOCRModel,
+			TimeoutSeconds:   cfg.ExtractMistralOCRTimeoutSeconds,
+			OutboundPolicy:   cfg.TrustedOutboundPolicy(),
 		})
 	case extractionport.OCREngineLLM:
 		return ocr.NewLLM(ocr.ClientConfig{
-			BaseURL:        cfg.ExtractLLMOCRBaseURL,
-			AuthToken:      cfg.ExtractLLMOCRAuthToken,
-			Model:          cfg.ExtractLLMOCRModel,
-			TimeoutSeconds: cfg.ExtractLLMOCRTimeoutSeconds,
-			Prompt:         cfg.ExtractLLMOCRPrompt,
-			OutboundPolicy: cfg.TrustedOutboundPolicy(),
+			SourceMaxBytes:   cfg.ExtractOCRSourceMaxBytes,
+			ResponseMaxBytes: cfg.ExtractOCRResponseMaxBytes,
+			BaseURL:          cfg.ExtractLLMOCRBaseURL,
+			AuthToken:        cfg.ExtractLLMOCRAuthToken,
+			Model:            cfg.ExtractLLMOCRModel,
+			TimeoutSeconds:   cfg.ExtractLLMOCRTimeoutSeconds,
+			Prompt:           cfg.ExtractLLMOCRPrompt,
+			OutboundPolicy:   cfg.TrustedOutboundPolicy(),
 		})
 	default:
 		return nil

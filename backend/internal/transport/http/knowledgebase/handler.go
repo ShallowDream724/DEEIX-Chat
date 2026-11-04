@@ -449,13 +449,11 @@ func (h *Handler) GetPlatformFileContent(c *gin.Context) {
 }
 
 func (h *Handler) maxUploadRequestBytes() int64 {
-	maxUploadBytes := int64(20 * 1024 * 1024)
+	var cfg config.Config
 	if h != nil && h.cfg != nil {
-		if configured := h.cfg.Snapshot().MaxUploadFileBytes; configured > 0 {
-			maxUploadBytes = configured
-		}
+		cfg = h.cfg.Snapshot()
 	}
-	return maxUploadBytes + multipartUploadOverheadBytes
+	return appupload.MaxUploadRequestBytes(cfg, 1, multipartUploadOverheadBytes)
 }
 
 func (h *Handler) writeUploadError(c *gin.Context, err error) {

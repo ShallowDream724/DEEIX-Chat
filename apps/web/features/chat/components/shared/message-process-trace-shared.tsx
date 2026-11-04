@@ -56,6 +56,7 @@ function FileContextBadgeList({ badges }: { badges: FileContextBadge[] }) {
                 <Link
                   href={`/files?file=${encodeURIComponent(item.fileID)}&tab=${item.tab}`}
                   className={className}
+	                  aria-label={[item.name, item.label, item.description].filter(Boolean).join(". ")}
                 >
                   {content}
                 </Link>
@@ -67,7 +68,7 @@ function FileContextBadgeList({ badges }: { badges: FileContextBadge[] }) {
         return (
           <Tooltip key={`${item.name}-${item.label}-${index}`}>
             <TooltipTrigger asChild>
-              <span className={className}>{content}</span>
+              <button type="button" className={className} aria-label={[item.name, item.label, item.description].filter(Boolean).join(". ")}>{content}</button>
             </TooltipTrigger>
             {tooltip}
           </Tooltip>

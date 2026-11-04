@@ -118,7 +118,7 @@ func (c *Client) postOpenAIImageJSON(
 	setOpenRouterAttributionHeaders(req, route)
 	setAdditionalHeaders(req, route.HeadersJSON)
 
-	resp, err := c.doRouteRequest(route, req)
+	resp, err := c.doRouteGenerationRequest(route, req)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +193,7 @@ func (c *Client) postOpenAIImageJSONStream(
 	setOpenRouterAttributionHeaders(req, route)
 	setAdditionalHeaders(req, route.HeadersJSON)
 
-	resp, err := c.doRouteRequest(route, req)
+	resp, err := c.doRouteGenerationRequest(route, req)
 	firstByteTimer.Stop()
 	if err != nil {
 		return nil, err
@@ -270,7 +270,7 @@ func (c *Client) generateOpenAIImageEdits(ctx context.Context, route portllm.Rou
 	setOpenRouterAttributionHeaders(req, route)
 	setAdditionalHeaders(req, route.HeadersJSON)
 
-	resp, err := c.doRouteRequest(route, req)
+	resp, err := c.doRouteGenerationRequest(route, req)
 	if err != nil {
 		return nil, err
 	}
@@ -328,7 +328,7 @@ func (c *Client) generateOpenAIImageEditsStream(
 	setOpenRouterAttributionHeaders(req, route)
 	setAdditionalHeaders(req, route.HeadersJSON)
 
-	resp, err := c.doRouteRequest(route, req)
+	resp, err := c.doRouteGenerationRequest(route, req)
 	firstByteTimer.Stop()
 	if err != nil {
 		return nil, err

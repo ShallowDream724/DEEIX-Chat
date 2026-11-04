@@ -66,8 +66,9 @@ func (s *Service) GetNativeReadiness(ctx context.Context, input NativeReadinessI
 	for i, att := range attachments {
 		result.Files[i] = NativeFileReadiness{FileID: att.FileID, Eligible: len(routes) > 0}
 	}
+	cfg := s.cfg.Snapshot()
 	for _, route := range routes {
-		policy := resolveNativeInputPolicy(route)
+		policy := resolveNativeInputPolicy(route, cfg.InputLimitsJSON)
 		attachments = s.resolveNativePDFPageCounts(ctx, attachments, policy, nil)
 		selected := make(map[string]bool)
 		for _, att := range selectNativeInputs(attachments, policy) {

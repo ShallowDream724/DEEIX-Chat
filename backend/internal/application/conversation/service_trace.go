@@ -12,6 +12,7 @@ import (
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/textutil"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/background"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/toolresult"
 	"go.uber.org/zap"
@@ -1883,11 +1884,13 @@ func summarizeThinkText(value string) string {
 }
 
 type attachmentTraceFileRef struct {
-	FileID      string `json:"file_id"`
-	FileName    string `json:"file_name"`
-	Kind        string `json:"kind"`
-	MimeType    string `json:"mime_type"`
-	ContextMode string `json:"context_mode"`
+	FileID      string               `json:"file_id"`
+	FileName    string               `json:"file_name"`
+	Kind        string               `json:"kind"`
+	MimeType    string               `json:"mime_type"`
+	ContextMode string               `json:"context_mode"`
+	Reason      string               `json:"reason,omitempty"`
+	Limit       *llm.InputLimitError `json:"limit,omitempty"`
 }
 
 type attachmentTraceFileGroups struct {
@@ -2282,7 +2285,7 @@ func buildCompactionProcessTrace(snapshot *model.ContextSnapshot) (string, strin
 	detail := strings.Join([]string{
 		"对话已压缩并生成滚动摘要。",
 		fmt.Sprintf("- 压缩区间：第 %d-%d 轮。", snapshot.FromTurn, snapshot.ToTurn),
-		fmt.Sprintf("- Tokens 缩减：%d → %d。", snapshot.SourceTokens, snapshot.SummaryTokens),
+		fmt.Sprintf("- 摘要文字估算：%d → %d tokens；附件原件独立保留。", snapshot.SourceTokens, snapshot.SummaryTokens),
 	}, "\n")
 	stage := traceStage{Kind: processTraceKindCompaction, Status: processTraceStatusCompleted, FromTurn: snapshot.FromTurn, ToTurn: snapshot.ToTurn, SourceTokens: snapshot.SourceTokens, SummaryTokens: snapshot.SummaryTokens}
 	return fmt.Sprintf("已压缩第 %d-%d 轮上下文", snapshot.FromTurn, snapshot.ToTurn), formatTraceStep("上下文压缩", detail), &tracePayload{

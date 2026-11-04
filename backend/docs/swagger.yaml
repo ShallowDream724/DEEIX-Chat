@@ -1573,13 +1573,19 @@ definitions:
         items:
           type: string
         type: array
+      audioMaxBytes:
+        type: integer
       capabilityMode:
         type: string
       docMaxBytes:
         type: integer
+      effectiveAudioMaxBytes:
+        type: integer
       effectiveDocMaxBytes:
         type: integer
       effectiveImageMaxBytes:
+        type: integer
+      effectiveVideoMaxBytes:
         type: integer
       fileMode:
         type: string
@@ -1599,12 +1605,21 @@ definitions:
         type: string
       ragAvailable:
         type: boolean
+      temporaryChatMaxAttachments:
+        type: integer
+      temporaryChatRequestMaxBytes:
+        type: integer
+      videoMaxBytes:
+        type: integer
     required:
     - allowedMIMETypes
+    - audioMaxBytes
     - capabilityMode
     - docMaxBytes
+    - effectiveAudioMaxBytes
     - effectiveDocMaxBytes
     - effectiveImageMaxBytes
+    - effectiveVideoMaxBytes
     - fileMode
     - fullContextMaxBytes
     - fullContextMaxTokens
@@ -1614,6 +1629,9 @@ definitions:
     - maxUploadFileBytes
     - ragAvailabilityReason
     - ragAvailable
+    - temporaryChatMaxAttachments
+    - temporaryChatRequestMaxBytes
+    - videoMaxBytes
     type: object
   ChatFilePolicyResponseDoc:
     properties:
@@ -2819,6 +2837,12 @@ definitions:
         type: boolean
       errorSizeBytes:
         type: integer
+      inputJSON:
+        type: string
+      inputOmitted:
+        type: boolean
+      inputSizeBytes:
+        type: integer
       outputJSON:
         type: string
       outputOmitted:
@@ -2837,6 +2861,9 @@ definitions:
     - errorJSON
     - errorOmitted
     - errorSizeBytes
+    - inputJSON
+    - inputOmitted
+    - inputSizeBytes
     - outputJSON
     - outputOmitted
     - outputSizeBytes

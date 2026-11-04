@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 )
 
 const (
@@ -47,10 +49,42 @@ func defaultPreparedConversationImageCache() *preparedConversationImageCache {
 	)
 }
 
+func (s *Service) conversationImageCache(cfg config.Config) *preparedConversationImageCache {
+	cache := s.imageContextCache
+	if cache == nil {
+		return newPreparedConversationImageCache(cfg.PreparedImageCacheMaxEntries, int(cfg.PreparedImageCacheMaxBytes))
+	}
+	cache.configure(cfg.PreparedImageCacheMaxEntries, int(cfg.PreparedImageCacheMaxBytes))
+	return cache
+}
+
+func (c *preparedConversationImageCache) configure(maxEntries, maxBytes int) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.maxEntries, c.maxBytes = maxEntries, maxBytes
+	for len(c.entries) > max(maxEntries, 0) || c.totalBytes > max(maxBytes, 0) {
+		oldest := c.recency.Back()
+		if oldest == nil {
+			break
+		}
+		entry := oldest.Value.(preparedConversationImageCacheEntry)
+		c.totalBytes -= len(entry.image.data)
+		delete(c.entries, entry.key)
+		c.recency.Remove(oldest)
+	}
+}
+
 func preparedConversationImageCacheKey(att AttachmentInput, maxDim int, mimeType string) string {
 	identity := strings.TrimSpace(att.SHA256)
 	if identity == "" {
-		identity = strings.TrimSpace(att.FileID)
+		fileID := strings.TrimSpace(att.FileID)
+		if fileID == "" {
+			return ""
+		}
+		identity = fmt.Sprintf("%s:%s:%d:%d", fileID, strings.TrimSpace(att.StoragePath), att.FileSize, att.FileUpdatedAt.UnixNano())
 	}
 	if identity == "" {
 		return ""
@@ -73,11 +107,14 @@ func (c *preparedConversationImageCache) get(key string) (preparedConversationIm
 }
 
 func (c *preparedConversationImageCache) put(key string, image preparedConversationImage) {
-	if c == nil || strings.TrimSpace(key) == "" || len(image.data) == 0 || c.maxEntries <= 0 || c.maxBytes <= 0 || len(image.data) > c.maxBytes {
+	if c == nil || strings.TrimSpace(key) == "" || len(image.data) == 0 {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.maxEntries <= 0 || c.maxBytes <= 0 || len(image.data) > c.maxBytes {
+		return
+	}
 
 	if existing, ok := c.entries[key]; ok {
 		entry := existing.Value.(preparedConversationImageCacheEntry)

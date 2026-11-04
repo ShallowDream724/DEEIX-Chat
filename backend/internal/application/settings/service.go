@@ -17,13 +17,14 @@ import (
 
 // Service 封装 settings 业务逻辑。
 type Service struct {
-	repo        repository.SettingsRepository
-	keyring     *secretbox.Keyring
-	authSafety  authSafetyService
-	vectorStore vectorStoreAvailabilityService
-	auditWriter auditWriter
-	runtime     *config.Runtime
-	logger      *zap.Logger
+	repo              repository.SettingsRepository
+	keyring           *secretbox.Keyring
+	authSafety        authSafetyService
+	vectorStore       vectorStoreAvailabilityService
+	auditWriter       auditWriter
+	nativeToolCatalog nativeToolCatalogProvider
+	runtime           *config.Runtime
+	logger            *zap.Logger
 }
 
 type authSafetyService interface {
@@ -353,7 +354,7 @@ func (s *Service) BatchUpdate(ctx context.Context, patches []PatchItem) (map[str
 		if !IsValidNamespace(p.Namespace) {
 			return nil, newSettingValidationError(settingCodeInvalidNamespace, SettingValidationDetails{Rule: "invalid_namespace"})
 		}
-		if err := validatePatchItem(p); err != nil {
+		if err := s.validatePatchItem(ctx, p); err != nil {
 			return nil, err
 		}
 	}

@@ -1,6 +1,7 @@
 package ocr
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,12 +40,14 @@ const (
 
 // ClientConfig 表示 OCR 服务接入配置。
 type ClientConfig struct {
-	BaseURL        string
-	AuthToken      string
-	Model          string
-	TimeoutSeconds int
-	Prompt         string
-	OutboundPolicy security.OutboundPolicy
+	SourceMaxBytes   int64
+	ResponseMaxBytes int64
+	BaseURL          string
+	AuthToken        string
+	Model            string
+	TimeoutSeconds   int
+	Prompt           string
+	OutboundPolicy   security.OutboundPolicy
 }
 
 // OCR 请求/响应数据契约定义在 ports/extraction，此处保留同名引用供实现使用。
@@ -57,15 +60,17 @@ type (
 
 // Client 封装 PDF OCR 回退能力。
 type Client struct {
-	baseURL        string
-	authToken      string
-	model          string
-	prompt         string
-	timeoutSeconds int
-	httpClient     *http.Client
-	llmClient      *llminfra.Client
-	pdfRenderer    *pdfrender.Renderer
-	mistral        bool
+	sourceMaxBytes   int64
+	responseMaxBytes int64
+	baseURL          string
+	authToken        string
+	model            string
+	prompt           string
+	timeoutSeconds   int
+	httpClient       *http.Client
+	llmClient        *llminfra.Client
+	pdfRenderer      *pdfrender.Renderer
+	mistral          bool
 }
 
 // NewRapidOCR 创建 RapidOCR client。
@@ -90,13 +95,15 @@ func NewLLM(cfg ClientConfig) *Client {
 		return nil
 	}
 	return &Client{
-		baseURL:        baseURL,
-		authToken:      strings.TrimSpace(cfg.AuthToken),
-		model:          strings.TrimSpace(cfg.Model),
-		prompt:         strings.TrimSpace(cfg.Prompt),
-		timeoutSeconds: cfg.TimeoutSeconds,
-		llmClient:      llminfra.NewClient(cfg.OutboundPolicy),
-		pdfRenderer:    pdfrender.New(),
+		sourceMaxBytes:   cfg.SourceMaxBytes,
+		responseMaxBytes: cfg.ResponseMaxBytes,
+		baseURL:          baseURL,
+		authToken:        strings.TrimSpace(cfg.AuthToken),
+		model:            strings.TrimSpace(cfg.Model),
+		prompt:           strings.TrimSpace(cfg.Prompt),
+		timeoutSeconds:   cfg.TimeoutSeconds,
+		llmClient:        llminfra.NewClient(cfg.OutboundPolicy),
+		pdfRenderer:      pdfrender.New(),
 	}
 }
 
@@ -122,12 +129,14 @@ func NewMistral(cfg ClientConfig) *Client {
 		CheckRedirect: outboundhttp.NewRedirectPolicy(cfg.OutboundPolicy, trustedOrigin, "Mistral OCR request"),
 	}
 	return &Client{
-		baseURL:        baseURL,
-		authToken:      strings.TrimSpace(cfg.AuthToken),
-		model:          strings.TrimSpace(cfg.Model),
-		timeoutSeconds: cfg.TimeoutSeconds,
-		httpClient:     httpClient,
-		mistral:        true,
+		sourceMaxBytes:   cfg.SourceMaxBytes,
+		responseMaxBytes: cfg.ResponseMaxBytes,
+		baseURL:          baseURL,
+		authToken:        strings.TrimSpace(cfg.AuthToken),
+		model:            strings.TrimSpace(cfg.Model),
+		timeoutSeconds:   cfg.TimeoutSeconds,
+		httpClient:       httpClient,
+		mistral:          true,
 	}
 }
 
@@ -137,12 +146,14 @@ func newUploadTextClient(cfg ClientConfig) *Client {
 		return nil
 	}
 	return &Client{
-		baseURL:        baseURL,
-		authToken:      strings.TrimSpace(cfg.AuthToken),
-		model:          strings.TrimSpace(cfg.Model),
-		prompt:         strings.TrimSpace(cfg.Prompt),
-		timeoutSeconds: cfg.TimeoutSeconds,
-		httpClient:     platformtracing.NewHTTPClient(resolveHTTPTimeout(cfg.TimeoutSeconds, 60*time.Second)),
+		sourceMaxBytes:   cfg.SourceMaxBytes,
+		responseMaxBytes: cfg.ResponseMaxBytes,
+		baseURL:          baseURL,
+		authToken:        strings.TrimSpace(cfg.AuthToken),
+		model:            strings.TrimSpace(cfg.Model),
+		prompt:           strings.TrimSpace(cfg.Prompt),
+		timeoutSeconds:   cfg.TimeoutSeconds,
+		httpClient:       platformtracing.NewHTTPClient(resolveHTTPTimeout(cfg.TimeoutSeconds, 60*time.Second)),
 	}
 }
 
@@ -232,7 +243,21 @@ func resolveOCRHealthURL(baseURL string) string {
 }
 
 // ExtractText 对文档或图片做 OCR，返回识别文本。
-func (c *Client) ExtractText(ctx context.Context, req Request) (Response, error) {
+func (c *Client) ExtractText(ctx context.Context, req Request) (result Response, resultErr error) {
+	defer func() {
+		if resultErr == nil && c != nil && int64(len(result.Text)) > extractionport.ReadMaxBytes(c.responseMaxBytes) {
+			result, resultErr = Response{}, fmt.Errorf("ocr text exceeds response limit")
+		}
+	}()
+	if c != nil {
+		info, err := os.Stat(strings.TrimSpace(req.AbsolutePath))
+		if err != nil {
+			return Response{}, err
+		}
+		if info.Size() > extractionport.ReadMaxBytes(c.sourceMaxBytes) {
+			return Response{}, fmt.Errorf("ocr source exceeds read limit")
+		}
+	}
 	if strings.TrimSpace(req.AbsolutePath) == "" {
 		return Response{}, fmt.Errorf("ocr_invalid_file_path")
 	}
@@ -448,8 +473,11 @@ func (c *Client) extractTextRemote(ctx context.Context, req Request) (Response, 
 		}
 	}
 
-	limitedBody := io.LimitReader(resp.Body, 50*1024*1024)
-	return parseRemoteOCRResponse(limitedBody, resp.Header.Get("Content-Type"))
+	body, err := extractionport.ReadBounded(resp.Body, c.responseMaxBytes)
+	if err != nil {
+		return Response{}, err
+	}
+	return parseRemoteOCRResponse(bytes.NewReader(body), resp.Header.Get("Content-Type"))
 }
 
 func normalizeOCRText(raw string) string {

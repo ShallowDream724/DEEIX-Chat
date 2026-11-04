@@ -1,6 +1,9 @@
 import type { AdminServiceRuntimeView } from "@/features/admin/api/admin-types";
 import type { SettingsGrouped } from "@/shared/api/settings-types";
 import { isOneOf } from "@/shared/lib/type-guards";
+import { normalizeMBValue } from "./files-size-values";
+
+export { denormalizeMBValue, normalizeMBValue } from "./files-size-values";
 
 export type SettingsFieldType = "int" | "bool" | "string" | "password" | "textarea" | "select" | "tabs" | "multi-check" | "button";
 
@@ -235,7 +238,7 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         namespace: "file",
         key: "image_max_bytes",
         label: "Image size limit",
-        description: "Override the size limit for image attachments. The UI uses MB; leave empty to use the default attachment limit.",
+        description: "Maximum size of one image attachment. Leave empty to use the default attachment limit.",
         type: "int",
         placeholder: "Leave empty to use the default attachment limit",
         valueUnit: "mb",
@@ -245,12 +248,74 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         namespace: "file",
         key: "doc_max_bytes",
         label: "Document size limit",
-        description: "Override the size limit for document attachments. The UI uses MB; leave empty to use the default attachment limit.",
+        description: "Maximum size of one document attachment. Leave empty to use the default attachment limit.",
         type: "int",
         placeholder: "Leave empty to use the default attachment limit",
         valueUnit: "mb",
         subgroupKey: "upload_limits_override",
       },
+      {
+        namespace: "file",
+        key: "audio_max_bytes",
+        label: "Audio size limit",
+        description: "Maximum size of one audio attachment. Leave empty to use the default attachment limit.",
+        type: "int",
+        valueUnit: "mb",
+        subgroupKey: "upload_limits_override",
+      },
+      {
+        namespace: "file",
+        key: "video_max_bytes",
+        label: "Video size limit",
+        description: "Maximum size of one video attachment. Leave empty to use the default attachment limit.",
+        type: "int",
+        valueUnit: "mb",
+        subgroupKey: "upload_limits_override",
+      },
+    ],
+  },
+  {
+    key: "imageProcessing",
+    title: "Image processing",
+    description: "Controls image copies prepared for model input.",
+    fields: [
+      {
+        namespace: "file",
+        key: "image_max_dimension",
+        label: "Maximum image edge for sending",
+        description: "Resize the sending copy proportionally when its longest edge exceeds this pixel count. Set 0 to disable local resizing; the stored original is preserved.",
+        type: "int",
+        placeholder: "1024",
+      },
+      { namespace: "file", key: "prepared_image_cache_max_entries", label: "Cached image count", description: "Maximum prepared image cache entries; 0 disables caching.", type: "int", subgroupKey: "prepared_image_cache" },
+      { namespace: "file", key: "prepared_image_cache_max_bytes", label: "Prepared image cache size", description: "Maximum prepared image cache size; 0 disables caching.", type: "int", valueUnit: "mb", subgroupKey: "prepared_image_cache" },
+    ],
+  },
+  {
+    key: "temporaryAttachments",
+    title: "Temporary chat attachments",
+    description: "Limits for attachments and request bodies in temporary chats.",
+    fields: [
+      { namespace: "file", key: "temporary_chat_max_attachments", label: "Request attachment count", description: "Maximum total attachments in one temporary chat request. Per-message attachment limits still apply.", type: "int" },
+      { namespace: "file", key: "temporary_chat_request_max_bytes", label: "Base request budget", description: "Base JSON request budget. Multipart uploads additionally include the applicable attachment budget.", type: "int", valueUnit: "mb" },
+    ],
+  },
+  {
+    key: "imageTools",
+    title: "Image tools",
+    description: "Input and analysis limits for image tools.",
+    fields: [
+      { namespace: "file", key: "image_attachment_processor_max_bytes", label: "Total image tool input", description: "Combined size of prepared images sent to image tools; 0 adds no limit.", type: "int", valueUnit: "mb" },
+      { namespace: "file", key: "image_attachment_analysis_max_chars", label: "Single image analysis", description: "Maximum returned analysis characters per image; 0 adds no limit.", type: "int" },
+      { namespace: "file", key: "image_attachment_analysis_total_max_chars", label: "Total image analysis", description: "Maximum returned analysis characters across all images; 0 adds no limit.", type: "int" },
+    ],
+  },
+  {
+    key: "generatedFiles",
+    title: "Generated files",
+    description: "Storage limits for model-generated files.",
+    fields: [
+      { namespace: "file", key: "generated_image_max_bytes", label: "Generated image save limit", description: "Maximum downloaded size of one generated image saved to file storage.", type: "int", valueUnit: "mb" },
     ],
   },
   {
@@ -258,6 +323,8 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
     title: "Content extraction",
     description: "Controls the primary extraction pipeline, shared OCR engine, and OCR activation scope.",
     fields: [
+      { namespace: "extract", key: "source_max_bytes", label: "Extraction source size", description: "Maximum source bytes read by content extraction services.", type: "int", valueUnit: "mb" },
+      { namespace: "extract", key: "response_max_bytes", label: "Extraction response size", description: "Maximum response bytes read from content extraction services.", type: "int", valueUnit: "mb" },
       {
         namespace: "extract",
         key: "engine",
@@ -372,6 +439,8 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         visibleWhen: { field: "extract.engine", equals: EXTRACT_ENGINE_POLICIES.MINERU },
         subgroupKey: "mineru",
       },
+      { namespace: "extract", key: "mineru_archive_max_bytes", label: "MinerU archive read limit", description: "Maximum downloaded result archive size.", type: "int", valueUnit: "mb", visibleWhen: { field: "extract.engine", equals: EXTRACT_ENGINE_POLICIES.MINERU }, subgroupKey: "mineru" },
+      { namespace: "extract", key: "mineru_text_max_bytes", label: "MinerU text read limit", description: "Maximum extracted result text size.", type: "int", valueUnit: "mb", visibleWhen: { field: "extract.engine", equals: EXTRACT_ENGINE_POLICIES.MINERU }, subgroupKey: "mineru" },
       {
         namespace: "extract",
         key: "tika_auth_token",
@@ -423,6 +492,8 @@ export const SETTINGS_GROUPS: SettingsGroup[] = [
         ],
         visibleWhen: OCR_ENABLED_RULE,
       },
+      { namespace: "extract", key: "ocr_source_max_bytes", label: "OCR source size", description: "Maximum source bytes read by OCR services.", type: "int", valueUnit: "mb", visibleWhen: OCR_ENABLED_RULE },
+      { namespace: "extract", key: "ocr_response_max_bytes", label: "OCR response size", description: "Maximum response bytes read from OCR services.", type: "int", valueUnit: "mb", visibleWhen: OCR_ENABLED_RULE },
       {
         namespace: "extract",
         key: "tesseract_ocr_base_url",
@@ -1100,42 +1171,6 @@ export function resolveVisibleFieldBlocks(group: SettingsGroup, settings: Record
     });
   }
   return blocks;
-}
-
-const BYTES_PER_MB = 1024 * 1024;
-
-export function normalizeMBValue(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return "";
-  }
-  const bytes = Number(trimmed);
-  if (!Number.isFinite(bytes)) {
-    return trimmed;
-  }
-  const mb = bytes / BYTES_PER_MB;
-  if (Number.isInteger(mb)) {
-    return String(mb);
-  }
-
-  // Keep normal values compact while retaining enough precision for sub-MB limits.
-  const compact = Number(mb.toFixed(6));
-  if (Number.isSafeInteger(bytes) && Math.round(compact * BYTES_PER_MB) === bytes) {
-    return String(compact);
-  }
-  return String(mb);
-}
-
-export function denormalizeMBValue(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return "";
-  }
-  const mb = Number(trimmed);
-  if (!Number.isFinite(mb)) {
-    return trimmed;
-  }
-  return String(Math.round(mb * BYTES_PER_MB));
 }
 
 export function flattenSettings(groups: SettingsGroup[], grouped: SettingsGrouped): Record<string, string> {

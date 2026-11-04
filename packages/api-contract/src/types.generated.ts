@@ -659,10 +659,13 @@ export interface ChannelErrorDoc {
 
 export interface ChatFilePolicyResponse {
   allowedMIMETypes: string[];
+  audioMaxBytes: number;
   capabilityMode: string;
   docMaxBytes: number;
+  effectiveAudioMaxBytes: number;
   effectiveDocMaxBytes: number;
   effectiveImageMaxBytes: number;
+  effectiveVideoMaxBytes: number;
   fileMode: string;
   fullContextMaxBytes: number;
   fullContextMaxTokens: number;
@@ -672,6 +675,9 @@ export interface ChatFilePolicyResponse {
   maxUploadFileBytes: number;
   ragAvailabilityReason: string;
   ragAvailable: boolean;
+  temporaryChatMaxAttachments: number;
+  temporaryChatRequestMaxBytes: number;
+  videoMaxBytes: number;
 }
 
 export interface ChatFilePolicyResponseDoc {
@@ -1159,6 +1165,9 @@ export interface ConversationToolCallDetailResponse {
   errorJSON: string;
   errorOmitted: boolean;
   errorSizeBytes: number;
+  inputJSON: string;
+  inputOmitted: boolean;
+  inputSizeBytes: number;
   outputJSON: string;
   outputOmitted: boolean;
   outputSizeBytes: number;

@@ -156,9 +156,6 @@ func isStableTextAttachment(item AttachmentInput) bool {
 
 func shouldShowAttachmentProcessTrace(items []AttachmentInput) bool {
 	for _, item := range items {
-		if strings.EqualFold(strings.TrimSpace(item.ContextMode), fileContextModeDirectImage) && !item.Current {
-			continue
-		}
 		if item.Current {
 			return true
 		}
@@ -170,14 +167,7 @@ func shouldShowAttachmentProcessTrace(items []AttachmentInput) bool {
 }
 
 func attachmentProcessTraceItems(items []AttachmentInput) []AttachmentInput {
-	result := make([]AttachmentInput, 0, len(items))
-	for _, item := range items {
-		if strings.EqualFold(strings.TrimSpace(item.ContextMode), fileContextModeDirectImage) && !item.Current {
-			continue
-		}
-		result = append(result, item)
-	}
-	return result
+	return append([]AttachmentInput(nil), items...)
 }
 
 func buildConversationFileContextPlan(

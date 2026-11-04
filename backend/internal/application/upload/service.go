@@ -121,13 +121,14 @@ type ListFilesInput struct {
 }
 
 type saveUploadedFileInput struct {
-	Store          objectstorage.Store
-	Reader         io.Reader
-	UserPublicID   string
-	FileID         string
-	FileName       string
-	MaxUploadBytes int64
-	DeclaredMIME   string
+	Store            objectstorage.Store
+	Reader           io.Reader
+	UserPublicID     string
+	FileID           string
+	FileName         string
+	MaxUploadBytes   int64
+	DeclaredMIME     string
+	DetectedMaxBytes func(string) int64
 }
 
 // FileContentResult 定义文件内容读取结果。
@@ -216,12 +217,13 @@ func (s *Service) UploadFile(ctx context.Context, input UploadFileInput) (*Uploa
 	}
 
 	cfg := s.snapshot()
-	maxUploadBytes := cfg.MaxUploadFileBytes
-	if maxUploadBytes <= 0 {
-		maxUploadBytes = 20 * 1024 * 1024
-	}
+	maxUploadBytes := MaxUploadBytes(cfg)
 	if input.MaxBytes > 0 {
 		maxUploadBytes = input.MaxBytes
+	}
+	var detectedMaxBytes func(string) int64
+	if input.MaxBytes <= 0 {
+		detectedMaxBytes = func(mimeType string) int64 { return EffectiveMaxBytes(cfg, mimeType, normalizedName) }
 	}
 	if input.DeclaredSize > 0 && input.DeclaredSize > maxUploadBytes {
 		return nil, s.errFileTooLarge()
@@ -246,13 +248,14 @@ func (s *Service) UploadFile(ctx context.Context, input UploadFileInput) (*Uploa
 		return nil, err
 	}
 	relativePath, detectedMIME, shaValue, sizeBytes, err := saveUploadedFile(ctx, saveUploadedFileInput{
-		Store:          store,
-		Reader:         input.Reader,
-		UserPublicID:   storageOwner,
-		FileID:         fileID,
-		FileName:       normalizedName,
-		MaxUploadBytes: maxUploadBytes,
-		DeclaredMIME:   normalizedMIME,
+		Store:            store,
+		Reader:           input.Reader,
+		UserPublicID:     storageOwner,
+		FileID:           fileID,
+		FileName:         normalizedName,
+		MaxUploadBytes:   maxUploadBytes,
+		DeclaredMIME:     normalizedMIME,
+		DetectedMaxBytes: detectedMaxBytes,
 	})
 	if err != nil {
 		if errors.Is(err, errLocalFileTooLarge) {
@@ -278,7 +281,7 @@ func (s *Service) UploadFile(ctx context.Context, input UploadFileInput) (*Uploa
 		removeUploadedObject(relativePath)
 		return nil, s.errMIMEBlocked()
 	}
-	if typeLimit := maxBytesForCategory(category, cfg); input.MaxBytes <= 0 && typeLimit > 0 && sizeBytes > typeLimit {
+	if input.MaxBytes <= 0 && sizeBytes > EffectiveMaxBytes(cfg, detectedMIME, normalizedName) {
 		removeUploadedObject(relativePath)
 		return nil, s.errFileTooLarge()
 	}
@@ -886,7 +889,13 @@ func detectContentMIME(header []byte, declared string, fileName string) string {
 	if len(header) == 0 {
 		return normalizeDetectedMIME(declared, fileName)
 	}
-	return normalizeDetectedMIME(http.DetectContentType(header), fileName)
+	detected := http.DetectContentType(header)
+	// Recognized media/PDF signatures must win over user-controlled extensions.
+	if strings.HasPrefix(detected, "image/") || strings.HasPrefix(detected, "audio/") ||
+		strings.HasPrefix(detected, "video/") || normalizeMIMEValue(detected) == "application/pdf" {
+		return normalizeDetectedMIME(detected, "")
+	}
+	return normalizeDetectedMIME(detected, fileName)
 }
 
 func inferFileCategory(mimeType string, fileName string) string {
@@ -935,8 +944,11 @@ func maxBytesForCategory(category string, cfg config.Config) int64 {
 	if category == fileCategoryImage {
 		return cfg.FileImageMaxBytes
 	}
-	if category == fileCategoryVideo || category == fileCategoryAudio {
-		return 0
+	if category == fileCategoryVideo {
+		return cfg.FileVideoMaxBytes
+	}
+	if category == fileCategoryAudio {
+		return cfg.FileAudioMaxBytes
 	}
 	return cfg.FileDocMaxBytes
 }
@@ -971,7 +983,7 @@ func saveUploadedFile(ctx context.Context, input saveUploadedFileInput) (string,
 		input.MaxUploadBytes = 20 * 1024 * 1024
 	}
 
-	staged, err := stageUploadedFile(input.Reader, input.FileID, input.FileName, input.MaxUploadBytes, input.DeclaredMIME)
+	staged, err := stageUploadedFile(input.Reader, input.FileID, input.FileName, input.MaxUploadBytes, input.DeclaredMIME, input.DetectedMaxBytes)
 	if err != nil {
 		return "", "", "", 0, err
 	}

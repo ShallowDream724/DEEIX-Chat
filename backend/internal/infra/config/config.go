@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/secretbox"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/inputlimits"
 	sharedsecurity "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/security"
 	"gopkg.in/yaml.v3"
 )
@@ -507,74 +508,91 @@ type Config struct {
 	MaxUploadFileBytes    int64
 	MaxMessageFiles       int
 	// 文件处理配置
-	ImageMaxDimension                 int    // 图片缩放最大边长（像素），0 = 不缩放
-	FileFullContextLimitEnabled       bool   // 是否启用全文注入阈值限制
-	FileFullContextMaxBytes           int64  // 文本文件全文注入阈值（字节），超出不注入
-	FileFullContextMaxTokens          int    // 文本文件全文注入阈值（token）
-	FileImageMaxBytes                 int64  // 图片单文件上限（字节）
-	FileDocMaxBytes                   int64  // 文档单文件上限（字节）
-	FileFullContextPDFMaxPages        int    // PDF Full Context 页数上限，超出走 RAG
-	FileAllowedMIMETypes              string // 白名单 MIME 类型（逗号分隔）
-	ExtractEngine                     string // 提取主引擎枚举
-	ExtractOCREngine                  string // OCR 引擎枚举
-	ExtractImageOCREnabled            bool   // 是否对图片附件执行 OCR
-	ExtractPDFOCRFallbackEnabled      bool   // PDF 原生文本提取失败时是否启用 OCR 回退
-	ExtractTikaSource                 string // Tika 服务来源(external/managed)
-	ExtractTikaBaseURL                string // Apache Tika 服务地址
-	ExtractTikaTimeoutSeconds         int    // Apache Tika 请求超时(秒)
-	ExtractTikaAuthToken              string // Apache Tika 鉴权 Token
-	ExtractDoclingBaseURL             string // Docling 服务地址
-	ExtractDoclingTimeoutSeconds      int    // Docling 请求超时(秒)
-	ExtractDoclingAuthToken           string // Docling 鉴权 Token
-	ExtractTesseractOCRBaseURL        string // Tesseract OCR 服务地址
-	ExtractTesseractOCRTimeoutSeconds int    // Tesseract OCR 请求超时(秒)
-	ExtractTesseractOCRAuthToken      string // Tesseract OCR 鉴权 Token
-	ExtractRapidOCRSource             string // RapidOCR 服务来源(external/managed)
-	ExtractRapidOCRBaseURL            string // RapidOCR 服务地址
-	ExtractRapidOCRTimeoutSeconds     int    // RapidOCR 请求超时(秒)
-	ExtractRapidOCRAuthToken          string // RapidOCR 鉴权 Token
-	ExtractPaddleOCRBaseURL           string // Paddle OCR 服务地址
-	ExtractPaddleOCRTimeoutSeconds    int    // Paddle OCR 请求超时(秒)
-	ExtractPaddleOCRAuthToken         string // Paddle OCR 鉴权 Token
-	ExtractTencentOCRSecretID         string // 腾讯云 OCR SecretId
-	ExtractTencentOCRSecretKey        string // 腾讯云 OCR SecretKey
-	ExtractTencentOCRRegion           string // 腾讯云 OCR 地域
-	ExtractTencentOCREndpoint         string // 腾讯云 OCR 接入点
-	ExtractTencentOCRTimeoutSeconds   int    // 腾讯云 OCR 请求超时(秒)
-	ExtractAliyunOCRAccessKeyID       string // 阿里云 OCR AccessKey ID
-	ExtractAliyunOCRAccessKeySecret   string // 阿里云 OCR AccessKey Secret
-	ExtractAliyunOCRRegion            string // 阿里云 OCR 地域
-	ExtractAliyunOCREndpoint          string // 阿里云 OCR 接入点
-	ExtractAliyunOCRTimeoutSeconds    int    // 阿里云 OCR 请求超时(秒)
-	ExtractMinerUSource               string // MinerU 服务类型(cloud/self_hosted)
-	ExtractMinerUBaseURL              string // MinerU 服务地址
-	ExtractMinerUFileTypes            string // MinerU 处理的文件类型（逗号分隔）
-	ExtractMinerUTimeoutSeconds       int    // MinerU 请求超时(秒)
-	ExtractMinerUAuthToken            string // MinerU 鉴权 Token
-	ExtractMistralOCRBaseURL          string // Mistral OCR 服务地址
-	ExtractMistralOCRModel            string // Mistral OCR 请求模型
-	ExtractMistralOCRTimeoutSeconds   int    // Mistral OCR 请求超时(秒)
-	ExtractMistralOCRAuthToken        string // Mistral OCR 鉴权 Token
-	ExtractLLMOCRBaseURL              string // LLM OCR 服务地址
-	ExtractLLMOCRModel                string // LLM OCR 请求模型
-	ExtractLLMOCRTimeoutSeconds       int    // LLM OCR 请求超时(秒)
-	ExtractLLMOCRAuthToken            string // LLM OCR 鉴权 Token
-	ExtractLLMOCRPrompt               string // LLM OCR 提示词
-	EmbeddingEnabled                  bool   // 是否启用 Embedding 服务
-	EmbeddingHost                     string // Embedding HTTP 服务地址
-	EmbeddingProtocol                 string // Embedding 请求协议：openai / gemini / voyage / jina
-	EmbeddingKey                      string // Embedding HTTP 服务鉴权 Key，可选
-	EmbeddingTimeoutSeconds           int    // Embedding 请求超时（秒）
-	EmbeddingOutputDimensions         int    // 写库/检索统一输出维度
-	EmbeddingDimensionsPolicy         string // Embedding 请求 dimensions 参数策略
-	EmbeddingNormalize                bool   // 是否做归一化
-	EmbeddingModelSignature           string // 当前生效的模型签名（派生值，由 settings 变更时自动更新）
-	EmbedTriggerOnUpload              bool   // 上传后是否异步触发 embedding
-	EmbedChunkSizeTokens              int    // RAG 分片大小（token 估算）
-	EmbedChunkOverlapTokens           int    // 分片重叠 token 数
-	EmbedBatchSize                    int    // embedding API 单批次数量
-	RAGTopK                           int    // RAG 检索返回片段数
-	RAGModel                          string // embedding 使用的模型名
+	InputLimitsJSON                      string // 各协议与上游的模型输入预算 JSON
+	ImageMaxDimension                    int    // 图片缩放最大边长（像素），0 = 不缩放
+	FileFullContextLimitEnabled          bool   // 是否启用全文注入阈值限制
+	FileFullContextMaxBytes              int64  // 文本文件全文注入阈值（字节），超出不注入
+	FileFullContextMaxTokens             int    // 文本文件全文注入阈值（token）
+	FileImageMaxBytes                    int64  // 图片单文件上限（字节）
+	FileDocMaxBytes                      int64  // 文档单文件上限（字节）
+	FileAudioMaxBytes                    int64  // 音频单文件上限（字节），0 继承默认
+	FileVideoMaxBytes                    int64  // 视频单文件上限（字节），0 继承默认
+	TemporaryChatMaxAttachments          int    // 临时会话单请求附件总数
+	TemporaryChatRequestMaxBytes         int64  // 临时会话基础 JSON 请求预算（字节）
+	ImageAttachmentProcessorMaxBytes     int64  // 图片工具处理后的图片合计字节，0 不额外限制
+	ImageAttachmentAnalysisMaxChars      int    // 图片工具单图分析字符，0 不额外限制
+	ImageAttachmentAnalysisTotalMaxChars int    // 图片工具分析总字符，0 不额外限制
+	PreparedImageCacheMaxEntries         int    // 图片处理结果缓存条目，0 禁用
+	PreparedImageCacheMaxBytes           int64  // 图片处理结果缓存字节，0 禁用
+	GeneratedImageMaxBytes               int64  // 生成图片单文件保存上限（字节）
+	FileFullContextPDFMaxPages           int    // PDF Full Context 页数上限，超出走 RAG
+	FileAllowedMIMETypes                 string // 白名单 MIME 类型（逗号分隔）
+	ExtractEngine                        string // 提取主引擎枚举
+	ExtractSourceMaxBytes                int64
+	ExtractResponseMaxBytes              int64
+	ExtractOCRSourceMaxBytes             int64
+	ExtractOCRResponseMaxBytes           int64
+	ExtractMinerUArchiveMaxBytes         int64
+	ExtractMinerUTextMaxBytes            int64
+	ExtractOCREngine                     string // OCR 引擎枚举
+	ExtractImageOCREnabled               bool   // 是否对图片附件执行 OCR
+	ExtractPDFOCRFallbackEnabled         bool   // PDF 原生文本提取失败时是否启用 OCR 回退
+	ExtractTikaSource                    string // Tika 服务来源(external/managed)
+	ExtractTikaBaseURL                   string // Apache Tika 服务地址
+	ExtractTikaTimeoutSeconds            int    // Apache Tika 请求超时(秒)
+	ExtractTikaAuthToken                 string // Apache Tika 鉴权 Token
+	ExtractDoclingBaseURL                string // Docling 服务地址
+	ExtractDoclingTimeoutSeconds         int    // Docling 请求超时(秒)
+	ExtractDoclingAuthToken              string // Docling 鉴权 Token
+	ExtractTesseractOCRBaseURL           string // Tesseract OCR 服务地址
+	ExtractTesseractOCRTimeoutSeconds    int    // Tesseract OCR 请求超时(秒)
+	ExtractTesseractOCRAuthToken         string // Tesseract OCR 鉴权 Token
+	ExtractRapidOCRSource                string // RapidOCR 服务来源(external/managed)
+	ExtractRapidOCRBaseURL               string // RapidOCR 服务地址
+	ExtractRapidOCRTimeoutSeconds        int    // RapidOCR 请求超时(秒)
+	ExtractRapidOCRAuthToken             string // RapidOCR 鉴权 Token
+	ExtractPaddleOCRBaseURL              string // Paddle OCR 服务地址
+	ExtractPaddleOCRTimeoutSeconds       int    // Paddle OCR 请求超时(秒)
+	ExtractPaddleOCRAuthToken            string // Paddle OCR 鉴权 Token
+	ExtractTencentOCRSecretID            string // 腾讯云 OCR SecretId
+	ExtractTencentOCRSecretKey           string // 腾讯云 OCR SecretKey
+	ExtractTencentOCRRegion              string // 腾讯云 OCR 地域
+	ExtractTencentOCREndpoint            string // 腾讯云 OCR 接入点
+	ExtractTencentOCRTimeoutSeconds      int    // 腾讯云 OCR 请求超时(秒)
+	ExtractAliyunOCRAccessKeyID          string // 阿里云 OCR AccessKey ID
+	ExtractAliyunOCRAccessKeySecret      string // 阿里云 OCR AccessKey Secret
+	ExtractAliyunOCRRegion               string // 阿里云 OCR 地域
+	ExtractAliyunOCREndpoint             string // 阿里云 OCR 接入点
+	ExtractAliyunOCRTimeoutSeconds       int    // 阿里云 OCR 请求超时(秒)
+	ExtractMinerUSource                  string // MinerU 服务类型(cloud/self_hosted)
+	ExtractMinerUBaseURL                 string // MinerU 服务地址
+	ExtractMinerUFileTypes               string // MinerU 处理的文件类型（逗号分隔）
+	ExtractMinerUTimeoutSeconds          int    // MinerU 请求超时(秒)
+	ExtractMinerUAuthToken               string // MinerU 鉴权 Token
+	ExtractMistralOCRBaseURL             string // Mistral OCR 服务地址
+	ExtractMistralOCRModel               string // Mistral OCR 请求模型
+	ExtractMistralOCRTimeoutSeconds      int    // Mistral OCR 请求超时(秒)
+	ExtractMistralOCRAuthToken           string // Mistral OCR 鉴权 Token
+	ExtractLLMOCRBaseURL                 string // LLM OCR 服务地址
+	ExtractLLMOCRModel                   string // LLM OCR 请求模型
+	ExtractLLMOCRTimeoutSeconds          int    // LLM OCR 请求超时(秒)
+	ExtractLLMOCRAuthToken               string // LLM OCR 鉴权 Token
+	ExtractLLMOCRPrompt                  string // LLM OCR 提示词
+	EmbeddingEnabled                     bool   // 是否启用 Embedding 服务
+	EmbeddingHost                        string // Embedding HTTP 服务地址
+	EmbeddingProtocol                    string // Embedding 请求协议：openai / gemini / voyage / jina
+	EmbeddingKey                         string // Embedding HTTP 服务鉴权 Key，可选
+	EmbeddingTimeoutSeconds              int    // Embedding 请求超时（秒）
+	EmbeddingOutputDimensions            int    // 写库/检索统一输出维度
+	EmbeddingDimensionsPolicy            string // Embedding 请求 dimensions 参数策略
+	EmbeddingNormalize                   bool   // 是否做归一化
+	EmbeddingModelSignature              string // 当前生效的模型签名（派生值，由 settings 变更时自动更新）
+	EmbedTriggerOnUpload                 bool   // 上传后是否异步触发 embedding
+	EmbedChunkSizeTokens                 int    // RAG 分片大小（token 估算）
+	EmbedChunkOverlapTokens              int    // 分片重叠 token 数
+	EmbedBatchSize                       int    // embedding API 单批次数量
+	RAGTopK                              int    // RAG 检索返回片段数
+	RAGModel                             string // embedding 使用的模型名
 	// chat（补充）
 	RAGEnabled                      bool    // 全局开关：是否允许 RAG 功能
 	RAGMinSimilarity                float64 // RAG 最低相似度阈值
@@ -708,142 +726,159 @@ func Load() Config {
 		OTelSamplingRate:             envOrFloat("OTEL_TRACES_SAMPLER_ARG", envOrFloat("OTEL_SAMPLING_RATE", yc.Observability.Tracing.SamplingRate, 1), 1),
 
 		// 动态配置默认值（会被 DB 覆盖）
-		TokenTTLHours:                     24,
-		RefreshTokenTTLHours:              720,
-		LoginMaxFailures:                  5,
-		LoginLockMinutes:                  15,
-		RateLimitEnabled:                  false,
-		RateLimitRPM:                      60,
-		PublicAuthRateLimitRPM:            30,
-		UsernameLoginEnabled:              true,
-		EmailLoginEnabled:                 true,
-		ThirdPartyLoginEnabled:            true,
-		EmailRegistrationEnabled:          true,
-		EmailVerificationEnabled:          false,
-		PasswordResetEnabled:              false,
-		EmailRegistrationDomains:          "",
-		EmailRegistrationNoAlias:          false,
-		AutoLinkVerifiedEmail:             true,
-		TurnstileRegistrationEnabled:      false,
-		TurnstileSiteKey:                  "",
-		TurnstileSecretKey:                "",
-		MaxContextMessages:                20,
-		ContextMaxTurns:                   48,
-		ContextCompactEnabled:             false,
-		UIComponentsEnabled:               true,
-		ContextWindowFallbackTokens:       DefaultContextWindowFallbackTokens,
-		ContextCompactTriggerPercent:      DefaultContextCompactTriggerPercent,
-		ContextCompactPreserve:            8,
-		ConversationDefaultModel:          "",
-		ConversationTaskModel:             "follow",
-		ConversationTitlePrompt:           "",
-		ConversationLabelsPrompt:          "",
-		DefaultSystemPrompt:               "",
-		SkillsPrompt:                      "",
-		ModelOptionPolicyMode:             "allowlist",
-		ModelOptionAllowedPaths:           DefaultModelOptionAllowedPathsJSON(),
-		ModelOptionDeniedPaths:            DefaultModelOptionDeniedPathsJSON(),
-		KnowledgeBaseEnabled:              true,
-		PersonalProvidersMaxPerUser:       DefaultPersonalProvidersMaxPerUser,
-		DesktopDownloadEnabled:            true,
-		DesktopDownloadURL:                DefaultDesktopDownloadURL,
-		UserStorageQuotaBytes:             104857600,
-		MaxUploadFileBytes:                20971520,
-		MaxMessageFiles:                   10,
-		ImageMaxDimension:                 1024,
-		FileFullContextLimitEnabled:       true,
-		FileFullContextMaxBytes:           DefaultFileFullContextMaxBytes,
-		FileFullContextMaxTokens:          65536,
-		FileImageMaxBytes:                 0,
-		FileDocMaxBytes:                   0,
-		FileFullContextPDFMaxPages:        20,
-		FileAllowedMIMETypes:              "image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,video/mpeg,audio/mpeg,audio/wav,audio/mp4,audio/aac,audio/ogg,audio/flac,audio/aiff,text/plain,text/markdown,text/csv,text/yaml,application/json,application/yaml,application/x-yaml,application/toml,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel",
-		ExtractEngine:                     "builtin",
-		ExtractOCREngine:                  "rapidocr",
-		ExtractImageOCREnabled:            false,
-		ExtractPDFOCRFallbackEnabled:      false,
-		ExtractTikaSource:                 "external",
-		ExtractTikaBaseURL:                "http://127.0.0.1:9998",
-		ExtractTikaTimeoutSeconds:         60,
-		ExtractTikaAuthToken:              "",
-		ExtractDoclingBaseURL:             "http://127.0.0.1:8005/ocr",
-		ExtractDoclingTimeoutSeconds:      60,
-		ExtractDoclingAuthToken:           "",
-		ExtractTesseractOCRBaseURL:        "http://127.0.0.1:8004/ocr",
-		ExtractTesseractOCRTimeoutSeconds: 60,
-		ExtractTesseractOCRAuthToken:      "",
-		ExtractRapidOCRSource:             "external",
-		ExtractRapidOCRBaseURL:            "http://127.0.0.1:8002/ocr",
-		ExtractRapidOCRTimeoutSeconds:     60,
-		ExtractRapidOCRAuthToken:          "",
-		ExtractPaddleOCRBaseURL:           "",
-		ExtractPaddleOCRTimeoutSeconds:    60,
-		ExtractPaddleOCRAuthToken:         "",
-		ExtractTencentOCRSecretID:         "",
-		ExtractTencentOCRSecretKey:        "",
-		ExtractTencentOCRRegion:           "ap-guangzhou",
-		ExtractTencentOCREndpoint:         "ocr.tencentcloudapi.com",
-		ExtractTencentOCRTimeoutSeconds:   60,
-		ExtractAliyunOCRAccessKeyID:       "",
-		ExtractAliyunOCRAccessKeySecret:   "",
-		ExtractAliyunOCRRegion:            "cn-hangzhou",
-		ExtractAliyunOCREndpoint:          "ocr-api.cn-hangzhou.aliyuncs.com",
-		ExtractAliyunOCRTimeoutSeconds:    60,
-		ExtractMinerUSource:               "cloud",
-		ExtractMinerUBaseURL:              "https://mineru.net/api/v4",
-		ExtractMinerUFileTypes:            "pdf,word,presentation",
-		ExtractMinerUTimeoutSeconds:       180,
-		ExtractMinerUAuthToken:            "",
-		ExtractMistralOCRBaseURL:          "https://api.mistral.ai/v1/ocr",
-		ExtractMistralOCRModel:            "mistral-ocr-latest",
-		ExtractMistralOCRTimeoutSeconds:   60,
-		ExtractMistralOCRAuthToken:        "",
-		ExtractLLMOCRBaseURL:              "",
-		ExtractLLMOCRModel:                "",
-		ExtractLLMOCRTimeoutSeconds:       60,
-		ExtractLLMOCRAuthToken:            "",
-		ExtractLLMOCRPrompt:               "",
-		EmbeddingEnabled:                  false,
-		EmbeddingHost:                     "",
-		EmbeddingKey:                      "",
-		EmbeddingTimeoutSeconds:           60,
-		EmbeddingOutputDimensions:         1536,
-		EmbeddingDimensionsPolicy:         EmbeddingDimensionsPolicySend,
-		EmbeddingProtocol:                 EmbeddingProtocolOpenAI,
-		EmbeddingNormalize:                true,
-		EmbedTriggerOnUpload:              true,
-		EmbedChunkSizeTokens:              1024,
-		EmbedChunkOverlapTokens:           64,
-		EmbedBatchSize:                    20,
-		RAGTopK:                           5,
-		RAGModel:                          "sentence-transformers/all-MiniLM-L6-v2",
-		RAGEnabled:                        false,
-		RAGMinSimilarity:                  0.45,
-		RAGTokenBudget:                    2000,
-		RAGFetchMultiplier:                3,
-		RAGWaitReadyMS:                    3000,
-		RAGQueryHistoryTurns:              0,
-		RAGRetrievalCacheTTL:              120,
-		ContextCompactHighlightsPerRole:   6,
-		ContextCompactSnippetChars:        140,
-		CompactLLMEnabled:                 true,
-		CompactTaskModel:                  "follow",
-		CompactAsyncEnabled:               true,
-		CompactMaxFailures:                3,
-		ContextTokenBudgetEnabled:         true,
-		MessageEmbeddingEnabled:           false, // 默认关闭，需要 embedding 服务就绪后开启
-		SemanticContextEnabled:            false,
-		ProcessTraceEnabled:               true,
-		ProcessTracePersistInflight:       true,
-		ContextArtifactRetentionDays:      90,
-		MCPEnable:                         false,
-		MCPToolTimeoutSeconds:             10,
-		MCPToolRetryCount:                 0,
-		MCPMaxConcurrentCalls:             8,
-		MCPMaxSelectedToolsPerMessage:     DefaultMCPMaxSelectedToolsPerMessage,
-		MCPMaxLLMCallsPerRun:              5,
-		MCPMaxToolCallsPerRun:             8,
-		MCPToolPrompt:                     "",
+		TokenTTLHours:                        24,
+		RefreshTokenTTLHours:                 720,
+		LoginMaxFailures:                     5,
+		LoginLockMinutes:                     15,
+		RateLimitEnabled:                     false,
+		RateLimitRPM:                         60,
+		PublicAuthRateLimitRPM:               30,
+		UsernameLoginEnabled:                 true,
+		EmailLoginEnabled:                    true,
+		ThirdPartyLoginEnabled:               true,
+		EmailRegistrationEnabled:             true,
+		EmailVerificationEnabled:             false,
+		PasswordResetEnabled:                 false,
+		EmailRegistrationDomains:             "",
+		EmailRegistrationNoAlias:             false,
+		AutoLinkVerifiedEmail:                true,
+		TurnstileRegistrationEnabled:         false,
+		TurnstileSiteKey:                     "",
+		TurnstileSecretKey:                   "",
+		MaxContextMessages:                   20,
+		ContextMaxTurns:                      48,
+		ContextCompactEnabled:                false,
+		UIComponentsEnabled:                  true,
+		ContextWindowFallbackTokens:          DefaultContextWindowFallbackTokens,
+		ContextCompactTriggerPercent:         DefaultContextCompactTriggerPercent,
+		ContextCompactPreserve:               8,
+		ConversationDefaultModel:             "",
+		ConversationTaskModel:                "follow",
+		ConversationTitlePrompt:              "",
+		ConversationLabelsPrompt:             "",
+		DefaultSystemPrompt:                  "",
+		SkillsPrompt:                         "",
+		ModelOptionPolicyMode:                "allowlist",
+		ModelOptionAllowedPaths:              DefaultModelOptionAllowedPathsJSON(),
+		ModelOptionDeniedPaths:               DefaultModelOptionDeniedPathsJSON(),
+		KnowledgeBaseEnabled:                 true,
+		PersonalProvidersMaxPerUser:          DefaultPersonalProvidersMaxPerUser,
+		DesktopDownloadEnabled:               true,
+		DesktopDownloadURL:                   DefaultDesktopDownloadURL,
+		UserStorageQuotaBytes:                104857600,
+		MaxUploadFileBytes:                   20971520,
+		MaxMessageFiles:                      10,
+		ImageMaxDimension:                    1024,
+		InputLimitsJSON:                      inputlimits.DefaultConfigJSON(),
+		ExtractSourceMaxBytes:                50 * 1024 * 1024,
+		ExtractResponseMaxBytes:              50 * 1024 * 1024,
+		ExtractOCRSourceMaxBytes:             50 * 1024 * 1024,
+		ExtractOCRResponseMaxBytes:           50 * 1024 * 1024,
+		ExtractMinerUArchiveMaxBytes:         100 * 1024 * 1024,
+		ExtractMinerUTextMaxBytes:            20 * 1024 * 1024,
+		FileFullContextLimitEnabled:          true,
+		FileFullContextMaxBytes:              DefaultFileFullContextMaxBytes,
+		FileFullContextMaxTokens:             65536,
+		FileImageMaxBytes:                    0,
+		FileDocMaxBytes:                      0,
+		FileAudioMaxBytes:                    0,
+		FileVideoMaxBytes:                    0,
+		TemporaryChatMaxAttachments:          20,
+		TemporaryChatRequestMaxBytes:         8 * 1024 * 1024,
+		ImageAttachmentProcessorMaxBytes:     20 * 1024 * 1024,
+		ImageAttachmentAnalysisMaxChars:      6000,
+		ImageAttachmentAnalysisTotalMaxChars: 16000,
+		PreparedImageCacheMaxEntries:         64,
+		PreparedImageCacheMaxBytes:           64 * 1024 * 1024,
+		GeneratedImageMaxBytes:               50 * 1024 * 1024,
+		FileFullContextPDFMaxPages:           20,
+		FileAllowedMIMETypes:                 "image/jpeg,image/png,image/webp,image/gif,video/mp4,video/webm,video/quicktime,video/mpeg,audio/mpeg,audio/wav,audio/mp4,audio/aac,audio/ogg,audio/flac,audio/aiff,text/plain,text/markdown,text/csv,text/yaml,application/json,application/yaml,application/x-yaml,application/toml,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel",
+		ExtractEngine:                        "builtin",
+		ExtractOCREngine:                     "rapidocr",
+		ExtractImageOCREnabled:               false,
+		ExtractPDFOCRFallbackEnabled:         false,
+		ExtractTikaSource:                    "external",
+		ExtractTikaBaseURL:                   "http://127.0.0.1:9998",
+		ExtractTikaTimeoutSeconds:            60,
+		ExtractTikaAuthToken:                 "",
+		ExtractDoclingBaseURL:                "http://127.0.0.1:8005/ocr",
+		ExtractDoclingTimeoutSeconds:         60,
+		ExtractDoclingAuthToken:              "",
+		ExtractTesseractOCRBaseURL:           "http://127.0.0.1:8004/ocr",
+		ExtractTesseractOCRTimeoutSeconds:    60,
+		ExtractTesseractOCRAuthToken:         "",
+		ExtractRapidOCRSource:                "external",
+		ExtractRapidOCRBaseURL:               "http://127.0.0.1:8002/ocr",
+		ExtractRapidOCRTimeoutSeconds:        60,
+		ExtractRapidOCRAuthToken:             "",
+		ExtractPaddleOCRBaseURL:              "",
+		ExtractPaddleOCRTimeoutSeconds:       60,
+		ExtractPaddleOCRAuthToken:            "",
+		ExtractTencentOCRSecretID:            "",
+		ExtractTencentOCRSecretKey:           "",
+		ExtractTencentOCRRegion:              "ap-guangzhou",
+		ExtractTencentOCREndpoint:            "ocr.tencentcloudapi.com",
+		ExtractTencentOCRTimeoutSeconds:      60,
+		ExtractAliyunOCRAccessKeyID:          "",
+		ExtractAliyunOCRAccessKeySecret:      "",
+		ExtractAliyunOCRRegion:               "cn-hangzhou",
+		ExtractAliyunOCREndpoint:             "ocr-api.cn-hangzhou.aliyuncs.com",
+		ExtractAliyunOCRTimeoutSeconds:       60,
+		ExtractMinerUSource:                  "cloud",
+		ExtractMinerUBaseURL:                 "https://mineru.net/api/v4",
+		ExtractMinerUFileTypes:               "pdf,word,presentation",
+		ExtractMinerUTimeoutSeconds:          180,
+		ExtractMinerUAuthToken:               "",
+		ExtractMistralOCRBaseURL:             "https://api.mistral.ai/v1/ocr",
+		ExtractMistralOCRModel:               "mistral-ocr-latest",
+		ExtractMistralOCRTimeoutSeconds:      60,
+		ExtractMistralOCRAuthToken:           "",
+		ExtractLLMOCRBaseURL:                 "",
+		ExtractLLMOCRModel:                   "",
+		ExtractLLMOCRTimeoutSeconds:          60,
+		ExtractLLMOCRAuthToken:               "",
+		ExtractLLMOCRPrompt:                  "",
+		EmbeddingEnabled:                     false,
+		EmbeddingHost:                        "",
+		EmbeddingKey:                         "",
+		EmbeddingTimeoutSeconds:              60,
+		EmbeddingOutputDimensions:            1536,
+		EmbeddingDimensionsPolicy:            EmbeddingDimensionsPolicySend,
+		EmbeddingProtocol:                    EmbeddingProtocolOpenAI,
+		EmbeddingNormalize:                   true,
+		EmbedTriggerOnUpload:                 true,
+		EmbedChunkSizeTokens:                 1024,
+		EmbedChunkOverlapTokens:              64,
+		EmbedBatchSize:                       20,
+		RAGTopK:                              5,
+		RAGModel:                             "sentence-transformers/all-MiniLM-L6-v2",
+		RAGEnabled:                           false,
+		RAGMinSimilarity:                     0.45,
+		RAGTokenBudget:                       2000,
+		RAGFetchMultiplier:                   3,
+		RAGWaitReadyMS:                       3000,
+		RAGQueryHistoryTurns:                 0,
+		RAGRetrievalCacheTTL:                 120,
+		ContextCompactHighlightsPerRole:      6,
+		ContextCompactSnippetChars:           140,
+		CompactLLMEnabled:                    true,
+		CompactTaskModel:                     "follow",
+		CompactAsyncEnabled:                  true,
+		CompactMaxFailures:                   3,
+		ContextTokenBudgetEnabled:            true,
+		MessageEmbeddingEnabled:              false, // 默认关闭，需要 embedding 服务就绪后开启
+		SemanticContextEnabled:               false,
+		ProcessTraceEnabled:                  true,
+		ProcessTracePersistInflight:          true,
+		ContextArtifactRetentionDays:         90,
+		MCPEnable:                            false,
+		MCPToolTimeoutSeconds:                10,
+		MCPToolRetryCount:                    0,
+		MCPMaxConcurrentCalls:                8,
+		MCPMaxSelectedToolsPerMessage:        DefaultMCPMaxSelectedToolsPerMessage,
+		MCPMaxLLMCallsPerRun:                 5,
+		MCPMaxToolCallsPerRun:                8,
+		MCPToolPrompt:                        "",
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	extractionport "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/extraction"
 	"io"
 	"math"
 	"net/http"
@@ -115,7 +116,11 @@ func (c *Client) extractTextWithMistral(ctx context.Context, req Request) (Respo
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		return Response{}, mistralHTTPError(resp)
 	}
-	return parseMistralOCRResponse(io.LimitReader(resp.Body, 50*1024*1024))
+	responseBody, err := extractionport.ReadBounded(resp.Body, c.responseMaxBytes)
+	if err != nil {
+		return Response{}, err
+	}
+	return parseMistralOCRResponse(bytes.NewReader(responseBody))
 }
 
 func newMistralOCRRequestBody(filePath string, mimeType string, payload mistralOCRRequest) (io.ReadCloser, int64, error) {

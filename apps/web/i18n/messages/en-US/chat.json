@@ -771,6 +771,25 @@
   },
   "processTrace": {
     "fileBadges": {
+      "exclusionReasons": {
+        "unsupported": "This model or route does not support this file type.",
+        "inputBudget": "The file could not fit within the input limits for this request.",
+        "contextBudget": "The file content was removed to fit the model's context window.",
+        "readFailed": "The original file could not be read from storage.",
+        "noRetrievedContent": "No content from this file was retrieved for this turn.",
+        "contentUnavailable": "No usable file content was available for this turn."
+      },
+      "limitDimensions": {
+        "nativeCount": "Native file count",
+        "nativeBytes": "Total native file bytes",
+        "nonPDFBytes": "Total audio/video bytes",
+        "requestBytes": "Encoded request bytes",
+        "pdfSingleBytes": "Single PDF bytes",
+        "pdfBytes": "Total PDF bytes",
+        "pdfPages": "PDF page count"
+      },
+      "limitExceeded": "{dimension}: {actual, number}; limit: {limit, number}.",
+      "limitUnknown": "{dimension} could not be verified; limit: {limit, number}.",
       "directRead": "Direct",
       "budget": "Budget",
       "retrieval": "Retrieval",
@@ -786,7 +805,7 @@
         "fullContext": "The file was included in this turn as full extracted text.",
         "native": "The original file was sent to the model, which reads its layout, tables and charts directly.",
         "unsupported": "The current model does not accept this type of input; the file was not provided.",
-        "skipped": "The file was not included in this turn, usually because it exceeded the budget or had no usable extracted text.",
+        "skipped": "The file was not included in this turn's context.",
         "file": "The file participated in context processing for this turn."
       }
     },
@@ -849,7 +868,9 @@
         "loadingFullResult": "Loading full result",
         "fullResultLoadFailed": "Could not load the full result. Try again later.",
         "fullResultOmitted": "This result is {size}, above the safe viewing limit, so it was not loaded.",
-        "fullResultEmpty": "This tool call returned no content.",
+        "statusLabel": "Status",
+        "fullResultNoOutput": "The provider returned no output. The execution status and saved request appear above.",
+        "fullResultEmpty": "No request, output, or error details were saved for this record.",
         "close": "Close"
       }
     },

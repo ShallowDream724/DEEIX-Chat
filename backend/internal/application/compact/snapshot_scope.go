@@ -142,10 +142,8 @@ func countUserTurns(messages []domainconversation.Message) int {
 func estimateMessageTokenTotal(messages []domainconversation.Message) int64 {
 	var total int64
 	for _, message := range messages {
-		if message.TokenUsage > 0 {
-			total += message.TokenUsage
-			continue
-		}
+		// TokenUsage 是整次请求的计费快照，多轮相加会重复累计历史与媒体。
+		// 摘要只压缩这些消息的文字，SourceTokens 与 SummaryTokens 均使用文字估算。
 		total += tokenestimate.Estimate(message.Content) + 5
 	}
 	return total

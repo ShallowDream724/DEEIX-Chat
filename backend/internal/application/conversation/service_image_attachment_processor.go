@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/textutil"
-	"io"
 	"strings"
 	"time"
 
@@ -15,11 +14,6 @@ import (
 	domainmcp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/mcp"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/objectstorage"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/toolresult"
-)
-
-const (
-	maxImageAttachmentAnalysisChars      = 6000
-	maxImageAttachmentAnalysisTotalChars = 16000
 )
 
 type imageAttachmentAnalysis struct {
@@ -83,18 +77,21 @@ func (s *Service) processImageAttachments(
 		return result, fmt.Errorf("%w: open object storage: %w", ErrImageAttachmentProcessingFailed, err)
 	}
 
-	totalImageBytes := 0
-	analysisCharLimit := min(maxImageAttachmentAnalysisChars, maxImageAttachmentAnalysisTotalChars/len(images))
-	for index, attachment := range images {
+	var totalImageBytes int64
+	preparedImages := make([]preparedImageAttachment, 0, len(images))
+	for _, attachment := range images {
 		prepared, prepareErr := prepareImageAttachmentForProcessor(ctx, store, attachment, cfg.ImageMaxDimension)
 		if prepareErr != nil {
 			return result, prepareErr
 		}
-		totalImageBytes += len(prepared.data)
-		if totalImageBytes > maxConversationImageContextBytes {
-			return result, fmt.Errorf("%w: image attachment context exceeds %d bytes", ErrFileTooLarge, maxConversationImageContextBytes)
+		totalImageBytes += int64(len(prepared.data))
+		if cfg.ImageAttachmentProcessorMaxBytes > 0 && totalImageBytes > cfg.ImageAttachmentProcessorMaxBytes {
+			return result, fmt.Errorf("%w: image processor input exceeds %d bytes", ErrFileTooLarge, cfg.ImageAttachmentProcessorMaxBytes)
 		}
-
+		preparedImages = append(preparedImages, prepared)
+	}
+	for index, attachment := range images {
+		prepared := preparedImages[index]
 		encodedImage := base64.StdEncoding.EncodeToString(prepared.data)
 		if processor.encoding == domainmcp.AttachmentEncodingDataURL {
 			encodedImage = "data:" + prepared.mimeType + ";base64," + encodedImage
@@ -172,7 +169,18 @@ func (s *Service) processImageAttachments(
 		}
 		row.Status = "success"
 		s.persistImageAttachmentToolRow(ctx, &row, &result)
-		analysis = contextArtifactExcerpt(analysis, analysisCharLimit)
+		analysis = contextArtifactExcerpt(analysis, cfg.ImageAttachmentAnalysisMaxChars)
+		if cfg.ImageAttachmentAnalysisTotalMaxChars > 0 {
+			quota := cfg.ImageAttachmentAnalysisTotalMaxChars / len(images)
+			if index < cfg.ImageAttachmentAnalysisTotalMaxChars%len(images) {
+				quota++
+			}
+			if quota <= 0 {
+				analysis = ""
+			} else {
+				analysis = contextArtifactExcerpt(analysis, quota)
+			}
+		}
 		result.Analyses = append(result.Analyses, imageAttachmentAnalysis{
 			FileID:   strings.TrimSpace(attachment.FileID),
 			FileName: textutil.FirstNonEmpty(attachment.FileName, attachment.FileID),
@@ -211,26 +219,11 @@ func prepareImageAttachmentForProcessor(
 	if storagePath == "" {
 		return preparedImageAttachment{}, fmt.Errorf("%w: image storage path is empty", ErrInvalidFileReference)
 	}
-	reader, _, err := store.Open(ctx, storagePath)
+	// MCP tools are independent from LLM routes. The upload policy bounds the
+	// source; the processor's configurable aggregate input budget is checked above.
+	data, err := readConversationImageSource(ctx, store, attachment)
 	if err != nil {
-		return preparedImageAttachment{}, fmt.Errorf("%w: open image %s: %w", ErrFileNotFound, attachment.FileID, err)
-	}
-	data, readErr := io.ReadAll(io.LimitReader(reader, maxConversationImageSourceBytes+1))
-	closeErr := reader.Close()
-	if readErr != nil {
-		return preparedImageAttachment{}, fmt.Errorf("%w: read image %s: %w", ErrFileNotFound, attachment.FileID, readErr)
-	}
-	if closeErr != nil {
-		return preparedImageAttachment{}, fmt.Errorf("%w: close image %s: %w", ErrFileNotFound, attachment.FileID, closeErr)
-	}
-	if len(data) == 0 {
-		return preparedImageAttachment{}, fmt.Errorf("%w: image %s is empty", ErrInvalidFileReference, attachment.FileID)
-	}
-	if len(data) > maxConversationImageSourceBytes {
-		return preparedImageAttachment{}, fmt.Errorf("%w: image %s exceeds source limit", ErrFileTooLarge, attachment.FileID)
-	}
-	if maxDimension <= 0 {
-		maxDimension = 1024
+		return preparedImageAttachment{}, err
 	}
 	mimeType := resolveImageMimeType(textutil.FirstNonEmpty(attachment.DetectedMIME, attachment.MimeType))
 	resized, actualMIME := resizeImageIfNeeded(data, mimeType, maxDimension)

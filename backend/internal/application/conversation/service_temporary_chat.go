@@ -57,7 +57,7 @@ func (s *Service) StreamTemporaryChat(
 	input TemporaryChatInput,
 	onDelta func(string) error,
 ) (*SendMessageResult, error) {
-	if err := ValidateTemporaryChatInput(input); err != nil {
+	if err := ValidateTemporaryChatInput(input, TemporaryChatAttachmentLimit(s.cfg.Snapshot())); err != nil {
 		return nil, err
 	}
 	input.Options, input.Controls = restrictUserChatOptions(input.Options, input.Controls, input.AllowRawOptions)
@@ -77,9 +77,8 @@ func (s *Service) StreamTemporaryChat(
 		return nil, mapRouteResolutionError(err)
 	}
 	attributionReferer, attributionTitle := s.llmAttribution()
-	routeConfig := messageRouteConfig(route, attributionReferer, attributionTitle)
-
 	cfg := s.cfg.Snapshot()
+	routeConfig := messageRouteConfig(route, attributionReferer, attributionTitle, cfg)
 	runID := strings.TrimSpace(input.ClientRunID)
 	lastUser := input.Messages[len(input.Messages)-1]
 	temporaryAssistant := model.Message{
@@ -97,7 +96,7 @@ func (s *Service) StreamTemporaryChat(
 	for _, item := range input.Messages {
 		messages = append(messages, llm.Message{Role: item.Role, Content: item.Content})
 	}
-	attachmentContext, err := s.prepareTemporaryAttachmentContext(ctx, input, messages)
+	attachmentContext, err := s.prepareTemporaryAttachmentContext(ctx, input, messages, *routeConfig.InputLimits)
 	if input.ReleaseAttachmentSources != nil {
 		input.ReleaseAttachmentSources()
 	}
@@ -178,11 +177,12 @@ func (s *Service) StreamTemporaryChat(
 		}
 	}
 	generateInput := llm.GenerateInput{
-		RequestID: strings.TrimSpace(input.RequestID),
-		Messages:  messages,
-		Tools:     toolRuntime.definitions,
-		Options:   filteredOptions,
-		Ephemeral: true,
+		RequestID:      strings.TrimSpace(input.RequestID),
+		Messages:       messages,
+		Tools:          toolRuntime.definitions,
+		Options:        filteredOptions,
+		NativeToolKeys: authorizedNativeToolKeys(route.Protocol, filteredOptions, route.ModelCapabilitiesJSON),
+		Ephemeral:      true,
 	}
 	var budgetFit promptBudgetFit
 	generateInput, budgetFit = fitGenerateInputToModelBudget(
@@ -390,14 +390,18 @@ func stripTemporaryMessageCacheControls(messages []llm.Message) []llm.Message {
 }
 
 // ValidateTemporaryChatInput 在写入流式响应头及预留计费预算前校验临时上下文。
-func ValidateTemporaryChatInput(input TemporaryChatInput) error {
+func ValidateTemporaryChatInput(input TemporaryChatInput, attachmentLimits ...int) error {
 	if input.UserID == 0 || strings.TrimSpace(input.SessionID) == "" || strings.TrimSpace(input.ClientRunID) == "" || strings.TrimSpace(input.Model) == "" {
 		return ErrInvalidMessageContent
 	}
 	if len(input.Messages) == 0 || len(input.Messages) > 100 {
 		return ErrInvalidMessageContent
 	}
-	if len(input.Attachments) > TemporaryChatMaxAttachments {
+	attachmentLimit := 20
+	if len(attachmentLimits) > 0 && attachmentLimits[0] > 0 {
+		attachmentLimit = attachmentLimits[0]
+	}
+	if len(input.Attachments) > attachmentLimit {
 		return ErrTooManyMessageFiles
 	}
 	if len(input.KnowledgeBaseIDs) > 8 {

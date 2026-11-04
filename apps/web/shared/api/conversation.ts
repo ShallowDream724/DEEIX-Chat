@@ -1,5 +1,6 @@
 import type { ConversationRuns } from "@deeix/api-contract";
 import { authedFetch, authedRequest } from "@/shared/api/authed-client";
+import { getChatFilePolicy } from "@/shared/api/file";
 import type { PagePayload } from "@/shared/api/common-types";
 import type {
   ActiveConversationRunEvent,
@@ -68,9 +69,6 @@ import {
   readString,
   type UnknownRecord,
 } from "@/shared/lib/type-guards";
-
-export const TEMPORARY_CHAT_MAX_ATTACHMENTS = 20;
-export const TEMPORARY_CHAT_MAX_IMAGE_ATTACHMENTS = 10;
 
 export type TemporaryChatRequestAttachment = {
   file: File;
@@ -209,6 +207,7 @@ type UnrecognizedStreamEvent = {
   errorCode?: string;
   requestId?: string;
   debug?: unknown;
+  details?: unknown;
 };
 
 type ParsedStreamEvent = StreamMessageEvent | UnrecognizedStreamEvent;
@@ -227,6 +226,7 @@ function normalizeStreamEvent(rawEvent: unknown): ParsedStreamEvent {
       errorCode: readString(rawEvent, "errorCode"),
       requestId: readString(rawEvent, "requestId"),
       debug: rawEvent.debug,
+      details: rawEvent.details,
     };
   }
 
@@ -406,7 +406,7 @@ function handleStreamEvent(event: ParsedStreamEvent, options: ConversationStream
   throw new ApiError(
     event.message || "stream failed",
     event.status ?? responseStatus,
-    event.debug,
+    event.details ?? event.debug,
     event.errorCode,
     event.requestId,
   );
@@ -1458,15 +1458,19 @@ export async function streamTemporaryChatMessage(
   options: ConversationStreamOptions = {},
   attachments: TemporaryChatRequestAttachment[] = [],
 ): Promise<SendMessageResult> {
-  if (attachments.length > TEMPORARY_CHAT_MAX_ATTACHMENTS) {
-    throw new ApiError(`temporary chat supports at most ${TEMPORARY_CHAT_MAX_ATTACHMENTS} attachments`, 400);
+  const policy = await getChatFilePolicy(accessToken, options.signal);
+  const attachmentLimit = policy.temporaryChatMaxAttachments || 20;
+  if (attachments.length > attachmentLimit) {
+    throw new ApiError(`temporary chat supports at most ${attachmentLimit} attachments`, 400);
   }
-  if (attachments.filter((item) => item.kind === "image").length > TEMPORARY_CHAT_MAX_IMAGE_ATTACHMENTS) {
-    throw new ApiError(`temporary chat supports at most ${TEMPORARY_CHAT_MAX_IMAGE_ATTACHMENTS} image attachments`, 400);
+  const serializedPayload = JSON.stringify(payload);
+  const requestLimit = policy.temporaryChatRequestMaxBytes || 8 * 1024 * 1024;
+  if (new TextEncoder().encode(serializedPayload).byteLength > requestLimit) {
+    throw new ApiError(`temporary chat context exceeds the ${requestLimit} byte limit`, 413);
   }
   if (attachments.length > 0) {
     const body = new FormData();
-    body.append("payload", JSON.stringify(payload));
+    body.append("payload", serializedPayload);
     body.append("attachmentMessageIndexes", JSON.stringify(attachments.map((item) => item.messageIndex)));
     for (const attachment of attachments) {
       body.append("attachments", attachment.file, attachment.file.name);

@@ -159,6 +159,9 @@ func TestThinkSnapshotUsesFreshStartedAtPerRound(t *testing.T) {
 	recorder.service = nil
 
 	recorder.appendUpstreamReasoning(messageTraceThinkKindContent, "第一轮思考", nil)
+	// Some platforms return the same clock tick for consecutive rounds. Give the
+	// completed draft an earlier time so this tests draft reuse, not clock resolution.
+	recorder.upstreamThink.startedAt = recorder.upstreamThink.startedAt.Add(-time.Second)
 	firstStart := recorder.upstreamThink.startedAt
 	firstRound := recorder.upstreamThink.roundID
 	firstEventID := recorder.upstreamThink.eventID

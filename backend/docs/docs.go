@@ -20531,10 +20531,13 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "allowedMIMETypes",
+                "audioMaxBytes",
                 "capabilityMode",
                 "docMaxBytes",
+                "effectiveAudioMaxBytes",
                 "effectiveDocMaxBytes",
                 "effectiveImageMaxBytes",
+                "effectiveVideoMaxBytes",
                 "fileMode",
                 "fullContextMaxBytes",
                 "fullContextMaxTokens",
@@ -20543,7 +20546,10 @@ const docTemplate = `{
                 "maxMessageFiles",
                 "maxUploadFileBytes",
                 "ragAvailabilityReason",
-                "ragAvailable"
+                "ragAvailable",
+                "temporaryChatMaxAttachments",
+                "temporaryChatRequestMaxBytes",
+                "videoMaxBytes"
             ],
             "properties": {
                 "allowedMIMETypes": {
@@ -20552,16 +20558,25 @@ const docTemplate = `{
                         "type": "string"
                     }
                 },
+                "audioMaxBytes": {
+                    "type": "integer"
+                },
                 "capabilityMode": {
                     "type": "string"
                 },
                 "docMaxBytes": {
                     "type": "integer"
                 },
+                "effectiveAudioMaxBytes": {
+                    "type": "integer"
+                },
                 "effectiveDocMaxBytes": {
                     "type": "integer"
                 },
                 "effectiveImageMaxBytes": {
+                    "type": "integer"
+                },
+                "effectiveVideoMaxBytes": {
                     "type": "integer"
                 },
                 "fileMode": {
@@ -20590,6 +20605,15 @@ const docTemplate = `{
                 },
                 "ragAvailable": {
                     "type": "boolean"
+                },
+                "temporaryChatMaxAttachments": {
+                    "type": "integer"
+                },
+                "temporaryChatRequestMaxBytes": {
+                    "type": "integer"
+                },
+                "videoMaxBytes": {
+                    "type": "integer"
                 }
             }
         },
@@ -22302,6 +22326,9 @@ const docTemplate = `{
                 "errorJSON",
                 "errorOmitted",
                 "errorSizeBytes",
+                "inputJSON",
+                "inputOmitted",
+                "inputSizeBytes",
                 "outputJSON",
                 "outputOmitted",
                 "outputSizeBytes",
@@ -22318,6 +22345,15 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "errorSizeBytes": {
+                    "type": "integer"
+                },
+                "inputJSON": {
+                    "type": "string"
+                },
+                "inputOmitted": {
+                    "type": "boolean"
+                },
+                "inputSizeBytes": {
                     "type": "integer"
                 },
                 "outputJSON": {

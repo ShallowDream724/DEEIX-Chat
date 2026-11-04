@@ -35,6 +35,7 @@ const isPresetDialogTab = isOneOf(PRESET_DIALOG_TABS);
 
 type CapabilityPreset = {
   id: string;
+  label?: string;
   protocol: AdminLLMAdapter;
   payload: Record<string, unknown>;
 };
@@ -213,6 +214,17 @@ const GOOGLE_IMAGE_ASPECT_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5
 const GOOGLE_IMAGE_SIZES = ["1K", "2K", "4K"];
 
 const MODEL_CAPABILITY_PRESETS: CapabilityPreset[] = [
+  {
+    id: "deepseek_responses",
+    label: "DeepSeek Responses",
+    protocol: "openai_responses",
+    payload: {
+      nativeTools: [
+        { key: "deepseek.tool_search", provider: "DeepSeek", protocols: ["openai_responses"], type: "web_search", label: "DeepSeek Search", enabled: true, defaultEnabled: true, payload: { type: "web_search" } },
+        { key: "deepseek.tool_fetch", provider: "DeepSeek", protocols: ["openai_responses"], type: "web_fetch", label: "DeepSeek Fetch", enabled: true, defaultEnabled: true, payload: { type: "web_fetch" } },
+      ],
+    },
+  },
   {
     id: "openai_chat_completions",
     protocol: "openai_chat_completions",
@@ -766,6 +778,7 @@ const MODEL_CAPABILITY_PRESETS: CapabilityPreset[] = [
   },
 ];
 const MODEL_CAPABILITY_PRESET_ORDER = new Map(MODEL_CAPABILITY_PRESETS.map((preset, index) => [preset.id, index]));
+MODEL_CAPABILITY_PRESET_ORDER.set("deepseek_responses", MODEL_CAPABILITY_PRESETS.length);
 
 function flattenDefaultOptions(value: unknown, prefix: string[] = []): { path: string }[] {
   if (value && typeof value === "object" && !Array.isArray(value)) {
@@ -943,7 +956,7 @@ export function ModelCapabilitiesPresetDialog({
                       const matched = capabilityPresetMatched(preset, routeProtocolSet);
                       const selected = selectedPreset?.id === preset.id;
                       const summary = capabilityPresetSummary(preset);
-                      const protocolLabel = capabilityPresetProtocolLabel(preset.protocol);
+                      const protocolLabel = preset.label ?? capabilityPresetProtocolLabel(preset.protocol);
                       return (
                         <button
                           key={preset.id}

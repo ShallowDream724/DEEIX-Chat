@@ -5,6 +5,8 @@ import * as React from "react";
 
 export type ProcessTraceLabels = {
   fileBadges: {
+    exclusionReasons: Record<string, string>;
+    budgetDetails: (dimension: string, actual: number, limit: number) => string;
     directRead: string;
     budget: string;
     retrieval: string;
@@ -148,6 +150,30 @@ export function useChatTraceLabels(): ProcessTraceLabels {
   return React.useMemo(
     () => ({
       fileBadges: {
+        exclusionReasons: {
+          unsupported: t("fileBadges.exclusionReasons.unsupported"),
+          input_budget: t("fileBadges.exclusionReasons.inputBudget"),
+          context_budget: t("fileBadges.exclusionReasons.contextBudget"),
+          read_failed: t("fileBadges.exclusionReasons.readFailed"),
+          no_retrieved_content: t("fileBadges.exclusionReasons.noRetrievedContent"),
+          content_unavailable: t("fileBadges.exclusionReasons.contentUnavailable"),
+        },
+        budgetDetails: (dimension, actual, limit) => {
+          const key = dimension.replace(/^provider\./, "");
+          const dimensions: Record<string, string> = {
+            nativeCount: t("fileBadges.limitDimensions.nativeCount"),
+            nativeBytes: t("fileBadges.limitDimensions.nativeBytes"),
+            nonPDFBytes: t("fileBadges.limitDimensions.nonPDFBytes"),
+            requestBytes: t("fileBadges.limitDimensions.requestBytes"),
+            pdfSingleBytes: t("fileBadges.limitDimensions.pdfSingleBytes"),
+            pdfBytes: t("fileBadges.limitDimensions.pdfBytes"),
+            pdfPages: t("fileBadges.limitDimensions.pdfPages"),
+          };
+          if (!Object.hasOwn(dimensions, key)) return "";
+          return actual < 0
+            ? t("fileBadges.limitUnknown", { dimension: dimensions[key], limit })
+            : t("fileBadges.limitExceeded", { dimension: dimensions[key], actual, limit });
+        },
         directRead: t("fileBadges.directRead"),
         budget: t("fileBadges.budget"),
         retrieval: t("fileBadges.retrieval"),

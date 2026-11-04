@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	domainsettings "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/settings"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/inputlimits"
 )
 
 func settingKey(namespace string, key string) string {
@@ -18,16 +19,22 @@ func configuredSettingValue(value string) bool {
 func (s *Service) settingResponse(item domainsettings.SystemSetting) SettingItem {
 	sensitive := isSensitiveSetting(item.Namespace, item.Key)
 	value := item.Value
+	defaultValue := ""
 	if sensitive {
 		value = ""
 	}
+	if item.Namespace == "file" && item.Key == "input_limits" {
+		value = inputlimits.Materialize(value)
+		defaultValue = inputlimits.DefaultConfigJSON()
+	}
 	return SettingItem{
-		Key:         item.Key,
-		Value:       value,
-		ValueType:   item.ValueType,
-		Description: item.Description,
-		Sensitive:   sensitive,
-		Configured:  configuredSettingValue(item.Value),
+		Key:          item.Key,
+		Value:        value,
+		DefaultValue: defaultValue,
+		ValueType:    item.ValueType,
+		Description:  item.Description,
+		Sensitive:    sensitive,
+		Configured:   configuredSettingValue(item.Value),
 	}
 }
 

@@ -84,7 +84,7 @@ export function settleCompletedExchange(
         new ApiError(
           completed.assistantMessage.errorMessage || t("retryLater"),
           502,
-          terminalStreamError?.debug,
+          terminalStreamError?.details ?? terminalStreamError?.debug,
           completed.assistantMessage.errorCode,
           terminalStreamError?.requestId,
         ),

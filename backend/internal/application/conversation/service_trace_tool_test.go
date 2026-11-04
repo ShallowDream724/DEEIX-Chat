@@ -1174,7 +1174,7 @@ func TestBuildCompactionProcessTraceUsesReadableLines(t *testing.T) {
 	want := strings.Join([]string{
 		"**上下文压缩**：对话已压缩并生成滚动摘要。",
 		"- 压缩区间：第 1-8 轮。",
-		"- Tokens 缩减：2400 → 420。",
+		"- 摘要文字估算：2400 → 420 tokens；附件原件独立保留。",
 	}, "\n")
 	if markdown != want {
 		t.Fatalf("unexpected compaction markdown:\n%s", markdown)
@@ -1265,7 +1265,7 @@ func TestTraceRecorderKeepsAndReplacesPendingCompactionStage(t *testing.T) {
 	if recorder.process.status != messageTraceStatusCompleted || recorder.process.endedAt == nil {
 		t.Fatalf("expected completed process trace, got %#v", recorder.process)
 	}
-	if !strings.Contains(recorder.process.contentMarkdown, "Tokens 缩减：2000 → 300") {
+	if !strings.Contains(recorder.process.contentMarkdown, "摘要文字估算：2000 → 300 tokens") {
 		t.Fatalf("expected completed compaction detail, got %q", recorder.process.contentMarkdown)
 	}
 }

@@ -3,6 +3,7 @@ package conversation
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"image"
@@ -81,6 +82,28 @@ func TestReadGeneratedImageDelegatesURLDownloadAndValidatesBytes(t *testing.T) {
 	}
 	if string(data) != string(pngHeader) || mimeType != "image/png" {
 		t.Fatalf("unexpected generated image: data=%q MIME=%q", data, mimeType)
+	}
+}
+
+func TestGeneratedImageBudgetAppliesToBase64AndDownload(t *testing.T) {
+	data := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	service := &Service{cfg: config.NewRuntime(config.Config{GeneratedImageMaxBytes: int64(len(data))})}
+	image := llm.GeneratedImage{B64JSON: base64.StdEncoding.EncodeToString(data), MIMEType: "image/png"}
+	if _, _, err := service.readGeneratedImage(t.Context(), image, mediaArtifactSource{}); err != nil {
+		t.Fatalf("image exactly at its configured budget: %v", err)
+	}
+	service.cfg = config.NewRuntime(config.Config{GeneratedImageMaxBytes: int64(len(data) - 1)})
+	if _, _, err := service.readGeneratedImage(t.Context(), image, mediaArtifactSource{}); !errors.Is(err, ErrFileTooLarge) {
+		t.Fatalf("over-budget base64 image error = %v", err)
+	}
+	service.mediaDownloader = generatedMediaDownloaderStub{downloadImage: func(_ context.Context, _, _ string, limit int64) ([]byte, string, error) {
+		if limit != int64(len(data)-1) {
+			t.Fatalf("download did not receive the configured budget: %d", limit)
+		}
+		return nil, "", generatedMediaTooLargeError{}
+	}}
+	if _, _, err := service.readGeneratedImage(t.Context(), llm.GeneratedImage{URL: "https://cdn.example.test/image"}, mediaArtifactSource{}); !errors.Is(err, ErrFileTooLarge) {
+		t.Fatalf("over-budget downloaded image error = %v", err)
 	}
 }
 
