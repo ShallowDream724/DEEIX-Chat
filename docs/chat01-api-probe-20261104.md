@@ -70,7 +70,7 @@ https://files.chat01.ai/python-generations/<opaque>/<filename>
 
 完整响应中没有与这些 business ref 配套的经纬度或地点数据表，不能直接还原地图。实景图部分出现了图片说明和照片来源网页链接，但没有 Markdown 图片地址或图片数组，不能认定图像本体也传到了 API。
 
-建议隔离识别已知私有标记：有足够数据才转换成项目组件；缺数据时保留有用名称、普通链接和表格，未支持的原始块留在诊断记录，避免正文直接出现私有控制符。不为不存在的坐标或图片补造数据。
+建议隔离识别已知私有标记：有足够数据才转换成项目组件；缺数据时保留有用名称、普通链接和表格，并明确保留该组件的可见入口/缺失状态及原始数据，不无声删除。不为不存在的坐标或图片补造数据。用户明确 HTML 代码块不等于官网交互组件；未取得完整官网组件协议时不开展通用组件仿制。
 
 ### 心跳、结束与标识
 
@@ -90,4 +90,37 @@ https://files.chat01.ai/python-generations/<opaque>/<filename>
 5. **引用、Artifact 与私有块**：标准链接、表格和 html 围栏尽量复用现有组件；私有 genui 只做已验证转换，缺失数据不硬转。HTML 文件仍走隔离预览，不同源执行。
 6. **计费**：本批没有 token usage，调用单价依据用户提供。不能将 Chat01 的摘要文字套用 OpenAI 原生工具价格；额度、身份、成功与失败计量需要渠道自己的明确规则。
 
-仍待验证：历史附件 `file_url`/图片 `image_url`、实际总附件上限、跨轮上下文、连续断流恢复、自然失效 CDN 链接、长任务、不同渠道账户的格式差异。此次没有验证 Responses API；能力结论限于上述 Chat Completions 实测样本。
+以上为第一批响应探测；附件与 Responses 随后按用户要求补测，见下一节。历史附件跨轮行为、实际总附件上限、连续断流恢复、自然失效 CDN 链接、长任务、不同渠道账户的格式差异仍待验证。
+
+## 追加附件传输验证
+
+同日追加 3 次 `gpt-6-thinking` 请求，按用户报价再用 6 分；两批共 9 次、按单价计 16 分，仍未调用 Pro。所有请求 HTTP 200。没有自动重试付费调用。第二批文件位于本地忽略目录 `attachments/`，以预先保存的 SHA-256 与随机标识为校验基准，未把预期哈希写进模型提示。
+
+| 编号 | 请求方式 | 附件 | 耗时 | 验证 |
+| --- | --- | --- | ---: | --- |
+| 07 | Chat Completions，Base64 data URI | DOCX、PPTX、PDF、WAV、ZIP、JPEG | 221.1 秒 | 上游执行读取并打包回传；下载 ZIP 后，六份原件与本地逐字节一致 |
+| 08 | Chat Completions，HTTPS URL | DOCX、PPTX、ZIP、PNG | 164.0 秒 | 下载上游计算的 manifest，四份文件的字节数和 SHA-256 与本地全部匹配 |
+| 09 | Responses，`input_file.file_url` HTTPS URL | DOCX | 36.0 秒 | 返回大小、SHA-256、文档随机标识与本地全部匹配，收到 `response.completed` |
+
+07 使用图片 `image_url: {url: "data:image/jpeg;base64,…"}`，其他类型使用 `file_url: {url: "data:<实际 MIME>;base64,…"}`，不附加未经确认的 filename 参数。总请求 JSON 为 235,087 字节，六份源文件合计 175,301 字节。DOCX/PPTX/PDF/ZIP 含独立随机标识；WAV 是真实半秒音频文件；JPEG 使用用户此前提供的 Chat01 logo。上游正确描述了橙色背景、白色圆形及“01”。验证的是原件运输与可读取性，不是音频转录或所有二进制格式的语义能力。
+
+08 同样使用图片 `image_url`、其他文件 `file_url`，URL 来自此前实际生成并下载核验过的文件。未向 CDN 传递 API 密钥。
+
+09 使用标准形态：
+
+```json
+{
+  "model": "gpt-6-thinking",
+  "stream": true,
+  "input": [{"role": "user", "content": [
+    {"type": "input_text", "text": "读取附件并计算实际大小、SHA-256及文档标识"},
+    {"type": "input_file", "file_url": "https://files.chat01.ai/python-generations/<opaque>/<file>.docx"}
+  ]}]
+}
+```
+
+Responses 确实返回标准事件封装，包括 created、in_progress、output_text.delta、output_item.done 和 completed；但混装内容仍在 output_text 内，并未因此获得完整结构化工具记录或 usage。同一 output_index=0/content_index=0 的 `response.output_text.done` 连续发了两次，内容 1132 字符且哈希相同，不能将快照重复追加。期间收到 `: heartbeat` 注释事件（约 15、30 秒）。因此 Responses 可用，初版仍可优先选择附件覆盖更完整的 Chat Completions；若保留两入口，必须共用 Chat01 规范化核心。
+
+附件文件名与内容有两项细节：Base64 的非图片原件被挂载成随机 `.bin`；URL 的 DOCX/PPTX 保留扩展名但改为随机 basename。URL 输入的 PNG 被挂载成 `.jpg` 名字，实际 PNG 字节及哈希未变。应保留自己的原名并依真实 MIME/内容处理，不能以挂载名决定内容格式。
+
+结论：该特殊链路已经证明可以传递完整 DOCX/PPTX 等原件，不需要先转为解析文本。默认 Base64 不依赖官网上传接口或站点对外开放文件 URL。视频、大文件、中文/重复文件名、更多任意类型、附件数量边界与 Responses 的 Base64/多附件形态尚未测试，不从小文件成功推导无限制。
