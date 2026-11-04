@@ -3,6 +3,7 @@ package llm
 import (
 	"errors"
 	portllm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/nativetool"
 	"strings"
 	"testing"
 )
@@ -37,6 +38,15 @@ func TestNativeUsageUsesAuthorizedProviderSuccessfulCounts(t *testing.T) {
 	qualifyNativeToolUsage(output, portllm.GenerateInput{NativeToolKeys: map[string]string{"tool_search": "deepseek.tool_search", "tool_fetch": "deepseek.tool_fetch"}}, portllm.RouteConfig{})
 	if output.ServerSideToolUsage["deepseek.tool_search"] != 2 || len(output.ServerSideToolUsage) != 1 {
 		t.Fatalf("unexpected usage: %#v", output.ServerSideToolUsage)
+	}
+}
+
+func TestNativeUsageDeepSeekKeepsIndependentSuccessfulFetchCount(t *testing.T) {
+	parsed := map[string]any{"usage": map[string]any{"server_tool_use": map[string]any{"tool_search": float64(2), "tool_fetch": float64(3)}}}
+	output := &portllm.GenerateOutput{ServerSideToolUsage: parseServerSideToolUsage(parsed)}
+	qualifyNativeToolUsage(output, portllm.GenerateInput{NativeToolKeys: nativetool.UsageKeysForTool("openai_responses", "deepseek.tool_search")}, portllm.RouteConfig{UpstreamModel: "deepseek-v4-pro"})
+	if output.ServerSideToolUsage["deepseek.tool_search"] != 2 || output.ServerSideToolUsage["deepseek.tool_fetch"] != 3 || len(output.ServerSideToolUsage) != 2 {
+		t.Fatalf("independent successful counts lost: %#v", output.ServerSideToolUsage)
 	}
 }
 

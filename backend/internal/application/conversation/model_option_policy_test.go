@@ -372,6 +372,51 @@ func TestFilterModelOptionsPreservesOfficialNativeToolsOutsidePathPolicy(t *test
 	}
 }
 
+func TestAnthropicWebSearchRequiresUnambiguousUsageIdentity(t *testing.T) {
+	const capabilities = `{"nativeToolKeys":["anthropic.web_search_20250305","anthropic.web_search_20260209","anthropic.web_fetch_20260209"]}`
+	const protocol = llm.AdapterAnthropicMessages
+	for _, tc := range []struct {
+		name     string
+		selected []string
+		wantKey  string
+	}{
+		{"older version alone", []string{"web_search_20250305"}, "anthropic.web_search_20250305"},
+		{"newer version alone", []string{"web_search_20260209"}, "anthropic.web_search_20260209"},
+		{"both older first", []string{"web_search_20250305", "web_search_20260209"}, ""},
+		{"both newer first", []string{"web_search_20260209", "web_search_20250305"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// An unrelated tool must survive the conflict.
+			tools := []map[string]any{{"type": "web_fetch_20260209"}}
+			for _, kind := range tc.selected {
+				tools = append(tools, map[string]any{"type": kind})
+			}
+			options := map[string]any{"tools": tools}
+			filtered := filterModelOptions(options, protocol, modelOptionPolicyConfig{ModelCapabilitiesJSON: capabilities})
+			payloads := providerToolOptionPayloads(filtered["tools"])
+			wantCount := 1
+			if tc.wantKey != "" {
+				wantCount++
+			}
+			if len(payloads) != wantCount || payloads[0]["type"] != "web_fetch_20260209" ||
+				(tc.wantKey != "" && payloads[1]["type"] != tc.selected[0]) {
+				t.Fatalf("unexpected dispatch declarations: %#v", payloads)
+			}
+			for _, opts := range []map[string]any{options, filtered} {
+				keys := authorizedNativeToolKeys(protocol, opts, capabilities)
+				if keys["web_search"] != tc.wantKey || keys["web_fetch"] != "anthropic.web_fetch_20260209" {
+					t.Fatalf("unexpected usage identities: %#v", keys)
+				}
+				for _, kind := range tc.selected {
+					if keys[kind] != tc.wantKey {
+						t.Fatalf("unexpected version-specific usage identity: %#v", keys)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestFilterModelOptionsPreservesXAINativeToolsWhenToolsIsExplicitlyDenied(t *testing.T) {
 	filtered := filterModelOptions(map[string]any{
 		"tools": []any{

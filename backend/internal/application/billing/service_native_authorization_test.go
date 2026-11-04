@@ -2,8 +2,51 @@ package billing
 
 import (
 	domainbilling "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/billing"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/nativetool"
 	"testing"
 )
+
+func TestDeepSeekWebSearchReservesAndBillsBothSuccessfulOperationTypes(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		pricing  string
+		estimate int64
+		billed   int64
+	}{
+		{"both paid", `{"deepseek.tool_search":{"priceNanousd":11},"deepseek.tool_fetch":{"priceNanousd":7}}`, 18, 43},
+		{"fetch paid search free", `{"deepseek.tool_fetch":{"priceNanousd":7}}`, 7, 21},
+		{"defaults free", `{}`, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := &billingRepositoryStub{mode: "usage", nativeToolBillingEnabled: true, nativeToolPricingJSON: tc.pricing, pricing: &domainbilling.ModelPricing{PlatformModelName: "free", IsFree: true}}
+			service := NewService(repo)
+			authorization, err := service.AuthorizeUsage(t.Context(), 42, "free", "deepseek-web-run")
+			if err != nil {
+				t.Fatal(err)
+			}
+			estimate := service.AuthorizeNativeTools(authorization, nativetool.UsageKeysForTool("openai_responses", "deepseek.tool_search"))
+			if estimate != tc.estimate || !authorization.NativeToolKeys["deepseek.tool_search"] || !authorization.NativeToolKeys["deepseek.tool_fetch"] {
+				t.Fatalf("estimate=%d keys=%#v", estimate, authorization.NativeToolKeys)
+			}
+			if err := service.EnsureNativeToolReservation(t.Context(), authorization, estimate); err != nil {
+				t.Fatal(err)
+			}
+			if (authorization.Reservation != nil) != (tc.estimate > 0) {
+				t.Fatalf("reservation=%#v estimate=%d", authorization.Reservation, estimate)
+			}
+			// The frozen DeepSeek prices are independent of the compatible wire
+			// protocol and subsequent administrator edits.
+			repo.nativeToolPricingJSON = `{"openai.web_search":{"priceNanousd":999}}`
+			ledger, err := service.BuildUsageLedger(t.Context(), UsagePricingInput{Authorization: authorization, UserID: 42, PlatformModelName: "free", ProviderProtocol: "openai_responses", ServerSideToolUsage: map[string]int64{"deepseek.tool_search": 2, "deepseek.tool_fetch": 3, "openai.web_search": 4}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ledger.BilledNanousd != tc.billed {
+				t.Fatalf("billed=%d want=%d", ledger.BilledNanousd, tc.billed)
+			}
+		})
+	}
+}
 
 func TestNativeToolAuthorizationFreezesPricesAndRequiresSelectedIdentity(t *testing.T) {
 	repo := &billingRepositoryStub{nativeToolBillingEnabled: true, nativeToolPricingJSON: `{"openai.web_search":{"priceNanousd":123,"unit":"call","billable":true}}`}

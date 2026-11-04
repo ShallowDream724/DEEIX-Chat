@@ -155,99 +155,137 @@ func mergeModelOptionDefaults(defaults map[string]any, options map[string]any, l
 // nativeProviderToolsFromOption 将用户 options.tools 收敛为当前协议允许的官方原生工具。
 // 普通参数白名单不处理 tools，避免用户通过自由 JSON 绕过官方工具控制。
 func nativeProviderToolsFromOption(protocolKey string, raw any, capabilitiesJSON string) []map[string]any {
+	var payloads []map[string]any
+	for _, tool := range resolveNativeProviderTools(protocolKey, raw, capabilitiesJSON) {
+		payloads = append(payloads, tool.payload)
+	}
+	return payloads
+}
+
+type resolvedNativeProviderTool struct {
+	payload   map[string]any
+	usageKeys map[string]string
+}
+
+func resolveNativeProviderTools(protocolKey string, raw any, capabilitiesJSON string) []resolvedNativeProviderTool {
 	rawTools := providerToolOptionPayloads(raw)
 	if len(rawTools) == 0 {
 		return nil
 	}
-	allowedTools := nativeToolCapabilitiesFromConfig(capabilitiesJSON, protocolKey)
-	current := make([]nativeToolCapability, 0, len(allowedTools))
-	for _, capability := range allowedTools {
-		if capability.Protocol == protocolKey {
-			current = append(current, capability)
-		}
-	}
-	if len(current) > 0 {
-		allowedTools = current
-	}
+	allowedTools := nativeToolCapabilitiesForProtocol(nativeToolCapabilitiesFromConfig(capabilitiesJSON, protocolKey), protocolKey)
 	if len(allowedTools) == 0 {
 		return nil
 	}
 	seen := make(map[string]struct{}, len(rawTools))
-	tools := make([]map[string]any, 0, len(rawTools))
+	tools := make([]resolvedNativeProviderTool, 0, len(rawTools))
+	usageKeys := make(map[string]string)
 	for _, rawTool := range rawTools {
-		if _, ok := authorizedNativeToolKey(protocolKey, rawTool, allowedTools); !ok {
-			continue
-		}
-		tool, identity, ok := nativeProviderToolPayload(protocolKey, rawTool, allowedTools)
+		capability, ok := authorizedNativeToolCapability(rawTool, allowedTools)
 		if !ok {
 			continue
 		}
+		tool := nativeProviderToolPayload(rawTool, capability)
+		// A legacy alias must remain unambiguous after canonicalization too,
+		// because dispatch and billing both consume the resulting wire payload.
+		canonical, valid := authorizedNativeToolCapability(tool, allowedTools)
+		if !valid || canonical.Key != capability.Key {
+			continue
+		}
+		identity := canonical.Identity()
 		if _, exists := seen[identity]; exists {
 			continue
 		}
 		seen[identity] = struct{}{}
-		tools = append(tools, tool)
+		keys := nativetool.UsageKeysForTool(canonical.Protocol, canonical.Key)
+		if canonical.Type != "" {
+			if _, exists := keys[canonical.Type]; !exists {
+				keys[canonical.Type] = canonical.Key
+			}
+		}
+		for alias, key := range keys {
+			if existing, exists := usageKeys[alias]; exists && existing != key {
+				usageKeys[alias] = ""
+			} else {
+				usageKeys[alias] = key
+			}
+		}
+		tools = append(tools, resolvedNativeProviderTool{payload: tool, usageKeys: keys})
 	}
-	return tools
+	// A counter shared by different billing identities cannot identify the
+	// declaration that ran. Drop all of its claimants before dispatch.
+	unambiguous := tools[:0]
+	for _, tool := range tools {
+		valid := true
+		for alias := range tool.usageKeys {
+			if usageKeys[alias] == "" {
+				valid = false
+				break
+			}
+		}
+		if valid {
+			unambiguous = append(unambiguous, tool)
+		}
+	}
+	return unambiguous
 }
 
-func authorizedNativeToolKey(protocol string, payload map[string]any, capabilities []nativeToolCapability) (string, bool) {
-	key := ""
+func nativeToolCapabilitiesForProtocol(capabilities []nativeToolCapability, protocol string) []nativeToolCapability {
+	current := make([]nativeToolCapability, 0, len(capabilities))
+	fallback := make([]nativeToolCapability, 0, len(capabilities))
+	for _, capability := range capabilities {
+		// DeepSeek's hosted web tools are supported only by Responses; unlike
+		// other configured tools, they cannot use the cross-protocol fallback.
+		if capability.Key == "deepseek.tool_search" && protocol != "openai_responses" {
+			continue
+		}
+		fallback = append(fallback, capability)
+		if capability.Protocol == protocol {
+			current = append(current, capability)
+		}
+	}
+	if len(current) > 0 {
+		return current
+	}
+	return fallback
+}
+
+func authorizedNativeToolCapability(payload map[string]any, capabilities []nativeToolCapability) (nativeToolCapability, bool) {
+	var match nativeToolCapability
 	for _, capability := range capabilities {
 		if !nativeToolCapabilityMatchesRawTool(capability, payload) {
 			continue
 		}
-		if capability.Key == "" {
-			return "", false
+		if capability.Key == "" || (match.Key != "" && match.Key != capability.Key) {
+			return nativeToolCapability{}, false
 		}
-		if key != "" && key != capability.Key {
-			return "", false
+		if match.Key == "" {
+			match = capability
 		}
-		key = capability.Key
 	}
-	return key, key != ""
+	return match, match.Key != ""
 }
 
-// Resolve only the declarations that survived the model policy. Same-name
-// tools with multiple provider identities are rejected before dispatch.
+// Use the same resolution and conflict checks as dispatch for usage counters.
 func authorizedNativeToolKeys(protocol string, options map[string]any, capabilitiesJSON string) map[string]string {
-	protocol = modelOptionPolicyProtocolKey(protocol)
-	capabilities := nativeToolCapabilitiesFromConfig(capabilitiesJSON, protocol)
 	keys := make(map[string]string)
-	for _, payload := range providerToolOptionPayloads(options["tools"]) {
-		key, ok := authorizedNativeToolKey(protocol, payload, capabilities)
-		if !ok {
-			continue
-		}
-		for _, capability := range capabilities {
-			if capability.Key == key {
-				keys[capability.Type] = key
-				if key == "deepseek.tool_search" {
-					keys["tool_search"] = key
-				}
-				if key == "deepseek.tool_fetch" {
-					keys["tool_fetch"] = key
-				}
-			}
+	for _, tool := range resolveNativeProviderTools(modelOptionPolicyProtocolKey(protocol), options["tools"], capabilitiesJSON) {
+		for alias, billingKey := range tool.usageKeys {
+			keys[alias] = billingKey
 		}
 	}
 	return keys
 }
 
-func nativeProviderToolPayload(protocolKey string, rawTool map[string]any, allowedTools []nativeToolCapability) (map[string]any, string, bool) {
-	definition, tool, ok := nativetool.PayloadFromOption(protocolKey, rawTool)
-	if ok {
-		if capability, allowed := nativeToolCapabilityByDefinition(allowedTools, definition); allowed {
-			return nativetool.CanonicalPayload(definition, mergeNativeToolPayload(tool, capability.Payload)), capability.Identity(), true
+func nativeProviderToolPayload(rawTool map[string]any, capability nativeToolCapability) map[string]any {
+	payload := mergeNativeToolPayload(rawTool, capability.Payload)
+	// Resolve by the authorized provider identity. The Responses transport
+	// alone cannot distinguish OpenAI and DeepSeek web_search declarations.
+	for _, definition := range nativeToolDefinitionsByKey(capability.Key) {
+		if definition.Protocol == capability.Protocol {
+			return nativetool.CanonicalPayload(definition, payload)
 		}
 	}
-	for _, capability := range allowedTools {
-		if !nativeToolCapabilityMatchesRawTool(capability, rawTool) {
-			continue
-		}
-		return mergeNativeToolPayload(rawTool, capability.Payload), capability.Identity(), true
-	}
-	return nil, "", false
+	return payload
 }
 
 type nativeToolCapability struct {
@@ -295,6 +333,19 @@ func nativeToolCapabilitiesFromConfig(raw string, protocolKey string) []nativeTo
 	seen := make(map[string]struct{})
 	addCapability := func(tool nativeToolCapability) {
 		tool.Key = strings.TrimSpace(tool.Key)
+		// Older settings exposed fetch as a standalone tool. DeepSeek executes
+		// it internally through web_search, so preserve the selection as one
+		// capability while authorizing both metered operations.
+		if tool.Key == "deepseek.tool_fetch" {
+			tool.Key = "deepseek.tool_search"
+		}
+		if tool.Key == "deepseek.tool_search" {
+			if definition, ok := nativeToolDefinitionForProtocol(nativeToolDefinitionsByKey(tool.Key), "openai_responses"); ok {
+				tool.Protocol = definition.Protocol
+				tool.Type = definition.Type
+				tool.Payload = nativetool.CanonicalPayload(definition, tool.Payload)
+			}
+		}
 		tool.Protocol = strings.TrimSpace(tool.Protocol)
 		tool.Type = strings.TrimSpace(tool.Type)
 		if tool.Type == "" {
@@ -379,7 +430,32 @@ func nativeToolCapabilitiesFromConfig(raw string, protocolKey string) []nativeTo
 		}
 	}
 
-	for _, tool := range providerToolOptionPayloads(config.DefaultOptions["tools"]) {
+	defaultTools := providerToolOptionPayloads(config.DefaultOptions["tools"])
+	if protocolKey == "openai_responses" || protocolKey == "openai_chat_completions" {
+		for _, tool := range defaultTools {
+			if modelOptionStringValue(tool["type"]) == "web_fetch" {
+				// Older fetch defaults identify DeepSeek before the shared
+				// web_search type can be inferred as an OpenAI capability.
+				addCapability(nativeToolCapability{Key: "deepseek.tool_search", Protocol: "openai_responses", Payload: tool})
+				break
+			}
+		}
+	}
+	for _, tool := range defaultTools {
+		// Explicit provider declarations take precedence over inferring a
+		// provider from a shared wire type in legacy default options.
+		// Unsupported DeepSeek defaults must not turn into OpenAI tools when
+		// the selected route uses Chat Completions.
+		declared := false
+		for _, capability := range capabilities {
+			if (capability.Protocol == protocolKey || capability.Key == "deepseek.tool_search") && nativeToolCapabilityMatchesRawTool(capability, tool) {
+				declared = true
+				break
+			}
+		}
+		if declared {
+			continue
+		}
 		definition, _, ok := nativetool.PayloadFromOption(protocolKey, tool)
 		if ok {
 			addCapability(nativeToolCapability{
@@ -455,22 +531,11 @@ func nativeToolDefinitionForProtocol(definitions []nativetool.Definition, protoc
 	return nativetool.Definition{}, false
 }
 
-func nativeToolCapabilityByDefinition(items []nativeToolCapability, definition nativetool.Definition) (nativeToolCapability, bool) {
-	for _, item := range items {
-		if item.Key != "" && item.Key == definition.Key {
-			if item.Protocol == "" || item.Protocol == definition.Protocol {
-				return item, true
-			}
-		}
-		if item.Type == definition.Type && (item.Protocol == "" || item.Protocol == definition.Protocol) {
-			return item, true
-		}
-	}
-	return nativeToolCapability{}, false
-}
-
 func nativeToolCapabilityMatchesRawTool(capability nativeToolCapability, rawTool map[string]any) bool {
 	rawType := strings.TrimSpace(modelOptionStringValue(rawTool["type"]))
+	if capability.Key == "deepseek.tool_search" && (rawType == "web_fetch" || rawType == "tool_fetch") {
+		return true
+	}
 	if rawType != "" && capability.Type != "" {
 		return rawType == capability.Type
 	}

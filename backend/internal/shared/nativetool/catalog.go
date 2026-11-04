@@ -15,20 +15,23 @@ const (
 
 // Definition 描述后端已适配、可由管理员开启的厂商官方原生工具。
 type Definition struct {
-	Protocol         string
-	Provider         string
-	Type             string
-	Key              string
-	Label            string
-	Description      string
-	Payload          map[string]any
-	DefaultEnabled   bool
-	Billable         bool
-	BillingUnit      string
-	PriceNanousd     int64
-	PriceLabel       string
-	RiskLevel        string
-	UsageAliases     []string
+	Protocol       string
+	Provider       string
+	Type           string
+	Key            string
+	Label          string
+	Description    string
+	Payload        map[string]any
+	DefaultEnabled bool
+	Billable       bool
+	BillingUnit    string
+	PriceNanousd   int64
+	PriceLabel     string
+	RiskLevel      string
+	UsageAliases   []string
+	// MeteringOnly entries describe usage counters, never independent request tools.
+	MeteringOnly     bool
+	BillingKeys      []string
 	rawTypeFieldKeys []string
 }
 
@@ -156,9 +159,9 @@ var definitions = []Definition{
 		UsageAliases:   []string{"code_interpreter"},
 	},
 	{
-		Protocol: "openai_responses", Provider: "DeepSeek", Type: "web_search", Key: "deepseek.tool_search", Label: "DeepSeek Search", Description: "DeepSeek native search; metered successful operations.", Payload: map[string]any{"type": "web_search"}, Billable: true, BillingUnit: "call", PriceLabel: "custom", UsageAliases: []string{"tool_search"},
+		Protocol: "openai_responses", Provider: "DeepSeek", Type: "web_search", Key: "deepseek.tool_search", Label: "DeepSeek Web Search", Description: "DeepSeek web search, page opening and in-page finding; successful search and fetch operations are metered separately.", Payload: map[string]any{"type": "web_search"}, Billable: true, BillingUnit: "call", PriceLabel: "custom", UsageAliases: []string{"tool_search"}, BillingKeys: []string{"deepseek.tool_search", "deepseek.tool_fetch"},
 	},
-	{Protocol: "openai_responses", Provider: "DeepSeek", Type: "web_fetch", Key: "deepseek.tool_fetch", Label: "DeepSeek Fetch", Description: "DeepSeek native page retrieval; metered successful operations.", Payload: map[string]any{"type": "web_fetch"}, Billable: true, BillingUnit: "call", PriceLabel: "custom", UsageAliases: []string{"tool_fetch"}},
+	{Protocol: "openai_responses", Provider: "DeepSeek", Type: "tool_fetch", Key: "deepseek.tool_fetch", Label: "DeepSeek Fetch", Description: "Successful page opening and in-page finding operations performed by DeepSeek Web Search.", MeteringOnly: true, Billable: true, BillingUnit: "call", PriceLabel: "custom", UsageAliases: []string{"tool_fetch"}},
 	{
 		Protocol:       "anthropic_messages",
 		Provider:       "Anthropic",
@@ -442,12 +445,40 @@ func Definitions() []Definition {
 	return result
 }
 
+// UsageKeysForTool returns all metered identities enabled by one input tool.
+// This includes operations the provider performs internally, such as DeepSeek
+// fetching a page while executing its web_search capability.
+func UsageKeysForTool(protocol string, key string) map[string]string {
+	result := make(map[string]string)
+	for _, definition := range definitions {
+		if definition.Protocol != protocol || definition.Key != key || definition.MeteringOnly {
+			continue
+		}
+		result[definition.Type] = definition.Key
+		for _, alias := range definition.UsageAliases {
+			result[alias] = definition.Key
+		}
+		for _, billingKey := range definition.BillingKeys {
+			for _, meter := range definitions {
+				if meter.Key != billingKey || meter.Protocol != protocol {
+					continue
+				}
+				result[meter.Key] = meter.Key
+				for _, alias := range meter.UsageAliases {
+					result[alias] = meter.Key
+				}
+			}
+		}
+	}
+	return result
+}
+
 // Find 返回指定协议和类型的官方原生工具定义。
 func Find(protocol string, toolType string) (Definition, bool) {
 	protocol = strings.TrimSpace(protocol)
 	toolType = strings.TrimSpace(toolType)
 	for _, definition := range definitions {
-		if definition.Protocol == protocol && definition.Type == toolType {
+		if definition.Protocol == protocol && definition.Type == toolType && !definition.MeteringOnly {
 			return cloneDefinition(definition), true
 		}
 	}
@@ -493,7 +524,13 @@ func CanonicalPayload(definition Definition, raw map[string]any) map[string]any 
 }
 
 func buildPayload(definition Definition, raw map[string]any) map[string]any {
+	if definition.MeteringOnly {
+		return nil
+	}
 	payload := cloneMap(raw)
+	if payload == nil {
+		payload = make(map[string]any)
+	}
 	for key := range nativeToolDeniedPayloadKeys {
 		delete(payload, key)
 	}
@@ -618,6 +655,13 @@ func normalizeDefinition(definition Definition) (Definition, bool) {
 	definition.BillingUnit = strings.TrimSpace(definition.BillingUnit)
 	definition.PriceLabel = strings.TrimSpace(definition.PriceLabel)
 	definition.RiskLevel = strings.TrimSpace(definition.RiskLevel)
+	// Historical capabilities may still describe DeepSeek fetch as web_fetch.
+	// Its stable billing identity must never recreate an input tool declaration.
+	if definition.Key == "deepseek.tool_fetch" && definition.Protocol == "openai_responses" {
+		definition.Type = "tool_fetch"
+		definition.Payload = nil
+		definition.MeteringOnly = true
+	}
 	if definition.Type == "" {
 		definition.Type = strings.TrimSpace(stringValue(definition.Payload["type"]))
 	}
@@ -633,13 +677,14 @@ func normalizeDefinition(definition Definition) (Definition, bool) {
 	if definition.Description == "" {
 		definition.Description = definition.Type
 	}
-	if definition.Payload == nil {
+	if definition.Payload == nil && !definition.MeteringOnly {
 		definition.Payload = map[string]any{"type": definition.Type}
 	}
 	if definition.BillingUnit == "" {
 		definition.BillingUnit = "call"
 	}
 	definition.UsageAliases = normalizeStringList(definition.UsageAliases)
+	definition.BillingKeys = normalizeStringList(definition.BillingKeys)
 	return definition, true
 }
 
@@ -936,6 +981,9 @@ func FindUsageDefinition(protocol string, toolName string, definitions []Definit
 }
 
 func nativeToolUsageNameMatches(definition Definition, toolName string) bool {
+	if strings.TrimSpace(definition.Key) == toolName {
+		return true
+	}
 	if strings.TrimSpace(definition.Type) == toolName {
 		return true
 	}
@@ -1044,6 +1092,7 @@ func inferToolTypeFromRawKeys(protocol string, raw map[string]any) string {
 func cloneDefinition(definition Definition) Definition {
 	definition.Payload = cloneMap(definition.Payload)
 	definition.UsageAliases = append([]string(nil), definition.UsageAliases...)
+	definition.BillingKeys = append([]string(nil), definition.BillingKeys...)
 	definition.rawTypeFieldKeys = append([]string(nil), definition.rawTypeFieldKeys...)
 	return definition
 }

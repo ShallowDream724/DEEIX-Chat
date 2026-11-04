@@ -6076,6 +6076,34 @@ definitions:
     - data
     - errorMsg
     type: object
+  ModelOptionPolicyResponse:
+    properties:
+      allowedPathsJSON:
+        type: string
+      deniedPathsJSON:
+        type: string
+      mode:
+        type: string
+      nativeTools:
+        items:
+          $ref: '#/definitions/NativeToolDefinitionResponse'
+        type: array
+    required:
+    - allowedPathsJSON
+    - deniedPathsJSON
+    - mode
+    - nativeTools
+    type: object
+  ModelOptionPolicyResponseDoc:
+    properties:
+      data:
+        $ref: '#/definitions/ModelOptionPolicyResponse'
+      errorMsg:
+        type: string
+    required:
+    - data
+    - errorMsg
+    type: object
   ModelPermissionGroupsResponse:
     properties:
       effectiveGroupIDs:
@@ -6767,6 +6795,61 @@ definitions:
     required:
     - data
     - errorMsg
+    type: object
+  NativeToolDefinitionResponse:
+    properties:
+      billable:
+        type: boolean
+      billingKeys:
+        items:
+          type: string
+        type: array
+      billingUnit:
+        type: string
+      defaultEnabled:
+        type: boolean
+      description:
+        type: string
+      label:
+        type: string
+      meteringOnly:
+        type: boolean
+      payload:
+        additionalProperties: {}
+        type: object
+      priceLabel:
+        type: string
+      priceNanousd:
+        type: integer
+      protocol:
+        type: string
+      provider:
+        type: string
+      riskLevel:
+        type: string
+      toolKey:
+        type: string
+      type:
+        type: string
+      usageAliases:
+        items:
+          type: string
+        type: array
+    required:
+    - billable
+    - billingUnit
+    - defaultEnabled
+    - description
+    - label
+    - payload
+    - priceLabel
+    - priceNanousd
+    - protocol
+    - provider
+    - riskLevel
+    - toolKey
+    - type
+    - usageAliases
     type: object
   NativeToolPricingRequest:
     properties:
@@ -23225,7 +23308,7 @@ paths:
         "200":
           description: OK
           schema:
-            $ref: '#/definitions/Envelope'
+            $ref: '#/definitions/ModelOptionPolicyResponseDoc'
       security:
       - BearerAuth: []
       summary: 查询模型 options 透传策略

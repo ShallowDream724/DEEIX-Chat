@@ -17280,7 +17280,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/Envelope"
+                            "$ref": "#/definitions/ModelOptionPolicyResponseDoc"
                         }
                     }
                 }
@@ -26924,6 +26924,47 @@ const docTemplate = `{
                 }
             }
         },
+        "ModelOptionPolicyResponse": {
+            "type": "object",
+            "required": [
+                "allowedPathsJSON",
+                "deniedPathsJSON",
+                "mode",
+                "nativeTools"
+            ],
+            "properties": {
+                "allowedPathsJSON": {
+                    "type": "string"
+                },
+                "deniedPathsJSON": {
+                    "type": "string"
+                },
+                "mode": {
+                    "type": "string"
+                },
+                "nativeTools": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/NativeToolDefinitionResponse"
+                    }
+                }
+            }
+        },
+        "ModelOptionPolicyResponseDoc": {
+            "type": "object",
+            "required": [
+                "data",
+                "errorMsg"
+            ],
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/ModelOptionPolicyResponse"
+                },
+                "errorMsg": {
+                    "type": "string"
+                }
+            }
+        },
         "ModelPermissionGroupsResponse": {
             "type": "object",
             "required": [
@@ -27896,6 +27937,82 @@ const docTemplate = `{
                 },
                 "errorMsg": {
                     "type": "string"
+                }
+            }
+        },
+        "NativeToolDefinitionResponse": {
+            "type": "object",
+            "required": [
+                "billable",
+                "billingUnit",
+                "defaultEnabled",
+                "description",
+                "label",
+                "payload",
+                "priceLabel",
+                "priceNanousd",
+                "protocol",
+                "provider",
+                "riskLevel",
+                "toolKey",
+                "type",
+                "usageAliases"
+            ],
+            "properties": {
+                "billable": {
+                    "type": "boolean"
+                },
+                "billingKeys": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "billingUnit": {
+                    "type": "string"
+                },
+                "defaultEnabled": {
+                    "type": "boolean"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "meteringOnly": {
+                    "type": "boolean"
+                },
+                "payload": {
+                    "type": "object",
+                    "additionalProperties": {}
+                },
+                "priceLabel": {
+                    "type": "string"
+                },
+                "priceNanousd": {
+                    "type": "integer"
+                },
+                "protocol": {
+                    "type": "string"
+                },
+                "provider": {
+                    "type": "string"
+                },
+                "riskLevel": {
+                    "type": "string"
+                },
+                "toolKey": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "usageAliases": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },

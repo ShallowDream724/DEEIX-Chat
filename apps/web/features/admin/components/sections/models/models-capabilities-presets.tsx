@@ -18,6 +18,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { AdminLLMAdapter, AdminLLMModelDTO } from "@/features/admin/api/llm-types";
+import { nativeToolIsRecommended } from "@/features/admin/model/native-tool-recommendations";
 import { cn } from "@/lib/utils";
 import {
   MODEL_OPTION_POLICY_PROTOCOL_LABELS,
@@ -36,6 +37,7 @@ const isPresetDialogTab = isOneOf(PRESET_DIALOG_TABS);
 type CapabilityPreset = {
   id: string;
   label?: string;
+  provider?: string;
   protocol: AdminLLMAdapter;
   payload: Record<string, unknown>;
 };
@@ -217,11 +219,11 @@ const MODEL_CAPABILITY_PRESETS: CapabilityPreset[] = [
   {
     id: "deepseek_responses",
     label: "DeepSeek Responses",
+    provider: "DeepSeek",
     protocol: "openai_responses",
     payload: {
       nativeTools: [
         { key: "deepseek.tool_search", provider: "DeepSeek", protocols: ["openai_responses"], type: "web_search", label: "DeepSeek Search", enabled: true, defaultEnabled: true, payload: { type: "web_search" } },
-        { key: "deepseek.tool_fetch", provider: "DeepSeek", protocols: ["openai_responses"], type: "web_fetch", label: "DeepSeek Fetch", enabled: true, defaultEnabled: true, payload: { type: "web_fetch" } },
       ],
     },
   },
@@ -795,8 +797,13 @@ function formatCapabilitiesJSON(value: Record<string, unknown>): string {
   return Object.keys(value).length > 0 ? JSON.stringify(value, null, 2) : "";
 }
 
-function capabilityPresetMatched(preset: CapabilityPreset, routeProtocolSet: Set<string>): boolean {
-  return routeProtocolSet.size === 0 || routeProtocolSet.has(resolveModelOptionPolicyProtocol(preset.protocol));
+function capabilityPresetMatched(preset: CapabilityPreset, routeProtocolSet: Set<string>, modelProvider: string): boolean {
+  return nativeToolIsRecommended(
+    preset.provider ?? preset.protocol.split("_")[0],
+    [resolveModelOptionPolicyProtocol(preset.protocol)],
+    routeProtocolSet,
+    modelProvider,
+  );
 }
 
 function hasModelCapabilities(value: string | null | undefined): boolean {
@@ -833,6 +840,7 @@ export function ModelCapabilitiesPresetDialog({
   models,
   currentModelID,
   routeProtocols,
+  modelProvider = "",
   t,
   commonT,
   onApply,
@@ -842,6 +850,7 @@ export function ModelCapabilitiesPresetDialog({
   models: AdminLLMModelDTO[];
   currentModelID?: number | null;
   routeProtocols: string[];
+  modelProvider?: string;
   t: (key: string, values?: Record<string, string | number>) => string;
   commonT: (key: string) => string;
   onApply: (value: string) => void;
@@ -849,8 +858,8 @@ export function ModelCapabilitiesPresetDialog({
   const [activeTab, setActiveTab] = useState<PresetDialogTab>("presets");
   const routeProtocolSet = new Set(routeProtocols.map((protocol) => resolveModelOptionPolicyProtocol(protocol)).filter(Boolean));
   const sortedPresets = [...MODEL_CAPABILITY_PRESETS].sort((left, right) => {
-    const leftMatched = capabilityPresetMatched(left, routeProtocolSet);
-    const rightMatched = capabilityPresetMatched(right, routeProtocolSet);
+    const leftMatched = capabilityPresetMatched(left, routeProtocolSet, modelProvider);
+    const rightMatched = capabilityPresetMatched(right, routeProtocolSet, modelProvider);
     if (leftMatched !== rightMatched) {
       return leftMatched ? -1 : 1;
     }
@@ -953,7 +962,7 @@ export function ModelCapabilitiesPresetDialog({
                 <div className="max-h-[min(44vh,260px)] overflow-y-auto rounded-md bg-muted/25 p-1">
                   <div className="space-y-0.5">
                     {sortedPresets.map((preset) => {
-                      const matched = capabilityPresetMatched(preset, routeProtocolSet);
+                      const matched = capabilityPresetMatched(preset, routeProtocolSet, modelProvider);
                       const selected = selectedPreset?.id === preset.id;
                       const summary = capabilityPresetSummary(preset);
                       const protocolLabel = preset.label ?? capabilityPresetProtocolLabel(preset.protocol);

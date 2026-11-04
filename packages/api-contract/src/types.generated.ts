@@ -2704,6 +2704,18 @@ export interface ModelListResponseDoc {
   errorMsg: string;
 }
 
+export interface ModelOptionPolicyResponse {
+  allowedPathsJSON: string;
+  deniedPathsJSON: string;
+  mode: string;
+  nativeTools: NativeToolDefinitionResponse[];
+}
+
+export interface ModelOptionPolicyResponseDoc {
+  data: ModelOptionPolicyResponse;
+  errorMsg: string;
+}
+
 export interface ModelPermissionGroupsResponse {
   effectiveGroupIDs: number[];
   manualGroupIDs: number[];
@@ -2990,6 +3002,25 @@ export interface NativeReadinessResponse {
 export interface NativeReadinessResponseDoc {
   data: NativeReadinessResponse;
   errorMsg: string;
+}
+
+export interface NativeToolDefinitionResponse {
+  billable: boolean;
+  billingKeys?: string[];
+  billingUnit: string;
+  defaultEnabled: boolean;
+  description: string;
+  label: string;
+  meteringOnly?: boolean;
+  payload: Record<string, any>;
+  priceLabel: string;
+  priceNanousd: number;
+  protocol: string;
+  provider: string;
+  riskLevel: string;
+  toolKey: string;
+  type: string;
+  usageAliases: string[];
 }
 
 export interface NativeToolPricingRequest {
@@ -11759,7 +11790,7 @@ export namespace Settings {
     export type RequestQuery = {};
     export type RequestBody = never;
     export type RequestHeaders = {};
-    export type ResponseBody = Envelope;
+    export type ResponseBody = ModelOptionPolicyResponseDoc;
   }
 }
 

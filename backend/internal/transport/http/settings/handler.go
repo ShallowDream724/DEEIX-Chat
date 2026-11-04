@@ -225,7 +225,7 @@ func brandingResponse(cfg config.Config) BrandingResponse {
 // @Tags settings
 // @Produce json
 // @Security BearerAuth
-// @Success 200 {object} response.Envelope
+// @Success 200 {object} ModelOptionPolicyResponseDoc
 // @Router /settings/model-option-policy [get]
 func (h *Handler) GetModelOptionPolicy(c *gin.Context) {
 	items, err := h.service.RuntimeValuesByNamespace(c.Request.Context(), "chat")

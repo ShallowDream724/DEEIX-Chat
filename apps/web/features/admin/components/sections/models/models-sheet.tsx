@@ -609,7 +609,7 @@ export function ModelSheet({ open, mode, target, models, vendors, displayGroups,
       contextWindowOverride,
       routeProtocols,
       bindRows,
-      normalizeCapabilities: (capabilitiesJSON) => normalizeModelCapabilitiesJSON(capabilitiesJSON, nativeTools, routeProtocols),
+      normalizeCapabilities: (capabilitiesJSON) => normalizeModelCapabilitiesJSON(capabilitiesJSON, nativeTools, routeProtocols, form.vendor),
       onCreated: (model) => {
         setForm(buildInitialState(model));
         setBindRows([createModelSourceBindDraftRow()]);
@@ -885,6 +885,7 @@ export function ModelSheet({ open, mode, target, models, vendors, displayGroups,
                       currentModelID={target?.id ?? null}
                       nativeTools={nativeTools}
                       routeProtocols={routeProtocols}
+                      modelProvider={form.vendor}
                       t={t}
                       commonT={commonT}
                       triggerVariant="secondary"

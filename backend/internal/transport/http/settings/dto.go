@@ -101,6 +101,12 @@ type ModelOptionPolicyResponse struct {
 	NativeTools      []NativeToolDefinitionResponse `json:"nativeTools"`
 }
 
+// ModelOptionPolicyResponseDoc is the response envelope used by Swagger.
+type ModelOptionPolicyResponseDoc struct {
+	ErrorMsg string                    `json:"errorMsg"`
+	Data     ModelOptionPolicyResponse `json:"data"`
+}
+
 // NativeToolDefinitionResponse 返回可由后台开启的官方原生工具定义。
 type NativeToolDefinitionResponse struct {
 	Protocol       string         `json:"protocol"`
@@ -117,6 +123,8 @@ type NativeToolDefinitionResponse struct {
 	PriceLabel     string         `json:"priceLabel"`
 	RiskLevel      string         `json:"riskLevel"`
 	UsageAliases   []string       `json:"usageAliases"`
+	MeteringOnly   bool           `json:"meteringOnly,omitempty"`
+	BillingKeys    []string       `json:"billingKeys,omitempty"`
 }
 
 // MCPPolicyResponse 返回聊天侧需要遵守的 MCP 工具运行策略。
@@ -203,6 +211,10 @@ func toSettingResponseMap(groups map[string][]appsettings.SettingItem) map[strin
 func toNativeToolDefinitionResponses(items []nativetool.Definition) []NativeToolDefinitionResponse {
 	results := make([]NativeToolDefinitionResponse, 0, len(items))
 	for _, item := range items {
+		payload := item.Payload
+		if payload == nil {
+			payload = map[string]any{}
+		}
 		results = append(results, NativeToolDefinitionResponse{
 			Protocol:       item.Protocol,
 			Provider:       item.Provider,
@@ -210,7 +222,7 @@ func toNativeToolDefinitionResponses(items []nativetool.Definition) []NativeTool
 			ToolKey:        item.Key,
 			Label:          item.Label,
 			Description:    item.Description,
-			Payload:        item.Payload,
+			Payload:        payload,
 			DefaultEnabled: item.DefaultEnabled,
 			Billable:       item.Billable,
 			BillingUnit:    item.BillingUnit,
@@ -218,6 +230,8 @@ func toNativeToolDefinitionResponses(items []nativetool.Definition) []NativeTool
 			PriceLabel:     item.PriceLabel,
 			RiskLevel:      item.RiskLevel,
 			UsageAliases:   item.UsageAliases,
+			MeteringOnly:   item.MeteringOnly,
+			BillingKeys:    item.BillingKeys,
 		})
 	}
 	return results

@@ -2,6 +2,37 @@ package nativetool
 
 import "testing"
 
+func TestDeepSeekFetchRemainsMeteredWithoutAnInputTool(t *testing.T) {
+	for _, toolType := range []string{"web_fetch", "tool_fetch"} {
+		if _, _, ok := PayloadFromOption("openai_responses", map[string]any{"type": toolType}); ok {
+			t.Fatalf("metered fetch must not create input tool %q", toolType)
+		}
+	}
+	var fetch Definition
+	for _, definition := range Definitions() {
+		if definition.Key == "deepseek.tool_fetch" {
+			fetch = definition
+		}
+	}
+	if !fetch.MeteringOnly || CanonicalPayload(fetch, map[string]any{"type": "web_fetch"}) != nil {
+		t.Fatalf("fetch must be metering-only: %#v", fetch)
+	}
+	legacy := DefinitionsFromCapabilitiesJSON(`{"nativeTools":[{"key":"deepseek.tool_fetch","protocol":"openai_responses","type":"web_fetch","payload":{"type":"web_fetch"}}]}`)
+	if len(legacy) != 1 || !legacy[0].MeteringOnly || legacy[0].Payload != nil {
+		t.Fatalf("legacy capabilities recreated an input tool: %#v", legacy)
+	}
+	if len(MergeDefinitions(legacy)) != len(Definitions()) {
+		t.Fatal("legacy fetch duplicated the canonical billing identity")
+	}
+	overrides := map[string]PricingOverride{"deepseek.tool_search": {PriceNanousd: 11}, "deepseek.tool_fetch": {PriceNanousd: 7}}
+	for key, amount := range map[string]int64{"deepseek.tool_search": 11, "deepseek.tool_fetch": 7} {
+		price, ok := UsagePriceForToolWithOverrides("openai_responses", key, Definitions(), overrides)
+		if !ok || price.Provider != "deepseek" || price.NanousdPerCall != amount {
+			t.Fatalf("wrong provider price for %s: %#v, %v", key, price, ok)
+		}
+	}
+}
+
 func TestPayloadFromOptionPreservesToolParametersAndFixesIdentity(t *testing.T) {
 	_, payload, ok := PayloadFromOption("openai_responses", map[string]any{
 		"type": "shell",

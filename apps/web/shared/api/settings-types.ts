@@ -43,4 +43,6 @@ export type NativeToolDefinition = {
   priceLabel: string;
   riskLevel: string;
   usageAliases: string[];
+  meteringOnly?: boolean;
+  billingKeys?: string[];
 };
