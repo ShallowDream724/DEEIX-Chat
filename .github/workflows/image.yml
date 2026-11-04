@@ -163,10 +163,15 @@ jobs:
           export DATA_ENCRYPTION_KEY="$(openssl rand -hex 32)"
           docker run -d --name deeix-image-smoke -p 127.0.0.1:18080:8080 \
             -e DATABASE_DRIVER=sqlite -e SQLITE_PATH=/app/data/smoke.db \
-            -e CACHE_DRIVER=memory -e JWT_SECRET -e DATA_ENCRYPTION_KEY "$image"
+            -e CACHE_DRIVER=memory -e JWT_SECRET -e DATA_ENCRYPTION_KEY \
+            -e PUBLIC_API_BASE_URL=https://smoke.invalid -e PUBLIC_WEB_BASE_URL=https://smoke.invalid \
+            -e CORS_ALLOW_ORIGIN=https://smoke.invalid "$image"
           ready=false
           for attempt in $(seq 1 60); do
-            if curl -fsS http://127.0.0.1:18080/healthz >/dev/null; then ready=true; break; fi
+            if curl -fsS http://127.0.0.1:18080/healthz >/dev/null 2>&1; then ready=true; break; fi
+            if [[ "$(docker inspect deeix-image-smoke --format '{{.State.Running}}')" != true ]]; then
+              docker logs deeix-image-smoke; exit 1
+            fi
             sleep 1
           done
           if [[ "$ready" != true ]]; then docker logs deeix-image-smoke; exit 1; fi
