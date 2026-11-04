@@ -4,7 +4,7 @@
 
 ## 职责与流程
 
-- 原生资格和请求预算统一由会话服务的 `native_input.go` 判断。客户端不维护厂商能力或容量规则。
+- 原生资格由会话服务的 `native_input.go` 判断；预算来自共享的 `shared/inputlimits` 解析器，最终由LLM端口与传输共同校验。客户端不维护独立厂商容量规则。管理入口与继承见[附件输入控制](attachment-input-controls.md)。
 - `POST /api/v1/files/native-readiness` 是只读预检：复用模型权限、文件所有权和个人渠道授权；平台模型取所有候选渠道的能力交集，不选择 API Key、不占用熔断探针、不发起模型请求。
 - 发送时按实际渠道重新判断，并在等待解析之前读取有界原文件。读取成功后跳过该文件的文本等待、全文和 RAG 注入；独立知识库检索保持原有行为。
 - 后台解析照常运行。原生资格是当前模型、会话和附件组合的临时状态，不写入文件记录，也不把文件的解析状态伪造为完成。
@@ -28,12 +28,14 @@
 | 官方 OpenAI Responses / Chat Completions PDF | 单 PDF 小于 50,000,000 字节；原生文件合计最多 50,000,000 字节；不额外设置统一 PDF 页数限制 |
 | OpenAI Chat Completions 音频 | 保留原有音频格式与非 PDF 的 14 MiB 保守限制 |
 | Gemini GenerateContent PDF | 单 PDF 最多 50,000,000 字节；PDF 合计最多 **200 页**，这是本扩展的保守限制 |
-| Gemini GenerateContent 全部内联输入 | 原件预算按 Base64 膨胀计算并预留结构空间；最终完整 JSON 请求体不得超过 100,000,000 字节，包含历史、图片、工具和文本 |
-| 其他协议 | 保留原有保守预算 |
+| Gemini GenerateContent 全部内联输入 | 不再使用旧74.2MB原件推导总额；预选检查最低Base64大小，最终完整JSON请求体不得超过100,000,000字节，包含历史、图片、工具和文本 |
+| 其他协议 | 使用可配置的协议/上游预算；不再统一限制5个文件，第三方默认仍保留14MiB原生总量、8MiB PDF保护。官方Anthropic另按已确认模型窗口条件校验 |
 
 有页数限制的路径遇到页数未知的 PDF，复用已有内置 PDF 页树探测，不执行 OCR 或全文提取。探测失败时不声明原生可用。原件读取同时核对实际字节数，避免数据库元信息与存储对象不一致而绕过预算。
 
-上述预算不绕过后台单文件上传限制、用户累计存储配额或模型上下文限制。Gemini 的 100 MB 是编码后请求体上限，不等于允许 100 MB 原始音频。
+上述默认预算可在管理员文件与检索中管理，供应商硬限制不随运营值放宽。它们不绕过后台单文件上传限制、用户累计存储配额或模型上下文限制。Gemini的100MB是编码后请求体预算，不等于允许100MB原始音频。
+
+摘要只替代文字，当前分支的祖先附件引用独立保留。预算裁剪后的文件展示按实际内容块的内部来源ID核对，包含历史图片；文件同名不合并。原生文件缓存只避免同次发送和路由尝试的重复读取，不代表供应商缓存命中。可靠上游输入观测用于同模型、同文件及同相关配置的后续上下文校准。
 
 依据：[OpenAI 文件输入](https://developers.openai.com/api/docs/guides/file-inputs#usage-considerations)、[Gemini 文件输入](https://ai.google.dev/gemini-api/docs/generate-content/file-input-methods)、[Gemini PDF](https://ai.google.dev/gemini-api/docs/generate-content/document-processing)、[Google 内联容量说明](https://blog.google/innovation-and-ai/technology/developers-tools/gemini-api-new-file-limits/)。
 
