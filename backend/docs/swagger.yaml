@@ -6744,8 +6744,19 @@ definitions:
         items:
           $ref: '#/definitions/NativeFileReadinessResponse'
         type: array
+      issues:
+        items:
+          $ref: '#/definitions/AttachmentReadinessIssueResponse'
+        type: array
+      limits:
+        $ref: '#/definitions/AttachmentReadinessLimitsResponse'
+      messageFileCount:
+        type: integer
     required:
     - files
+    - issues
+    - limits
+    - messageFileCount
     type: object
   NativeReadinessResponseDoc:
     properties:
@@ -6772,19 +6783,8 @@ definitions:
     type: object
   NativeToolPricingResponse:
     properties:
-      issues:
-        items:
-          $ref: '#/definitions/AttachmentReadinessIssueResponse'
-        type: array
-      limits:
-        $ref: '#/definitions/AttachmentReadinessLimitsResponse'
-      messageFileCount:
-        type: integer
       billable:
         type: boolean
-    - issues
-    - limits
-    - messageFileCount
       description:
         type: string
       label:
@@ -23591,6 +23591,10 @@ paths:
           description: Bad Request
           schema:
             $ref: '#/definitions/ConversationErrorDoc'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
         "500":
           description: Internal Server Error
           schema:
@@ -23674,10 +23678,6 @@ paths:
     post:
       consumes:
       - application/json
-        "413":
-          description: Request Entity Too Large
-          schema:
-            $ref: '#/definitions/ConversationErrorDoc'
       parameters:
       - description: 组件内容
         in: body

@@ -2982,6 +2982,9 @@ export interface NativeReadinessRequest {
 
 export interface NativeReadinessResponse {
   files: NativeFileReadinessResponse[];
+  issues: AttachmentReadinessIssueResponse[];
+  limits: AttachmentReadinessLimitsResponse;
+  messageFileCount: number;
 }
 
 export interface NativeReadinessResponseDoc {
@@ -2994,9 +2997,6 @@ export interface NativeToolPricingRequest {
   priceLabel?: string;
   priceNanousd?: number;
   toolKey?: string;
-  issues: AttachmentReadinessIssueResponse[];
-  limits: AttachmentReadinessLimitsResponse;
-  messageFileCount: number;
   unit?: string;
 }
 

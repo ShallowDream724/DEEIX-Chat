@@ -27841,6 +27841,17 @@ const docTemplate = `{
                 "model": {
                     "type": "string",
                     "maxLength": 128
+                },
+                "parentMessagePublicID": {
+                    "type": "string",
+                    "maxLength": 32
+                },
+                "selectedToolIDs": {
+                    "type": "array",
+                    "maxItems": 128,
+                    "items": {
+                        "type": "integer"
+                    }
                 }
             }
         },
@@ -27858,6 +27869,18 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/NativeFileReadinessResponse"
                     }
+                },
+                "issues": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/AttachmentReadinessIssueResponse"
+                    }
+                },
+                "limits": {
+                    "$ref": "#/definitions/AttachmentReadinessLimitsResponse"
+                },
+                "messageFileCount": {
+                    "type": "integer"
                 }
             }
         },
@@ -27885,17 +27908,6 @@ const docTemplate = `{
                 "priceLabel": {
                     "type": "string"
                 },
-                },
-                "parentMessagePublicID": {
-                    "type": "string",
-                    "maxLength": 32
-                },
-                "selectedToolIDs": {
-                    "type": "array",
-                    "maxItems": 128,
-                    "items": {
-                        "type": "integer"
-                    }
                 "priceNanousd": {
                     "type": "integer"
                 },
@@ -27910,18 +27922,6 @@ const docTemplate = `{
         "NativeToolPricingResponse": {
             "type": "object",
             "required": [
-                },
-                "issues": {
-                    "type": "array",
-                    "items": {
-                        "$ref": "#/definitions/AttachmentReadinessIssueResponse"
-                    }
-                },
-                "limits": {
-                    "$ref": "#/definitions/AttachmentReadinessLimitsResponse"
-                },
-                "messageFileCount": {
-                    "type": "integer"
                 "billable",
                 "description",
                 "label",
