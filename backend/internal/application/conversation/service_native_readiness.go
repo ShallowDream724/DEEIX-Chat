@@ -44,8 +44,9 @@ type NativeReadinessResult struct {
 	Issues           []AttachmentReadinessIssue
 }
 
-// GetNativeReadiness checks route policy against owned file metadata. It never
-// reads attachment contents, resolves a billing route, or waits for extraction.
+// GetNativeReadiness checks route policy against owned file metadata. Missing
+// PDF page counts use the same metadata-only probe as sending; text extraction,
+// OCR and billing-route resolution are never needed for native readiness.
 func (s *Service) GetNativeReadiness(ctx context.Context, input NativeReadinessInput) (*NativeReadinessResult, error) {
 	modelName := strings.TrimSpace(input.Model)
 	var conversationID uint
@@ -114,6 +115,7 @@ func (s *Service) GetNativeReadiness(ctx context.Context, input NativeReadinessI
 		}
 	}
 	currentCount := len(current)
+	metadataCache := newNativeInputCache()
 	for i, route := range routes {
 		policy := resolveNativeInputPolicy(route, cfg.InputLimitsJSON)
 		policy.HTTPS = promptPolicyForRoute(route).OriginalAttachments && s.attachmentHTTPSAvailable()
@@ -135,6 +137,13 @@ func (s *Service) GetNativeReadiness(ctx context.Context, input NativeReadinessI
 		}
 		if len(attachments) == 0 {
 			continue
+		}
+		// An extraction failure must not hide an otherwise usable original.
+		// Keep the page budget, but obtain missing page-tree metadata independently
+		// of text extraction. Reuse resolved counts across the preview routes and
+		// skip storage reads when known count/byte limits already reject the input.
+		if _, rejected := selectNativeInputsWithRejections(attachments, policy.withoutPDFPageBudget()); len(rejected) == 0 {
+			attachments = s.resolveNativePDFPageCounts(ctx, attachments, policy, metadataCache)
 		}
 		reasons, routeIssues := previewRouteAttachmentMetadata(attachments, policy, usesImageProcessor, canUseRAG)
 		if count > 0 && currentCount > count {
@@ -208,8 +217,8 @@ func previewRouteAttachmentMetadata(attachments []AttachmentInput, policy native
 				if att.PageCount > 0 {
 					pdfPages.add(att, int64(att.PageCount))
 				} else if policy.InputLimits.PDFPages > 0 {
-					// No metadata for this page count. Keep waiting for
-					// ordinary readiness; the send path can inspect the PDF.
+					// A page budget cannot be verified if even the independent
+					// metadata probe could not read the page tree.
 					reasons[att.FileID] = "unavailable"
 				}
 				if limit := policy.InputLimits.PDFSingleBytes; limit > 0 && att.FileSize > limit {

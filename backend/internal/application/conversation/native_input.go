@@ -428,11 +428,12 @@ func validateNativeSelection(attachments []AttachmentInput, policy nativeInputPo
 // nativeInputCache 缓存一次发送内已读取的原生文件（按 fileID），读取失败也会记录。
 // 同一次发送中，处理过程展示、首条路由与故障转移路由共用它，三者看到的原生决定一致，也不会重复读取存储。
 type nativeInputCache struct {
-	parts map[string]*llm.ContentPart
+	parts    map[string]*llm.ContentPart
+	pdfPages map[string]int // Includes failed probes (0), scoped to one preview/send.
 }
 
 func newNativeInputCache() *nativeInputCache {
-	return &nativeInputCache{parts: make(map[string]*llm.ContentPart)}
+	return &nativeInputCache{parts: make(map[string]*llm.ContentPart), pdfPages: make(map[string]int)}
 }
 
 // nativeInputs 是某条路由上的原生输入结果。
@@ -531,10 +532,14 @@ func (s *Service) resolveNativePDFPageCounts(ctx context.Context, attachments []
 	}
 	result := append([]AttachmentInput(nil), attachments...)
 	for i, att := range result {
-		if att.PageCount > 0 || nativeInputKindOf(att) != nativeInputPDF || !isNativeInputCandidate(att) || (policy.budget().PDFSingleBytes > 0 && att.FileSize > policy.budget().PDFSingleBytes) {
+		if att.PageCount > 0 || nativeInputKindOf(att) != nativeInputPDF || !policy.accepts(att) || !isNativeInputCandidate(att) || (policy.budget().PDFSingleBytes > 0 && att.FileSize > policy.budget().PDFSingleBytes) {
 			continue
 		}
 		if cache != nil {
+			if pages, probed := cache.pdfPages[strings.TrimSpace(att.FileID)]; probed {
+				result[i].PageCount = pages
+				continue
+			}
 			if part := cache.parts[strings.TrimSpace(att.FileID)]; part != nil && part.PageCount > 0 {
 				result[i].PageCount = part.PageCount
 				continue
@@ -544,6 +549,15 @@ func (s *Service) resolveNativePDFPageCounts(ctx context.Context, attachments []
 			continue
 		}
 		pages, err := s.extractSvc.ProbeStoredPDFPageCount(ctx, att.StoragePath)
+		if cache != nil {
+			if cache.pdfPages == nil {
+				cache.pdfPages = make(map[string]int)
+			}
+			cache.pdfPages[strings.TrimSpace(att.FileID)] = 0
+			if err == nil && pages > 0 {
+				cache.pdfPages[strings.TrimSpace(att.FileID)] = pages
+			}
+		}
 		if err == nil && pages > 0 {
 			result[i].PageCount = pages
 			if cache != nil && cache.parts[strings.TrimSpace(att.FileID)] != nil {

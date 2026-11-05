@@ -452,6 +452,11 @@ func (s *Service) processClaimedFile(
 	extractCtx, extractCancel := context.WithTimeout(runCtx, extractTimeout)
 	extractResult, extractErr := s.extractTextForProcessing(extractCtx, *fileObj)
 	extractCancel()
+	// Page metadata belongs to the original, even when text extraction fails or
+	// produces no text. Native input checks still need it to enforce page limits.
+	if extractResult.PageCount > 0 {
+		fileObj.PageCount = extractResult.PageCount
+	}
 	if extractErr != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -1232,6 +1237,7 @@ func (s *Service) markClaimedFileProcessingEmpty(
 		ProcessingStatus: "ready",
 		ProcessingReady:  false,
 		ExtractStatus:    domainconversation.FileSubprocessStatusEmpty,
+		PageCount:        fileObj.PageCount,
 		RAGReady:         false,
 		RAGReason:        reason,
 		ExtractorVersion: s.version(),
@@ -1276,6 +1282,7 @@ func (s *Service) failedFileProcessingState(
 		ProcessingStatus: "failed",
 		ProcessingReady:  false,
 		ExtractStatus:    "failed",
+		PageCount:        fileObj.PageCount,
 		RAGReady:         false,
 		RAGReason:        code,
 		ErrorCode:        code,

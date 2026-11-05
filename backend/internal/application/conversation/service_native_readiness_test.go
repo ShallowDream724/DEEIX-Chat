@@ -193,6 +193,73 @@ type nativePDFMetadataParser struct {
 
 func (p *nativePDFMetadataParser) DetectPDFPageCount(string) int { p.calls++; return p.pages }
 
+func TestNativeReadinessProbesPDFWithoutWaitingForTextExtraction(t *testing.T) {
+	store := objectstorage.NewLocal(t.TempDir())
+	if _, err := store.Put(t.Context(), "files/scan", bytes.NewReader([]byte("pdf-page-tree")), objectstorage.PutOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	provider := &conversationTestStoreProvider{store: store}
+	for _, protocol := range []string{llm.AdapterChat01ChatCompletions, llm.AdapterGoogleGenerateContent, llm.AdapterOpenAIResponses} {
+		t.Run(protocol, func(t *testing.T) {
+			parser := &nativePDFMetadataParser{pages: 6}
+			extract := appextraction.NewServiceWithRuntime(config.NewRuntime(config.Config{}), appextraction.EngineFactories{Builtin: parser})
+			extract.SetObjectStoreProvider(provider)
+			route := &channel.ResolvedRoute{Protocol: protocol, BaseURL: "https://api.openai.com/v1", CatalogInputModalities: []string{"pdf"}}
+			file := model.FileObject{FileID: "scan", FileCategory: "pdf", SizeBytes: 13, StoragePath: "files/scan", MimeType: "application/pdf"}
+			repo := &nativeReadinessRepo{owner: 1, files: []model.FileObject{file}}
+			service := &Service{cfg: config.NewRuntime(config.Config{InputLimitsJSON: `{"defaults":{"pdfPages":6}}`}), repo: repo,
+				routeResolver: &nativeReadinessRoutes{routes: []*channel.ResolvedRoute{route, route}}, extractSvc: extract, storeProvider: provider}
+			input := NativeReadinessInput{UserID: 1, Model: "native", FileIDs: []string{"scan"}}
+			for _, status := range []string{"pending", "extracting", "failed", "empty"} {
+				repo.files[0].ProcessingStatus, repo.files[0].ExtractStatus = status, status
+				parser.calls = 0
+				got, err := service.GetNativeReadiness(t.Context(), input)
+				if err != nil || !got.Files[0].Eligible || len(got.Issues) != 0 || parser.calls != 1 {
+					t.Fatalf("%s must allow original and share page metadata across routes: %#v, %v, probes=%d", status, got, err, parser.calls)
+				}
+			}
+			for _, pages := range []int{7, 0} {
+				parser.pages = pages
+				parser.calls = 0
+				got, err := service.GetNativeReadiness(t.Context(), input)
+				if err != nil || got.Files[0].Eligible || parser.calls != 1 {
+					t.Fatalf("page budget must remain enforced with %d pages, without retrying the same probe per route: %#v, %v, probes=%d", pages, got, err, parser.calls)
+				}
+			}
+			parser.calls = 0
+			repo.files[0].SizeBytes = 200 * 1024 * 1024
+			got, err := service.GetNativeReadiness(t.Context(), input)
+			if err != nil || got.Files[0].Eligible || parser.calls != 0 {
+				t.Fatalf("known byte rejection must avoid page reads: %#v, %v, probes=%d", got, err, parser.calls)
+			}
+		})
+	}
+}
+
+func TestChat01ReadinessAndSendIgnoreNonPDFExtractionFailure(t *testing.T) {
+	for _, tc := range []struct{ name, category, mime string }{
+		{"voice.mp3", "audio", "audio/mpeg"}, {"clip.mp4", "video", "video/mp4"},
+		{"report.docx", "word", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+		{"program.exe", "other", "application/vnd.microsoft.portable-executable"}, {"sample.bin", "other", "application/octet-stream"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			route := &channel.ResolvedRoute{Protocol: llm.AdapterChat01ChatCompletions}
+			file := model.FileObject{FileID: "original", FileName: tc.name, FileCategory: tc.category, MimeType: tc.mime, StoragePath: "unopened", SizeBytes: 400, ProcessingStatus: "failed", ExtractStatus: "failed"}
+			service := &Service{cfg: config.NewRuntime(config.Config{}), repo: nativeReadinessRepo{owner: 1, files: []model.FileObject{file}},
+				routeResolver: &nativeReadinessRoutes{routes: []*channel.ResolvedRoute{route}}, attachmentDelivery: &deliveryRecorder{}}
+			got, err := service.GetNativeReadiness(t.Context(), NativeReadinessInput{UserID: 1, Model: "chat01", FileIDs: []string{"original"}})
+			if err != nil || !got.Files[0].Eligible || len(got.Issues) != 0 {
+				t.Fatalf("failed parsing cannot block the original: %#v, %v", got, err)
+			}
+			att := AttachmentInput{FileID: file.FileID, FileName: tc.name, FileCategory: tc.category, MimeType: tc.mime, StoragePath: file.StoragePath, FileSize: file.SizeBytes, Current: true, ProcessingStatus: "failed"}
+			native := service.resolveNativeInputs(t.Context(), route, []AttachmentInput{att}, nil)
+			if err := validateRequiredNativeInputs([]AttachmentInput{att}, native); err != nil || native.Parts[file.FileID].Reference == nil {
+				t.Fatalf("ready original must reach the send path without a parser: %#v, %v", native, err)
+			}
+		})
+	}
+}
+
 func TestNativeUnknownPDFPagesUseMetadataOnly(t *testing.T) {
 	store := objectstorage.NewLocal(t.TempDir())
 	data := []byte("pdf-page-tree")
