@@ -148,3 +148,21 @@ Responses 确实返回标准事件封装，包括 created、in_progress、output
 HTTPS 方案指 URL 放在 `file_url.url` / `input_file.file_url` 附件字段，由 Chat01 服务端取文件，不是放进提示词让模型自行浏览。但该服务端必然能看到 URL 域名。文件名方案尚未确认前不强定 Base64 为默认；也不因 `.bin` 就自动开放站点私有内容地址。项目现有内容路由需要用户认证，未提供短期 presign 接口；独立存储地址、限时授权或 Chat01 直接二进制上传能力均需单独设计/验证。
 
 原始结果在 `.cache/chat01-probes/20261104/filename-probe/`，核验文件为 `pptx-verification.json`。未开放本站文件内容路由、未使用站点域名；生成产物来自 Chat01 返回的 CDN 地址，抓包和二进制文件仅本地留存，未提交 Git。没有实施生产改动。
+
+## 本机 HTTPS 回取验证（2026-11-05）
+
+用户明确允许使用域名，并要求核验本机 HTTPS 可行性。本次独立服务只允许读取此前生成的 `transport.docx`（36,680 字节），不接入 DEEIX 的配置、后台、数据库或用户文件库。
+
+本地临时 CA 只用于客户端指定验证，未导入系统信任库。10 项检查通过：有效证书和原件完整性、HEAD 长度、缺签名、篡改签名、过期签名、访问其他文件、编码路径穿越、访问后台路径、不受信证书拒绝，以及撤销开关生效。撤销开关是原型验证，不代表已实现生产库删除联动。读取使用 64 KiB 缓冲。
+
+公网验证使用 [localhost.run HTTP 隧道](https://localhost.run/docs/http-tunnels) 的 HTTPS 入口，经 SSH 只转发独立 loopback 单文件服务；公网 TLS 在隧道端终止，隧道到本机经 SSH 加密，不声称为本机证书的端到端 TLS passthrough。使用隔离的临时 known_hosts，不修改用户 SSH 配置，不开放 3100/8080 应用端口。
+
+- 本地客户端通过公网 HTTPS 下载，SHA-256 与原件一致；同一公网入口访问应用后台路径为 404。
+- 一次 `gpt-6-thinking` Chat Completions 调用，附件地址仅放在 `file_url.url`，提示词不含预期哈希或随机标识。
+- 请求后约 2.1 秒，本地记录到一次额外的 GET 200，User-Agent 为 `got`；最终回答于约 30.5 秒结束，API HTTP 200 与 `[DONE]` 均收到。
+- 上游报告的 36,680 字节、SHA-256 `b287f3559bc5b92e2705c3fac1c042af8003fe35335f2319b01b6a932ef2bc21` 和 DOCX 随机标识三者全部匹配。上游挂载名为随机 `.docx`。
+- 测试结束已停止两个本地读取服务及 SSH 隧道，移除临时取件凭证文件、TLS 私钥；再次访问隧道返回 502，不能继续读取样件。原始 API 密钥未写入抓包或源码。
+
+本次按用户报价增加 2 分；累计 12 次模型请求、11 次 HTTP 200，成功请求按单价计 20 分，全部请求保守预留 22 分（其中一次既往 400 的实际扣费未知）。未调用 Pro，无付费请求自动重试。
+
+结论：Chat01 不限于读取自家 CDN，这次可以通过短期签名 HTTPS URL 获取本机原件。此结果不证明所有大文件、长任务、Range 行为、部署反代或生产权限链已经通过。私有证据在 `.cache/chat01-probes/20261105/https-proof/` 的 `result.json`、`client-result.json`、`cleanup-result.json` 与 `response.sse`；公开文档不保存可用凭证。生产授权服务仍待实施，设计见 [渠道方案](chat01-provider-design.md)。
