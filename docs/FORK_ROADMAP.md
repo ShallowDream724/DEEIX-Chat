@@ -13,7 +13,7 @@
 
 后续排查新增：用户反馈 MinerU 最近任务结果无法接回，怀疑上游字段/接口变化；待 Chat01 主线完成后核对任务提交、轮询状态、结果字段和下载解包。尚无证据确认上游变更，不把本次已关闭 MinerU 的 PDF 问题归因于它。
 
-本轮已发布：`ghcr.io/shallowdream724/deeix-chat:latest`（linux/amd64）。源码 `1248f253ea1074e284646fc6a0eff2eb9834d6ea`，镜像摘要 `sha256:61dd660ad0c5949b316764afc32eadf6f718aaa748f4dee525d83189cf0b0a66`；[Image 构建](https://github.com/ShallowDream724/DEEIX-Chat/actions/runs/42028947015) 的容器启动、健康端点、前端页面和 revision 检查通过。匿名读取 GHCR 元数据确认 `latest` 与 `sha-1248f253ea1074e284646fc6a0eff2eb9834d6ea` 一致。沿用现有数据库与存储卷，本轮不改数据库表结构。
+最新整合版已发布：`ghcr.io/shallowdream724/deeix-chat:latest`（linux/amd64）。源码 `4c1575cdc8d4e78ee3f1ecf7cd72d778da935312`，镜像摘要 `sha256:2152c6c69d0330e9f4132656adb963ed3653ac1c81b39bb59ba7bbf35986cfa6`；[Image 构建](https://github.com/ShallowDream724/DEEIX-Chat/actions/runs/42067998382) 的构建、容器冒烟检查和合并发布均通过。匿名读取 GHCR 元数据确认 `latest` 与 `sha-4c1575cdc8d4e78ee3f1ecf7cd72d778da935312` 一致，镜像配置 revision 和 linux/amd64 架构匹配。包含上述 PDF 原生就绪、附件标签连续性、公共文件类型识别和密集代码分流修复。沿用现有数据库与存储卷，本轮不改数据库表结构。
 
 用户已在方案讨论后授权实施，首轮代码已本地提交并启动前后端供用户试用。当前阶段为真实页面回归：用户随手测试暴露了计时/Answer 标记泄漏、过程与正文混排、工具内部字段外露以及图表组件遗漏。2026-11-05 用户进一步授权在补测、修复并稳定后发布自有 `latest` 镜像；在验收完成前不更新生产标签。先前方案见 [Chat01 首轮实施计划](chat01-implementation-plan.md)，以下历史探测记录不覆盖该最新授权。
 
