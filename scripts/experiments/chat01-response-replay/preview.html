@@ -1,0 +1,115 @@
+<div id="chat01-response-review">
+  <style>
+    #chat01-response-review { color:var(--foreground); }
+    #chat01-response-review .space { margin-top:calc(var(--font-size-base) * 1); }
+    #chat01-response-review .row { display:flex; align-items:center; flex-wrap:wrap; gap:calc(var(--font-size-base) * .6); }
+    #chat01-response-review .grow { flex:1; min-width:0; }
+    #chat01-response-review .status { color:var(--muted-foreground); }
+    #chat01-response-review .content { overflow-wrap:anywhere; }
+    #chat01-response-review .content p { margin:calc(var(--font-size-base) * .65) 0; white-space:pre-wrap; }
+    #chat01-response-review .content h3 { margin:calc(var(--font-size-base) * .8) 0 calc(var(--font-size-base) * .4); }
+    #chat01-response-review .content pre, #chat01-response-review .raw { white-space:pre-wrap; overflow-wrap:anywhere; word-break:break-word; }
+    #chat01-response-review .content code { white-space:pre-wrap; }
+    #chat01-response-review .stage { padding-block:calc(var(--font-size-base) * .6); border-bottom:1px solid var(--border); }
+    #chat01-response-review .process { margin-block:calc(var(--font-size-base) * .6); }
+    #chat01-response-review summary { color:var(--muted-foreground); }
+    #chat01-response-review .resource { display:flex; align-items:center; gap:calc(var(--font-size-base) * .6); padding-block:calc(var(--font-size-base) * .5); }
+    #chat01-response-review .link { text-decoration:underline; text-underline-offset:3px; }
+    #chat01-response-review .kind { font-weight:500; }
+    #chat01-response-review .file-list { margin-top:calc(var(--font-size-base) * 1); }
+    #chat01-response-review .file-list .resource + .resource { border-top:1px solid var(--border); }
+    #chat01-response-review .audit { display:flex; gap:calc(var(--font-size-base) * 1); flex-wrap:wrap; }
+    @media (max-width:480px) { #chat01-response-review .row > .grow { flex-basis:100%; } }
+  </style>
+  <div class="viz-controls">
+    <label class="form-label">真实抓包样本<select id="c01-case" class="form-select"></select></label>
+  </div>
+  <div class="row space">
+    <button id="c01-play" class="btn btn-primary" type="button">重新回放</button>
+    <button id="c01-end" class="btn" type="button">查看完整结果</button>
+    <span class="text-small status">加速回放</span>
+  </div>
+  <label class="form-label space" for="c01-position">接收进度 <span id="c01-progress" class="tabular-nums"></span></label>
+  <input class="form-range" id="c01-position" type="range" min="0" step="1" value="0">
+  <div class="audit text-small status" id="c01-audit" aria-live="polite"></div>
+  <div id="c01-output" class="content space"></div>
+  <details class="space"><summary>对照原始返回</summary><pre class="raw text-small" id="c01-raw"></pre></details>
+  <details class="space"><summary>分段标记与处理记录</summary><div id="c01-control" class="text-small content"></div></details>
+  <script>
+  (() => {
+    __NORMALIZER__
+    const cases = __CASES__;
+    const root = document.getElementById("chat01-response-review");
+    const $ = id => root.querySelector(id);
+    const picker = $("#c01-case"), slider = $("#c01-position"), play = $("#c01-play");
+    let active = 0, index = 0, parser, received = "", timer = null;
+    const labels = {reasoning:"思考",python:"代码执行",shell:"命令执行",search:"联网搜索", "tool-note":"工具记录", meta:"处理耗时"};
+    function text(tag, value, cls) { const e=document.createElement(tag); e.textContent=value; if(cls)e.className=cls; return e; }
+    function display(value) { return value.replace(/https:\/\/files\.chat01\.ai\/[^\s)]+/g, url => { try { return "https://files.chat01.ai/…/" + new URL(url).pathname.split("/").at(-1); } catch {return url;} }); }
+    function inline(target, value) {
+      const regex=/\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g; let end=0;
+      for(const match of value.matchAll(regex)) { target.append(document.createTextNode(value.slice(end,match.index))); const node=text(match[1]?"strong":match[2]?"code":"span",match[1]||match[2]||match[3],match[3]?"link":null); if(match[3])node.dataset.tooltip=display(match[4]); target.append(node); end=match.index+match[0].length; }
+      target.append(document.createTextNode(value.slice(end)));
+    }
+    function markdown(target, value) {
+      let fenced=false, code=null;
+      for(const line of value.trim().split("\n")) {
+        if(line.startsWith("```")) { fenced=!fenced; if(fenced) { code=text("pre",""); target.append(code); } continue; }
+        if(fenced) {code.textContent+=line+"\n";continue;}
+        if(!line.trim())continue;
+        const image=line.match(/^!\[([^\]]*)\]\((https?:\/\/[^\s)]+)\)$/);
+        if(image) { const row=text("div","","resource"); row.append(text("span","图片","viz-badge"),text("span",image[1])); target.append(row); continue; }
+        const heading=line.match(/^#{1,6}\s+(.+)/); const node=text(heading?"h3":"p",""); inline(node,heading?heading[1]:line); target.append(node);
+      }
+    }
+    function component(target, raw) {
+      let value;
+      try { value=JSON.parse(raw.slice("genui".length,-1)).map_widget_v2; } catch {}
+      if(!value) {target.append(text("p","组件数据尚不完整")); return;}
+      target.append(text("h3",value.title||"地点"));
+      const cards=value.carousel?.cards||{};
+      for(const point of value.points||[]) { const card=cards[point.ref]; if(card)target.append(text("p",[card.title,card.label].filter(Boolean).join(" · "))); }
+      target.append(text("p","地图位置数据未返回","text-small status"));
+    }
+    function render() {
+      const output=$("#c01-output"), controls=$("#c01-control");
+      const openDetails=new Set([...output.querySelectorAll("details[open]")].map(e=>e.dataset.id));
+      output.replaceChildren(); controls.replaceChildren();
+      const bodyGroups=new Set(); let execution=0;
+      for(const block of parser.blocks) {
+        if(!block.text.trim())continue;
+        if(block.kind==="control"||block.kind==="meta") { controls.append(text("p",`${block.start}–${block.end} · ${block.reason}: ${block.text.trim()}`)); continue; }
+        if(block.kind==="answer") {const stage=text("div","","stage"); markdown(stage,block.text); output.append(stage); bodyGroups.add(block.section); continue;}
+        if(block.kind==="component") {const section=text("div","","stage"); component(section,block.text); output.append(section); continue;}
+        const detail=document.createElement("details"); detail.className="process"; detail.dataset.id=String(block.start); detail.open=openDetails.has(String(block.start));
+        const tool=block.kind==="python"||block.kind==="shell";
+        if(tool)execution++;
+        detail.append(text("summary",`${labels[block.kind]||block.kind}${tool?" · 未返回独立执行结果":""}`));
+        if(block.reason)detail.append(text("p",block.reason,"text-small status"));
+        if(tool)detail.append(text("pre",block.text.trim())); else markdown(detail,block.text);
+        output.append(detail);
+      }
+      const files=resourcesFor(parser.blocks).filter(r=>r.kind==="file");
+      if(files.length) {const area=text("div","","file-list");area.append(text("h3","回复中的文件"));for(const file of files){const item=text("div","","resource");item.append(text("span",file.name.split(".").at(-1).toUpperCase(),"viz-badge"),text("span",file.name));area.append(item);}output.append(area);}
+      if(!output.childNodes.length)output.append(text("p",index?"已收到心跳，等待内容":"等待接收","status"));
+      $("#c01-raw").textContent=display(received);
+      const data=cases[active]; const complete=index===data.frames.length;
+      $("#c01-progress").textContent=`${index} / ${data.frames.length} 段`;
+      slider.value=index;
+      $("#c01-audit").replaceChildren(text("span",`正文 ${bodyGroups.size} 段 · 执行记录 ${execution} · 文件 ${files.length}`),text("span",`已归类 ${parser.offset} 字符 · 待判定 ${parser.pending.length}`),text("span",complete?"已到末尾 · 字符无遗漏":`抓包时刻 ${data.frames[Math.max(0,index-1)]?.t||0}s`));
+      play.textContent=timer?"暂停":complete?"重新回放":"继续回放";
+    }
+    function stop() {if(timer)clearInterval(timer);timer=null;}
+    function seek(position) {parser=new Chat01ReplayParser();received="";index=0;while(index<position){const frame=cases[active].frames[index++];received+=frame.text;parser.feed(frame.text);}if(index===cases[active].frames.length)parser.finish();render();}
+    function remember() {window.openai?.setWidgetState({modelContent:{sample:cases[active].name,frame:index},privateContent:{active,index}})?.catch(()=>{});}
+    cases.forEach((item,i)=>{const option=text("option",item.name);option.value=i;picker.append(option);});
+    picker.addEventListener("change",()=>{stop();active=Number(picker.value);slider.max=cases[active].frames.length;seek(cases[active].frames.length);remember();});
+    slider.addEventListener("input",()=>{stop();seek(Number(slider.value));});slider.addEventListener("change",remember);
+    play.addEventListener("click",()=>{if(timer){stop();render();remember();return;}if(index===cases[active].frames.length)seek(0);timer=setInterval(()=>{const frame=cases[active].frames[index++];received+=frame.text;parser.feed(frame.text);if(index===cases[active].frames.length){parser.finish();stop();remember();}render();},90);render();});
+    $("#c01-end").addEventListener("click",()=>{stop();seek(cases[active].frames.length);remember();});
+    function restore(saved) {stop();active=Number.isInteger(saved?.active)&&cases[saved.active]?saved.active:0;picker.value=active;slider.max=cases[active].frames.length;seek(Number.isInteger(saved?.index)?Math.max(0,Math.min(saved.index,cases[active].frames.length)):cases[active].frames.length);}
+    window.addEventListener("openai:set_globals",event=>{if(event.detail?.globals?.widgetState)restore(event.detail.globals.widgetState.privateContent);});
+    restore(window.openai?.widgetState?.privateContent);
+  })();
+  </script>
+</div>
