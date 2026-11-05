@@ -44,11 +44,21 @@
     const picker = $("#c01-case"), slider = $("#c01-position"), play = $("#c01-play");
     let active = 0, index = 0, parser, received = "", timer = null;
     const labels = {reasoning:"思考",python:"代码执行",shell:"命令记录",search:"联网搜索", "code-fragment":"执行片段", "tool-note":"工具记录", meta:"处理耗时"};
+    const invalidDownloadNote = "（上游返回的下载地址无效）";
     function text(tag, value, cls) { const e=document.createElement(tag); e.textContent=value; if(cls)e.className=cls; return e; }
     function display(value) { return value.replace(/https:\/\/files\.chat01\.ai\/[^\s)]+/g, url => { try { return "https://files.chat01.ai/…/" + new URL(url).pathname.split("/").at(-1); } catch {return url;} }); }
     function inline(target, value) {
-      const regex=/\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g; let end=0;
-      for(const match of value.matchAll(regex)) { target.append(document.createTextNode(value.slice(end,match.index))); const node=text(match[1]?"strong":match[2]?"code":"span",match[1]||match[2]||match[3],match[3]?"link":null); if(match[3])node.dataset.tooltip=display(match[4]); target.append(node); end=match.index+match[0].length; }
+      const regex=/\*\*([^*]+)\*\*|`([^`]+)`|\[([^\]]+)\]\(((?:https?:\/\/|sandbox:\/)[^\s)]+)\)/g; let end=0;
+      for(const match of value.matchAll(regex)) {
+        target.append(document.createTextNode(value.slice(end,match.index)));
+        const unavailable=match[4]?.startsWith("sandbox:/");
+        const node=text(match[1]?"strong":match[2]?"code":"span",match[1]?"":match[2]||match[3],match[3]&&!unavailable?"link":null);
+        if(match[1])inline(node,match[1]);
+        if(match[3]&&!unavailable)node.dataset.tooltip=display(match[4]);
+        target.append(node);
+        if(unavailable)target.append(text("span",invalidDownloadNote,"status"));
+        end=match.index+match[0].length;
+      }
       target.append(document.createTextNode(value.slice(end)));
     }
     function markdown(target, value) {
@@ -86,13 +96,13 @@
         const detail=document.createElement("details"); detail.className="process"; detail.dataset.id=String(block.start); detail.open=openDetails.has(String(block.start));
         const tool=block.kind==="python"||block.kind==="shell"||block.kind==="code-fragment";
         if(tool)execution++;
-        detail.append(text("summary",`${labels[block.kind]||block.kind}${block.kind==="code-fragment"?" · 调用边界不完整":tool?" · 未返回独立执行结果":""}`));
+        detail.append(text("summary",`${labels[block.kind]||block.kind}${block.kind==="code-fragment"?" · 记录不完整":""}`));
         if(block.reason)detail.append(text("p",block.reason,"text-small status"));
         if(tool)detail.append(text("pre",block.text.trim())); else markdown(detail,block.text);
         output.append(detail);
       }
       const files=resourcesFor(parser.blocks).filter(r=>r.kind==="file"||r.kind==="file-unavailable");
-      if(files.length) {const area=text("div","","file-list");area.append(text("h3","回复中的文件"));for(const file of files){const item=text("div","","resource");item.append(text("span",file.name.split(".").at(-1).toUpperCase(),"viz-badge"),text("span",file.name));if(file.kind==="file-unavailable")item.append(text("span","未返回可下载地址","text-small status"));area.append(item);}output.append(area);}
+      if(files.length) {const area=text("div","","file-list");for(const file of files){const item=text("div","","resource");item.append(text("span",file.name.split(".").at(-1).toUpperCase(),"viz-badge"),text("span",file.name));if(file.kind==="file-unavailable")item.append(text("span",invalidDownloadNote,"text-small status"));area.append(item);}output.append(area);}
       if(!output.childNodes.length)output.append(text("p",index?"已收到心跳，等待内容":"等待接收","status"));
       $("#c01-raw").textContent=display(received);
       const data=cases[active]; const complete=index===data.frames.length;
