@@ -55,6 +55,20 @@ Chat01 本轮选原件时，不等 MinerU，不重复注入同一文件的解析
 
 这些改动集中于附件规划、授权服务和 Chat01 编码边界；现有上传、配额、文件管理与其他渠道默认行为继续复用。首轮仅完成 Chat01 所需能力与关键边界，不同时开展所有厂商 Files API、CDN、完整预览重构或通用文件网关。
 
+### 后续复用：官方接口的传输差异（2026-11-05 文档核验）
+
+用户提出将其他渠道原生输入也切换到 HTTPS。本次只核验源码和官方文档，未调用 OpenAI/Google 付费 API，也未改变任何渠道配置。
+
+- [OpenAI 文件输入](https://developers.openai.com/api/docs/guides/file-inputs)：Responses 支持 Base64、上传后的 file_id、外部 file_url；Chat Completions 文件内容仅支持 PDF 的 Base64/file_id，不支持外部文件 URL。[图片输入](https://developers.openai.com/api/docs/guides/images-vision)另有 URL 能力，不能把 PDF 的限制套到图片上。文档未要求所有输入优先用 HTTPS。
+- [Gemini 输入方式](https://ai.google.dev/gemini-api/docs/file-input-methods)：外部 HTTPS/预签名 URL 已有官方支持，但单文件上限 15 MB、Gemini 2.0 系列不支持，且类型/模型范围有限。当前页面称输入方式适用于 Gemini API 各端点，URL 示例使用 Interactions；本项目 generateContent 路径仍需针对实际模型验收，不能当成已经通过实测。
+- [Gemini Files API](https://ai.google.dev/gemini-api/docs/files)适用于大文件及复用，上传副本 48 小时过期。其上传容量不等于模型可处理容量；还要执行类型、页数、时长、上下文与站点预算。不能把几十 MB 音频统一改为受 15 MB 限制的外部 URL。
+
+因此通用传输边界应能容纳三种实现：内联 Base64、外部 HTTPS、上传取得上游文件引用。管理员未来可在渠道选择“自动”或明确模式，适配器按实际接口/模型/文件类型和大小判断；前端聊天附件菜单不增加此类技术选项。强制模式不适用时发送前明确报错，自动模式也不能通过重复付费模型调用探测支持情况。现有兼容渠道维持原行为，逐条验证后启用。
+
+Files API 后续需要独立的上游文件引用缓存与生命周期：至少按用户、原件/发送副本版本、渠道及实际凭据/项目作用域隔离，处理有效期、失效重传和远端清理；不能将一个账号的 file_id 用到另一账号。HTTP 链接和 Base64 只改变运输形式，Files API 则会在上游增加一份上传副本，不能把三者都表述为“没有额外存储”。该缓存仅优化运输，不承诺附件不占模型上下文或免输入 token。
+
+地区核验：[OpenAI 支持地区](https://developers.openai.com/api/docs/supported-countries)与[Gemini 支持地区](https://ai.google.dev/gemini-api/docs/available-regions)均包括日本。未见普通机房 IP 一律禁止的官方规则，不能据此保证某个具体 IP/账号不受其他访问控制。模型 API 请求出站和厂商回取附件是不同方向；改变附件运输方式不应改变渠道端点或代理配置。OpenAI 的 IP allowlist、地域和额度错误有[各自错误码](https://developers.openai.com/api/docs/guides/error-codes)，与本站取件失败分别诊断。
+
 ## 混合响应：先规范化，再复用界面
 
 保持一条助手消息的正常正文顺序，独立维护思考、工具执行记录、图片和文件产物。正常的阶段性答复和最终答复都保留，不只取最后一次 Answer。
