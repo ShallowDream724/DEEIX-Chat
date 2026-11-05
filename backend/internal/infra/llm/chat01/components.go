@@ -30,9 +30,11 @@ type ComponentInfo struct {
 	References []string         `json:"references,omitempty"`
 	Points     []ComponentPoint `json:"points,omitempty"`
 	Narrative  string           `json:"narrative,omitempty"`
+	Chart      *chartProps      `json:"chart,omitempty"`
+	Footer     string           `json:"footer,omitempty"`
 }
 
-// ComponentInfoFor interprets only the observed map_widget_v2 shape. It accepts
+// ComponentInfoFor interprets observed map_widget_v2 and charts_widget_v2 data. It accepts
 // complete JSON fields from a truncated prefix but never repairs JSON, invents
 // coordinates, evaluates code, or treats an internal reference as a URL.
 func ComponentInfoFor(block Block) ComponentInfo {
@@ -69,6 +71,14 @@ func ComponentInfoFor(block Block) ComponentInfo {
 		}
 	}
 	root, _ := value.(map[string]any)
+	if widget, ok := root["charts_widget_v2"].(map[string]any); ok {
+		info.Type = "charts_widget_v2"
+		info.Chart, info.Footer = chartPropsFor(widget)
+		if info.Chart == nil && info.State == "complete" {
+			info.State = "unsupported"
+		}
+		return info
+	}
 	widget, ok := root["map_widget_v2"].(map[string]any)
 	if !ok {
 		if info.State == "complete" {
@@ -129,7 +139,13 @@ func ComponentInfoFor(block Block) ComponentInfo {
 // delimiters, raw JSON, internal point IDs, inferred maps or executable actions.
 func RenderComponentFallback(block Block) string {
 	info := ComponentInfoFor(block)
+	if info.Chart != nil && info.State == "complete" {
+		return renderChart(block, info.Chart, info.Footer)
+	}
 	var text strings.Builder
+	if info.Chart != nil {
+		text.WriteString(chartTable(info.Chart))
+	}
 	resources := componentResources(block)
 	if info.State == "unsupported" && len(resources) > 0 {
 		info.State = "complete"

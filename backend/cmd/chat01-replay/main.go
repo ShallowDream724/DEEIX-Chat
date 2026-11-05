@@ -54,7 +54,7 @@ func main() {
 		items = append(items, item)
 	}
 	hash := sha256.New()
-	for _, name := range []string{"types.go", "parser.go", "resources.go", "references.go", "components.go"} {
+	for _, name := range []string{"types.go", "parser.go", "process_recovery.go", "resources.go", "references.go", "components.go", "charts.go"} {
 		data, err := os.ReadFile(filepath.Join(*root, "backend/internal/infra/llm/chat01", name))
 		if err != nil {
 			fail(err)

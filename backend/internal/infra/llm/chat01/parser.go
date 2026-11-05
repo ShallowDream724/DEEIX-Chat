@@ -46,6 +46,8 @@ type Parser struct {
 	quote                       string
 	escaped, comment            bool
 	finished                    bool
+	sawProcess                  bool
+	thinkEnvelope               bool
 }
 
 func NewParser() *Parser { return &Parser{mode: KindAnswer, lineStart: true} }
@@ -135,7 +137,7 @@ func prefixWait(s string, final bool, candidates ...string) bool {
 	return false
 }
 
-var sectionMarkers = []string{"## Answer:", "## Thought:", "## Python:", "## Shell:", "## Browser:", "**Answer:**", "**Thought:**"}
+var sectionMarkers = []string{"## Answer:", "## Ответ:", "## Thought:", "## Python:", "## Shell:", "## Browser:", "**Answer:**", "**Thought:**"}
 
 func (p *Parser) scan(fragment string, final bool) []Delta {
 	p.deltas = nil
@@ -354,13 +356,18 @@ func (p *Parser) scan(fragment string, final bool) []Delta {
 				p.emit(KindControl, len(marker), "section-marker")
 				switch marker {
 				case "<think>", "## Thought:", "**Thought:**":
+					p.sawProcess = true
+					p.thinkEnvelope = true
 					p.mode = KindReasoning
 					p.tool = ""
 					p.fence = 0
-				case "</think>", "## Answer:", "**Answer:**":
+				case "</think>", "## Answer:", "## Ответ:", "**Answer:**":
 					p.mode = KindAnswer
 					p.tool = ""
 					p.fence = 0
+					if marker == "</think>" {
+						p.thinkEnvelope = false
+					}
 				case "## Python:":
 					p.tool = KindPython
 				case "## Shell:":
@@ -368,7 +375,7 @@ func (p *Parser) scan(fragment string, final bool) []Delta {
 				case "## Browser:":
 					p.tool = KindSearch
 				}
-				if marker == "## Answer:" || marker == "**Answer:**" {
+				if marker == "## Answer:" || marker == "## Ответ:" || marker == "**Answer:**" {
 					p.section++
 				}
 				p.quote = ""
@@ -377,6 +384,32 @@ func (p *Parser) scan(fragment string, final bool) []Delta {
 			}
 			if prefixWait(s, final, markers...) {
 				break
+			}
+		}
+		if p.fence == 0 && p.heredoc == "" && p.tool == "" {
+			if p.lineStart && p.sawProcess {
+				if n, kind, wait := trailingProcessControl(s, final); wait {
+					break
+				} else if n > 0 {
+					p.emit(kind, n, "upstream-process-control")
+					if kind == KindControl {
+						p.mode = KindAnswer
+						p.section++
+					}
+					continue
+				}
+			}
+			// Some website streams omit <think> after a stage answer. Recover
+			// only at a short heading with a completed activity + Answer boundary;
+			// ordinary bold prose, tutorials and unmarked text stay in the answer.
+			if !process && p.sawProcess && (!p.lineStart || p.thinkEnvelope) {
+				if recover, wait := recoverProcessHeading(s, final); wait {
+					break
+				} else if recover {
+					p.mode = KindReasoning
+					p.processBoundary = true
+					continue
+				}
 			}
 		}
 		if p.heredoc != "" && p.lineStart {

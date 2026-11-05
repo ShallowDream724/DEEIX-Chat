@@ -836,14 +836,16 @@
         "calling": "调用中",
         "completed": "已完成",
         "reused": "已复用",
-        "failed": "失败"
+        "failed": "失败",
+        "incomplete": "上游未提供完整结果"
       },
       "names": {
         "webSearch": "网页搜索",
         "codeInterpreter": "代码解释器",
         "imageGeneration": "图像生成",
         "shell": "Shell",
-        "generic": "工具调用"
+        "generic": "工具调用",
+        "activity": "工具活动"
       },
       "detail": {
         "nameLabel": "工具",

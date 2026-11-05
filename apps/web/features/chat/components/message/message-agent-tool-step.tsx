@@ -23,11 +23,13 @@ import {
   firstToolPayloadString,
   formatToolPayload,
   isToolPayloadRecord,
+  isChat01ToolInput,
   parseToolPayload,
   prepareToolArguments,
   readToolPayloadNumber,
   readToolPayloadString,
   resolveToolResultCategory,
+  toolPresentationInput,
   type ToolResultCategory,
   type ToolSearchSource,
 } from "@/features/chat/model/tool-result-presentation";
@@ -112,7 +114,7 @@ function toolResultCategory(call: ToolTraceCall) {
   });
 }
 
-function toolStatusLabel(status: string | undefined, labels: ProcessTraceLabels): string {
+function toolStatusLabel(status: string | undefined, labels: ProcessTraceLabels, chat01 = false): string {
   switch (normalizeToolTraceStatus(status)) {
     case "requested":
     case "streaming":
@@ -128,6 +130,8 @@ function toolStatusLabel(status: string | undefined, labels: ProcessTraceLabels)
     case "error":
     case "failed":
       return labels.tool.status.failed;
+    case "incomplete":
+      return chat01 ? labels.tool.status.incomplete : status?.trim() || "";
     default:
       return status?.trim() || "";
   }
@@ -144,17 +148,21 @@ function toolTraceCallLabel(call: ToolTraceCall, category: ToolResultCategory, l
     case "shell":
       return labels.tool.names.shell;
     default:
+      if (isChat01Call(call) && [call.name, call.type].includes("chat01_activity")) return labels.tool.names.activity;
       return call.name?.trim() || call.type?.trim() || labels.tool.names.generic;
   }
 }
 
 function toolTraceCallDetail(call: ToolTraceCall, labels: ProcessTraceLabels): { detail: string; failed: boolean } {
   const failed = isToolTraceStatusFailed(call.status);
-  const input = formatToolPayload(call.input_detail) || formatToolPayload(call.input_preview) || formatToolPayload(call.input);
+  const inputPayload = toolPresentationInput(toolInputPayload(call), toolTraceCallID(call));
+  const input = isChat01Call(call)
+    ? typeof inputPayload === "string" ? inputPayload : inputPayload ? JSON.stringify(inputPayload, null, 2) : ""
+    : formatToolPayload(call.input_detail) || formatToolPayload(call.input_preview) || formatToolPayload(call.input);
   const output = failed
     ? formatToolPayload(call.error)
     : formatToolPayload(call.output_detail) || formatToolPayload(call.output) || formatToolPayload(call.output_text) || formatToolPayload(call.output_preview);
-  const parts = [toolStatusLabel(call.status, labels)].filter(Boolean);
+  const parts = [toolStatusLabel(call.status, labels, isChat01Call(call))].filter(Boolean);
 
   if (input) {
     parts.push(`${labels.tool.detail.request}\n${input}`);
@@ -298,6 +306,10 @@ function toolInputPayload(call: ToolTraceCall): unknown {
   return parseToolPayload(call.input_detail) ?? parseToolPayload(call.input_preview) ?? parseToolPayload(call.input);
 }
 
+function isChat01Call(call: ToolTraceCall): boolean {
+  return isChat01ToolInput(toolInputPayload(call), toolTraceCallID(call));
+}
+
 function toolInputValue(call: ToolTraceCall): string {
   return call.input_detail?.trim() || call.input_preview?.trim() || call.input?.trim() || "";
 }
@@ -346,8 +358,8 @@ function toolOutputText(call: ToolTraceCall, keys: string[]): string {
 }
 
 function hasToolArguments(call: ToolTraceCall): boolean {
-  const input = toolInputPayload(call);
-  return isToolPayloadRecord(input) && Object.keys(input).length > 0;
+  const input = toolPresentationInput(toolInputPayload(call), toolTraceCallID(call));
+  return isToolPayloadRecord(input) ? Object.keys(input).length > 0 : isChat01Call(call) && Boolean(readToolPayloadString(input));
 }
 
 function toolDisplayText(call: ToolTraceCall): string {
@@ -612,8 +624,12 @@ function ToolArgumentCopyButton({ value, labels }: { value: string; labels: Proc
 }
 
 function ToolArgumentsCard({ call, labels }: { call: ToolTraceCall; labels: ProcessTraceLabels }) {
-  const { raw, arguments: argumentsList } = prepareToolArguments(toolInputPayload(call));
+  const input = toolPresentationInput(toolInputPayload(call), toolTraceCallID(call));
+  const { raw, arguments: argumentsList } = prepareToolArguments(input);
   if (raw) {
+    if (isChat01Call(call) && [call.name, call.type].includes("chat01_activity")) {
+      return <div className="pb-1 pt-1"><ToolReadableText>{raw}</ToolReadableText></div>;
+    }
     return <div className="pb-1 pt-1" role="group" aria-label={labels.tool.detail.argumentsTitle}><ToolPre>{raw}</ToolPre></div>;
   }
   if (argumentsList.length === 0) return null;
@@ -764,7 +780,7 @@ function ToolCallDetailCard({
 }) {
   const call = step.toolCall;
   const hasArguments = Boolean(call && hasToolArguments(call));
-  const toolName = step.toolName?.trim() || step.label;
+  const toolName = call && isChat01Call(call) ? step.label : step.toolName?.trim() || step.label;
   const toolCallID = call ? toolTraceCallID(call) : "";
   const detailRunID = call?.detail_run_id?.trim() || runID?.trim() || "";
   const canViewFullResult = Boolean(allowFullResult && detailRunID && toolCallID);
@@ -824,7 +840,7 @@ export function AgentToolStepRow({
   const failed = step.failed;
   const statusText = isToolStepDone(step) || (reportedActive && !active)
     ? ""
-    : toolStatusLabel(step.toolCall?.status ?? step.toolStatus, labels);
+    : toolStatusLabel(step.toolCall?.status ?? step.toolStatus, labels, Boolean(step.toolCall && isChat01Call(step.toolCall)));
   const expandable = Boolean(step.toolCall || step.detail);
   const liveDurationMS = useChatElapsedDurationMS(active, step.startedAt);
   const durationText = formatDurationMS(active ? liveDurationMS : step.latencyMS);

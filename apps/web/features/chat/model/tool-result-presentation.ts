@@ -83,6 +83,20 @@ export function parseToolPayload(value: string | undefined): unknown {
   }
 }
 
+export function isChat01ToolInput(input: unknown, callID?: string): boolean {
+  return (isToolPayloadRecord(input) && input.provider === "chat01") || Boolean(callID?.startsWith("chat01:"));
+}
+
+export function toolPresentationInput(input: unknown, callID?: string): unknown {
+  if (!isChat01ToolInput(input, callID) || !isToolPayloadRecord(input)) return input;
+  const { provider: _provider, record, ...parameters } = input;
+  if (record === undefined) return parameters;
+  const parsedRecord = typeof record === "string" ? parseToolPayload(record) : record;
+  if (isToolPayloadRecord(parsedRecord)) return { ...parsedRecord, ...parameters };
+  if (Object.keys(parameters).length === 0) return parsedRecord;
+  return { ...parameters, record: parsedRecord };
+}
+
 export function prepareToolArguments(input: unknown): {
   raw: string;
   arguments: Array<{ key: string; text: string; compact: boolean }>;

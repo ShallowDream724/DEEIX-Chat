@@ -96,15 +96,18 @@ func buildChat01RequestBody(model string, input portllm.GenerateInput, stream bo
 }
 
 type chat01StreamNormalizer struct {
-	parser       *chat01parse.Parser
-	result       *portllm.GenerateOutput
-	onEvent      func(portllm.GenerateStreamEvent) error
-	tools        map[string]*chat01ToolRecord
-	toolOrder    []*chat01ToolRecord
-	raw          strings.Builder
-	visible      strings.Builder
-	reasoning    strings.Builder
-	presentation chat01AnswerPresentation
+	parser        *chat01parse.Parser
+	result        *portllm.GenerateOutput
+	onEvent       func(portllm.GenerateStreamEvent) error
+	tools         map[string]*chat01ToolRecord
+	toolOrder     []*chat01ToolRecord
+	raw           strings.Builder
+	visible       strings.Builder
+	reasoning     strings.Builder
+	presentation  chat01AnswerPresentation
+	reasoningView chat01ReasoningPresentation
+	reasoningID   string
+	reasoningByID map[string]*strings.Builder
 }
 
 type chat01ToolRecord struct {
@@ -116,7 +119,7 @@ type chat01ToolRecord struct {
 
 func newChat01Normalizer(result *portllm.GenerateOutput, onEvent func(portllm.GenerateStreamEvent) error) *chat01StreamNormalizer {
 	result.ContentNormalized = true
-	return &chat01StreamNormalizer{parser: chat01parse.NewParser(), result: result, onEvent: onEvent, tools: make(map[string]*chat01ToolRecord)}
+	return &chat01StreamNormalizer{parser: chat01parse.NewParser(), result: result, onEvent: onEvent, tools: make(map[string]*chat01ToolRecord), reasoningByID: make(map[string]*strings.Builder)}
 }
 func (n *chat01StreamNormalizer) event(event portllm.GenerateStreamEvent) error {
 	event.ContentNormalized = true
@@ -137,6 +140,12 @@ func (n *chat01StreamNormalizer) feed(text string) error {
 }
 func (n *chat01StreamNormalizer) apply(deltas []chat01parse.Delta) error {
 	for _, delta := range deltas {
+		if n.reasoningID != "" && n.reasoningID != delta.BlockID {
+			if err := n.emitReasoning(n.reasoningView.feed("", true)); err != nil {
+				return err
+			}
+			n.reasoningID = ""
+		}
 		switch string(delta.Kind) {
 		case "answer":
 			text := n.presentation.feed(delta.Text, false)
@@ -146,12 +155,12 @@ func (n *chat01StreamNormalizer) apply(deltas []chat01parse.Delta) error {
 					return err
 				}
 			}
-		case "reasoning":
-			n.reasoning.WriteString(delta.Text)
-			if err := n.event(portllm.GenerateStreamEvent{Reasoning: &portllm.ReasoningDelta{EventType: "reasoning.delta", ItemID: delta.BlockID, Kind: "text", Text: delta.Text}}); err != nil {
+		case "reasoning", "tool-note":
+			n.reasoningID = delta.BlockID
+			if err := n.emitReasoning(n.reasoningView.feed(delta.Text, false)); err != nil {
 				return err
 			}
-		case "python", "shell", "code-fragment", "search", "tool-note":
+		case "python", "shell", "code-fragment", "search":
 			record, found := n.tools[delta.BlockID]
 			if !found {
 				record = &chat01ToolRecord{index: len(n.result.ServerToolCalls), key: "code"}
@@ -164,10 +173,6 @@ func (n *chat01StreamNormalizer) apply(deltas []chat01parse.Delta) error {
 				}
 				if string(delta.Kind) == "search" {
 					typeName = "web_search"
-					record.key = "record"
-				}
-				if string(delta.Kind) == "tool-note" {
-					typeName = "chat01_activity"
 					record.key = "record"
 				}
 				n.result.ServerToolCalls = append(n.result.ServerToolCalls, portllm.ToolCall{ToolCallID: "chat01:" + delta.BlockID, ToolType: typeName, ToolName: typeName, Status: "incomplete"})
@@ -203,6 +208,22 @@ func (n *chat01StreamNormalizer) apply(deltas []chat01parse.Delta) error {
 	}
 	return nil
 }
+func (n *chat01StreamNormalizer) emitReasoning(text string) error {
+	if text == "" || n.reasoningID == "" {
+		return nil
+	}
+	b := n.reasoningByID[n.reasoningID]
+	if b == nil {
+		if strings.TrimSpace(text) == "" {
+			return nil
+		}
+		b = &strings.Builder{}
+		n.reasoningByID[n.reasoningID] = b
+	}
+	b.WriteString(text)
+	n.reasoning.WriteString(text)
+	return n.event(portllm.GenerateStreamEvent{Reasoning: &portllm.ReasoningDelta{EventType: "reasoning.delta", ItemID: n.reasoningID, Kind: "text", Text: text}})
+}
 func (n *chat01StreamNormalizer) flushTool(record *chat01ToolRecord) error {
 	if record.lastSent == record.text.Len() && n.result.ServerToolCalls[record.index].ArgumentsJSON != "" {
 		return nil
@@ -236,6 +257,9 @@ func (n *chat01StreamNormalizer) finish() error {
 	if err := n.apply(n.parser.Finish()); err != nil {
 		return err
 	}
+	if err := n.emitReasoning(n.reasoningView.feed("", true)); err != nil {
+		return err
+	}
 	if err := n.flushPresentation(); err != nil {
 		return err
 	}
@@ -257,13 +281,13 @@ func (n *chat01StreamNormalizer) finish() error {
 	if n.reasoning.Len() > 0 {
 		n.result.Reasoning = &portllm.ReasoningOutput{Text: n.reasoning.String()}
 		for _, block := range n.parser.Blocks() {
-			if string(block.Kind) == "reasoning" && block.Text != "" {
-				n.result.Reasoning.Segments = append(n.result.Reasoning.Segments, portllm.ReasoningOutput{ItemID: block.ID, Text: block.Text})
+			if b := n.reasoningByID[block.ID]; b != nil && b.Len() > 0 {
+				n.result.Reasoning.Segments = append(n.result.Reasoning.Segments, portllm.ReasoningOutput{ItemID: block.ID, Text: b.String()})
 			}
 		}
 	}
 	for _, block := range n.parser.Blocks() {
-		if string(block.Kind) == "reasoning" && block.Text != "" {
+		if b := n.reasoningByID[block.ID]; b != nil && b.Len() > 0 {
 			n.result.ProcessOrder = append(n.result.ProcessOrder, portllm.ProcessItemReference{ReasoningItemID: block.ID})
 		} else if record := n.tools[block.ID]; record != nil {
 			n.result.ProcessOrder = append(n.result.ProcessOrder, portllm.ProcessItemReference{ToolCallID: n.result.ServerToolCalls[record.index].ToolCallID})

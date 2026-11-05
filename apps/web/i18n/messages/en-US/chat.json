@@ -836,14 +836,16 @@
         "calling": "Calling",
         "completed": "Completed",
         "reused": "Reused",
-        "failed": "Failed"
+        "failed": "Failed",
+        "incomplete": "Upstream result incomplete"
       },
       "names": {
         "webSearch": "Web search",
         "codeInterpreter": "Code interpreter",
         "imageGeneration": "Image generation",
         "shell": "Shell",
-        "generic": "Tool call"
+        "generic": "Tool call",
+        "activity": "Tool activity"
       },
       "detail": {
         "nameLabel": "Tool",

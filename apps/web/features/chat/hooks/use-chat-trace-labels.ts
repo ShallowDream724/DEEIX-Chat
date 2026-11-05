@@ -57,6 +57,7 @@ export type ProcessTraceLabels = {
       completed: string;
       reused: string;
       failed: string;
+      incomplete: string;
     };
     names: {
       webSearch: string;
@@ -64,6 +65,7 @@ export type ProcessTraceLabels = {
       imageGeneration: string;
       shell: string;
       generic: string;
+      activity: string;
     };
     detail: {
       nameLabel: string;
@@ -225,6 +227,7 @@ export function useChatTraceLabels(): ProcessTraceLabels {
           completed: t("tool.status.completed"),
           reused: t("tool.status.reused"),
           failed: t("tool.status.failed"),
+          incomplete: t("tool.status.incomplete"),
         },
         names: {
           webSearch: t("tool.names.webSearch"),
@@ -232,6 +235,7 @@ export function useChatTraceLabels(): ProcessTraceLabels {
           imageGeneration: t("tool.names.imageGeneration"),
           shell: t("tool.names.shell"),
           generic: t("tool.names.generic"),
+          activity: t("tool.names.activity"),
         },
         detail: {
           nameLabel: t("tool.detail.nameLabel"),

@@ -20,6 +20,23 @@ an explicit process region. Language and narrative tone do not determine kind.
 Multiple answer sections remain ordered. No result, call association, success,
 or failure is inferred from missing records or the end of the response.
 
+Version 2 handles the observed Russian `Ответ:` answer marker and exact trailing
+`## Answer` / duration lines after process output (including image-only replies).
+Missing opening think markers have a deliberately narrow recovery: a short
+standalone activity heading must be followed, within 4096 bytes, by an observed
+completed-activity label joined directly to an explicit Answer control. Adjacent
+bold spans alone are ordinary answer text. The already-emitted stage answer is
+never delayed or retracted. At the limit, every wait branch falls back to source
+text; unsupported or unmarked prose is not silently hidden. This heuristic does
+not establish semantic certainty for arbitrary malformed website output.
+
+The adapter separately formats process-only lines: duplicate `Thinking` chrome
+is removed, joined headings receive paragraph breaks, and skill annotations are
+shown as process information rather than fictitious incomplete tool executions.
+Its per-line buffer is bounded to 512 bytes. Streaming, final persistence and
+process IDs use the same presentation; commands and available tool data remain
+on the shared server-tool trace path.
+
 Only an unresolved short suffix remains in the pending buffer. Heading/code
 lookahead is bounded to short lines, resource-read records to 4096 bytes, and
 heredoc identifiers to 64 bytes. Excessive delimiter runs or delimiter whitespace
@@ -85,3 +102,17 @@ Known `opGenui` AsyncImage/Link/Cite data also receive a read-only Markdown
 fallback with external image preview and real source links. This rendering
 neither executes runtime code/actions nor fetches files. Map fallback preserves
 explicit name/address points and narrative as text; no coordinates are inferred.
+
+The November 5 user-prompt captures additionally confirm `charts_widget_v2` line,
+bar and pie payloads. Only validated labels and finite numeric data map to the
+existing `deeix-ui` `chart@1` renderer (up to 256 rows / 8 series); upstream runtime,
+actions and formulas are never forwarded. The existing renderer provides legends,
+side-panel viewing and copy-as-table. Incomplete readable chart rows retain a
+table fallback. This does not enable DEEIX's prompt injection for Chat01.
+
+The same API captures contain literal `[提交猜测]` and `Current value unavailable`
+strings without game state or callbacks. They cannot be reconstructed into the
+website games; ordinary answer text containing those strings is preserved, not
+silently deleted or represented as functioning controls. Map payloads without
+coordinates remain named/addressed points. Source information may be copied;
+interactive controls are not themselves meaningful clipboard content.

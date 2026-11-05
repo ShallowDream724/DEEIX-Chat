@@ -3,7 +3,7 @@
 package chat01
 
 // Version identifies the interpretation used for both streaming and persistence.
-const Version = "chat01-text-v1"
+const Version = "chat01-text-v2"
 
 type Kind string
 
