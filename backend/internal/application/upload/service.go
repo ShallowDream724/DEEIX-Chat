@@ -780,9 +780,12 @@ func normalizePurpose(raw string) string {
 }
 
 func normalizeDetectedMIME(detected string, fileName string) string {
-	value := normalizeMIMEValue(detected)
+	value := filetype.NormalizeArchiveMIME(detected)
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(strings.TrimSpace(fileName)), "."))
-	if isActiveFileExtension(ext) || isActiveUploadMIME(value) {
+	// Text extensions refine verified text; a renamed unknown binary must keep
+	// its detected MIME so that the authoritative allowlist can reject it.
+	isText := strings.HasPrefix(value, "text/") || isActiveUploadMIME(value)
+	if isActiveUploadMIME(value) || (isText && isActiveFileExtension(ext)) {
 		return "text/plain"
 	}
 	switch ext {
@@ -801,15 +804,25 @@ func normalizeDetectedMIME(detected string, fileName string) string {
 	case "xls":
 		return "application/vnd.ms-excel"
 	case "csv":
-		return "text/csv"
+		if isText {
+			return "text/csv"
+		}
 	case "md", "markdown":
-		return "text/markdown"
+		if isText {
+			return "text/markdown"
+		}
 	case "json":
-		return "application/json"
+		if isText {
+			return "application/json"
+		}
 	case "yaml", "yml":
-		return "text/yaml"
+		if isText {
+			return "text/yaml"
+		}
 	case "toml":
-		return "application/toml"
+		if isText {
+			return "application/toml"
+		}
 	case "mp4":
 		return "video/mp4"
 	case "webm":
@@ -833,7 +846,7 @@ func normalizeDetectedMIME(detected string, fileName string) string {
 	case "aif", "aiff":
 		return "audio/aiff"
 	}
-	if ext != "" && filetype.IsText("", "sample."+ext) {
+	if isText && ext != "" && filetype.IsText("", "sample."+ext) {
 		return "text/plain"
 	}
 	if value == "application/zip" {
@@ -885,9 +898,19 @@ func isActiveUploadMIME(mimeType string) bool {
 	}
 }
 
-func detectContentMIME(header []byte, declared string, fileName string) string {
+func detectContentMIME(header []byte, _ string, fileName string) string {
 	if len(header) == 0 {
-		return normalizeDetectedMIME(declared, fileName)
+		return normalizeDetectedMIME("text/plain", fileName)
+	}
+	if detected := filetype.DetectBinaryMIME(header); detected != "" {
+		// Office containers retain their existing ZIP extension refinement.
+		if detected == "application/zip" {
+			ext := strings.ToLower(filepath.Ext(fileName))
+			if ext == ".docx" || ext == ".pptx" || ext == ".xlsx" {
+				return normalizeDetectedMIME(detected, fileName)
+			}
+		}
+		return detected
 	}
 	detected := http.DetectContentType(header)
 	// Recognized media/PDF signatures must win over user-controlled extensions.
@@ -902,6 +925,8 @@ func inferFileCategory(mimeType string, fileName string) string {
 	mimeType = strings.ToLower(strings.TrimSpace(mimeType))
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(strings.TrimSpace(fileName)), "."))
 	switch {
+	case filetype.IsArchiveMIME(mimeType):
+		return fileCategoryUnknown
 	case strings.HasPrefix(mimeType, "image/"):
 		return fileCategoryImage
 	case strings.HasPrefix(mimeType, "video/"):
@@ -927,7 +952,7 @@ func isAllowedMIME(mimeType string, cfg config.Config) bool {
 	items := strings.Split(cfg.FileAllowedMIMETypes, ",")
 	allowed := make(map[string]struct{}, len(items))
 	for _, item := range items {
-		value := strings.ToLower(strings.TrimSpace(item))
+		value := filetype.NormalizeArchiveMIME(item)
 		if value == "" {
 			continue
 		}
@@ -936,7 +961,7 @@ func isAllowedMIME(mimeType string, cfg config.Config) bool {
 	if len(allowed) == 0 {
 		return true
 	}
-	_, ok := allowed[strings.ToLower(strings.TrimSpace(mimeType))]
+	_, ok := allowed[filetype.NormalizeArchiveMIME(mimeType)]
 	return ok
 }
 

@@ -23,7 +23,8 @@ func IsText(mimeType string, fileName string) bool {
 	case "txt", "md", "markdown", "csv", "json", "xml", "html", "htm",
 		"css", "js", "ts", "jsx", "tsx", "py", "go", "rs", "java",
 		"c", "cpp", "h", "hpp", "cs", "rb", "php", "swift", "kt",
-		"sh", "bash", "zsh", "yaml", "yml", "toml", "ini", "conf", "sql":
+		"sh", "bash", "zsh", "yaml", "yml", "toml", "ini", "conf", "sql",
+		"tex", "bib", "cls", "sty", "ipynb", "jsonl", "ndjson", "tsv", "srt", "vtt", "log":
 		return true
 	default:
 		return false

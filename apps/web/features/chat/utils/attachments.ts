@@ -1,124 +1,15 @@
 import type { ChatFilePolicyDTO } from "@/shared/api/file-types";
 import { formatBytes } from "@/entities/file";
-import { isOneOf } from "@/shared/lib/type-guards";
+import {
+  ACTIVE_FILE_EXTENSIONS,
+  ACTIVE_UPLOAD_MIMES,
+  TEXT_FILE_EXTENSIONS,
+  normalizeUploadMimeForPolicy,
+  normalizeUploadMimeValue,
+  resolveFileExtension,
+} from "./upload-mime";
 
 export type UploadCategory = "image" | "audio" | "video" | "pdf" | "word" | "excel" | "text" | "unknown";
-
-const TEXT_FILE_EXTENSIONS = [
-  "txt",
-  "js",
-  "ts",
-  "tsx",
-  "jsx",
-  "py",
-  "go",
-  "rs",
-  "java",
-  "c",
-  "cpp",
-  "h",
-  "hpp",
-  "cs",
-  "php",
-  "rb",
-  "swift",
-  "kt",
-  "bash",
-  "zsh",
-  "sql",
-  "yaml",
-  "yml",
-  "toml",
-  "sh",
-  "html",
-  "htm",
-  "css",
-  "ini",
-  "conf",
-] as const;
-
-const isTextFileExtension = isOneOf(TEXT_FILE_EXTENSIONS);
-
-const ACTIVE_FILE_EXTENSIONS = new Set(["html", "htm", "css", "js", "jsx", "mjs", "ts", "tsx", "xml", "xhtml", "svg"]);
-
-const ACTIVE_UPLOAD_MIMES = new Set([
-  "text/html",
-  "text/css",
-  "text/javascript",
-  "text/xml",
-  "application/javascript",
-  "application/ecmascript",
-  "application/x-javascript",
-  "application/typescript",
-  "application/xml",
-  "application/xhtml+xml",
-  "image/svg+xml",
-]);
-
-const MEDIA_EXTENSION_MIMES: Record<string, string> = {
-  mp4: "video/mp4", webm: "video/webm", mov: "video/quicktime", mpeg: "video/mpeg", mpg: "video/mpeg",
-  mp3: "audio/mpeg", wav: "audio/wav", m4a: "audio/mp4", aac: "audio/aac", ogg: "audio/ogg", oga: "audio/ogg",
-  flac: "audio/flac", aif: "audio/aiff", aiff: "audio/aiff",
-};
-
-function resolveFileExtension(fileName: string): string {
-  const normalizedName = fileName.trim().toLowerCase();
-  return normalizedName.includes(".") ? normalizedName.split(".").pop() || "" : "";
-}
-
-function normalizeMimeValue(raw: string): string {
-  const value = raw.trim().toLowerCase();
-  const separatorIndex = value.indexOf(";");
-  return separatorIndex > 0 ? value.slice(0, separatorIndex).trim() : value;
-}
-
-function normalizeUploadMimeForPolicy(file: File): string {
-  const browserMime = normalizeMimeValue(file.type);
-  const ext = resolveFileExtension(file.name);
-
-  if (ACTIVE_FILE_EXTENSIONS.has(ext) || ACTIVE_UPLOAD_MIMES.has(browserMime)) {
-    return "text/plain";
-  }
-
-  if (browserMime.startsWith("image/") || browserMime.startsWith("audio/") || browserMime.startsWith("video/") || browserMime === "application/pdf") {
-    return browserMime;
-  }
-
-  if (MEDIA_EXTENSION_MIMES[ext]) {
-    return MEDIA_EXTENSION_MIMES[ext];
-  }
-
-  switch (ext) {
-    case "pdf":
-      return "application/pdf";
-    case "docx":
-      return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-    case "doc":
-      return "application/msword";
-    case "xlsx":
-      return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-    case "xls":
-      return "application/vnd.ms-excel";
-    case "csv":
-      return "text/csv";
-    case "md":
-    case "markdown":
-      return "text/markdown";
-    case "json":
-      return "application/json";
-    case "yaml":
-    case "yml":
-      return "text/yaml";
-    case "toml":
-      return "application/toml";
-  }
-
-  if (isTextFileExtension(ext)) {
-    return "text/plain";
-  }
-
-  return browserMime;
-}
 
 export function normalizeUploadMime(file: File): string {
   return normalizeUploadMimeForPolicy(file);
@@ -129,7 +20,7 @@ export function isAllowedUploadMime(file: File, policy: ChatFilePolicyDTO | null
     return true;
   }
 
-  const allowed = new Set(policy.allowedMIMETypes.map((item) => item.trim().toLowerCase()).filter(Boolean));
+  const allowed = new Set(policy.allowedMIMETypes.map(normalizeUploadMimeValue).filter(Boolean));
   const mime = normalizeUploadMimeForPolicy(file);
   return Boolean(mime && allowed.has(mime));
 }

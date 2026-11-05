@@ -127,7 +127,7 @@ type ChatInputProps = {
   sendShortcut?: SendShortcut;
   inputHeight?: "compact" | "standard" | "loose";
   attachments: PendingAttachment[];
-  nativeEligibleFileIDs?: ReadonlySet<string>;
+  nativeBadgeFileIDs?: ReadonlySet<string>;
   inputIssues?: readonly InputLimitReason[];
   processingAttachments?: boolean;
   uploadingAttachments: UploadingAttachment[];
@@ -228,7 +228,7 @@ function ChatInputComponent({
   sendShortcut = "enter",
   inputHeight = "standard",
   attachments,
-  nativeEligibleFileIDs,
+  nativeBadgeFileIDs,
   inputIssues,
   processingAttachments,
   uploadingAttachments,
@@ -893,7 +893,7 @@ function ChatInputComponent({
                   const FileIcon = resolveFileIcon(item);
                   const nativeReady = item.fileCategory !== "image"
                     && !(item.detectedMime || item.mimeType).startsWith("image/")
-                    && ((!temporaryMode && nativeEligibleFileIDs?.has(item.fileID))
+                    && ((!temporaryMode && nativeBadgeFileIDs?.has(item.fileID))
                       || (temporaryMode && localToolsDisabled && selectedModel?.inputModalities.includes("attachment")));
                   const failed = !nativeReady && (badge.tone === "danger" || badge.tone === "warning");
                   const backgroundProcessing = !nativeReady && !failed && isFileProcessing(item);

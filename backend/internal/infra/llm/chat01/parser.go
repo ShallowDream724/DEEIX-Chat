@@ -491,12 +491,12 @@ func (p *Parser) scan(fragment string, final bool) []Delta {
 			if p.tool == "" && (p.lineStart || p.processBoundary) && s[0] != '\n' && !strings.HasPrefix(s, "##") && !strings.HasPrefix(s, "**") {
 				end := strings.IndexByte(s, '\n')
 				if end < 0 {
-					if !final && len(s) < maxHeading {
+					if !final && len(s) < maxProcessCodeLine {
 						break
 					}
-					end = min(len(s), maxHeading)
+					end = min(len(s), maxProcessCodeLine)
 				}
-				if end <= maxHeading && shellHeredocCommandRE.MatchString(s[:end]) {
+				if end <= maxProcessCodeLine && shellHeredocCommandRE.MatchString(s[:end]) {
 					if m := matchHeredoc(s[:end]); m != nil {
 						p.tool = KindShell
 						p.heredoc = m[1]
@@ -509,18 +509,24 @@ func (p *Parser) scan(fragment string, final bool) []Delta {
 						continue
 					}
 				}
-				if end <= maxHeading && end < len(s) && s[end] == '\n' && codeStrength(s[:end]) > 0 {
+				if shellExecutionLine(s[:min(end, maxProcessCodeLine)]) {
+					p.tool = KindShell
+					p.processBoundary = false
+					continue
+				}
+				if end <= maxProcessCodeLine && end < len(s) && s[end] == '\n' && processCodeStrength(s[:end]) > 0 {
 					after := ""
 					if end < len(s) && s[end] == '\n' {
 						after = s[end+1:]
 					}
 					next := strings.IndexByte(after, '\n')
 					if next < 0 {
-						if !final && len(after) < maxHeading {
+						if !final && len(after) < maxProcessCodeLine {
 							break
 						}
-						next = min(len(after), maxHeading)
+						next = min(len(after), maxProcessCodeLine)
 					}
+					next = min(next, maxProcessCodeLine)
 					if codeStrength(after[:next]) == 2 {
 						p.tool = KindCodeFragment
 						p.processBoundary = false
@@ -710,7 +716,7 @@ func matchHeredoc(s string) []string {
 	return m
 }
 
-var strongCodeRE = regexp.MustCompile(`^(?:from [\w.]+ import |import [\w.]+|(?:async )?def \w+\(|class \w+[(:]|assert |(?:with|for|if|elif|while) .+:$|(?:try|else|finally):$|except(?: .+)?:$|print\(|raise \w+|return\b|[\w]+(?:\.[\w]+|\[[^\]\n]+\])*\s*=[^=])`)
+var strongCodeRE = regexp.MustCompile(`^(?:from [\w.]+ import |import [\w.]+|(?:async )?def \w+\(|class \w+[(:]|assert |(?:with|for|if|elif|while) .+:$|for [\w, ]+ in .+:[ \t]*[A-Za-z_]\w*(?:[.(\[]|[ \t]*[+\-*/]?=)|(?:try|else|finally):$|except(?: .+)?:$|print\(|raise \w+|return\b|[\w]+(?:\.[\w]+|\[[^\]\n]+\])*\s*(?:\+|-|\*\*?|/\/?|%|&|\||\^|<<|>>)?=[^=])`)
 var weakCodeRE = regexp.MustCompile(`^(?:['"]?PY['"]?|.*\.py\s*<<['"]?\w+['"]?|[^\s]+\.(?:json|csv|txt)['"]\)\.(?:read|write)\w*\(.*)$`)
 
 func codeStrength(s string) int {

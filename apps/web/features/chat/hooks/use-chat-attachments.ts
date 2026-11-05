@@ -72,6 +72,7 @@ export function useChatAttachments({
   const uploading = uploadingAttachments.length > 0;
   const {
     eligibleFileIDs: nativeEligibleFileIDs,
+    badgeFileIDs: nativeBadgeFileIDs,
     issues: nativeInputIssues,
     pending: nativeReadinessPending,
     maxFilesPerMessage: channelMaxFiles,
@@ -478,6 +479,7 @@ export function useChatAttachments({
     uploading,
     uploadingAttachments,
     nativeEligibleFileIDs,
+    nativeBadgeFileIDs,
     nativeInputIssues,
     nativeReadinessPending,
     channelMaxFiles,
