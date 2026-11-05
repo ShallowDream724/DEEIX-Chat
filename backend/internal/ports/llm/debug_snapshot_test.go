@@ -33,3 +33,26 @@ func TestSanitizeUpstreamDebugPayloadRedactsSmallAndMultipleDataURLs(t *testing.
 		t.Fatalf("ordinary data field should remain unchanged, got %q (%d parts)", ordinary.Body, ordinary.RedactedParts)
 	}
 }
+
+func TestUpstreamDebugSnapshotsRedactAttachmentURLsWithoutChangingRequests(t *testing.T) {
+	token := strings.Repeat("b", 43)
+	address := "https://files.example/api/v1/attachments/fetch/" + token
+	for name, input := range map[string]string{
+		"request":  `{"messages":[{"role":"user","content":[{"type":"file_url","file_url":{"url":"` + address + `"}},{"type":"image_url","image_url":{"url":"` + address + `"}}]}]}`,
+		"response": `{"error":{"message":"cannot fetch ` + address + `"}}`,
+		"nested":   `{"body":"{\"url\":\"` + address + `\"}"}`,
+		"sse":      "data: {\"url\":\"" + address + "\"}\n\n: retry " + address + "\n\ndata: [DONE]\n\n",
+		"escaped":  `{"url":"` + strings.ReplaceAll(address, "/", `\u002f`) + `"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw := []byte(input)
+			result := SanitizeUpstreamDebugPayload(raw)
+			if strings.Contains(result.Body, token) || result.RedactedParts == 0 || result.OriginalBytes != len(input) {
+				t.Fatalf("unsafe debug snapshot: %+v", result)
+			}
+			if string(raw) != input {
+				t.Fatal("debug sanitization changed the actual request bytes")
+			}
+		})
+	}
+}

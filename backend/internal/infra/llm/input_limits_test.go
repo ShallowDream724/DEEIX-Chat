@@ -79,7 +79,7 @@ func TestAllChatProtocolsRejectEncodedRequestBeforeNetwork(t *testing.T) {
 	defer server.Close()
 	client := newTestClient()
 	defer client.CloseIdleConnections()
-	for _, protocol := range []string{portllm.AdapterOpenAIResponses, portllm.AdapterOpenAIChatCompletions, portllm.AdapterOpenRouterChat, portllm.AdapterOpenRouterResponses, portllm.AdapterAnthropicMessages, portllm.AdapterGoogleGenerateContent, portllm.AdapterGeminiInteractions} {
+	for _, protocol := range []string{portllm.AdapterOpenAIResponses, portllm.AdapterOpenAIChatCompletions, portllm.AdapterOpenRouterChat, portllm.AdapterOpenRouterResponses, portllm.AdapterAnthropicMessages, portllm.AdapterGoogleGenerateContent, portllm.AdapterGeminiInteractions, portllm.AdapterChat01ChatCompletions} {
 		for _, stream := range []bool{false, true} {
 			t.Run(protocol+map[bool]string{false: "/generate", true: "/stream"}[stream], func(t *testing.T) {
 				limits := inputlimits.Limits{RequestBytes: 10}

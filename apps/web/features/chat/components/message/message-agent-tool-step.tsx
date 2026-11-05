@@ -24,6 +24,7 @@ import {
   formatToolPayload,
   isToolPayloadRecord,
   parseToolPayload,
+  prepareToolArguments,
   readToolPayloadNumber,
   readToolPayloadString,
   resolveToolResultCategory,
@@ -586,22 +587,6 @@ function ToolStepStatusIcon({ step, active }: { step: ToolChainStep; active: boo
   );
 }
 
-function formatArgumentValue(value: unknown): string {
-  try {
-    if (Array.isArray(value)) {
-      return value.map((item) => (typeof item === "object" ? JSON.stringify(item) : String(item))).join(", ");
-    }
-    if (typeof value === "object" && value !== null) {
-      return Object.entries(value)
-        .map(([key, item]) => `${key}: ${typeof item === "object" ? JSON.stringify(item) : String(item)}`)
-        .join(", ");
-    }
-  } catch {
-    return String(value);
-  }
-  return String(value);
-}
-
 function ToolArgumentCopyButton({ value, labels }: { value: string; labels: ProcessTraceLabels }) {
   const { copy, isCopied } = useCopyAction({
     messages: { copied: labels.tool.detail.copied, failed: labels.tool.detail.copyFailed },
@@ -627,18 +612,11 @@ function ToolArgumentCopyButton({ value, labels }: { value: string; labels: Proc
 }
 
 function ToolArgumentsCard({ call, labels }: { call: ToolTraceCall; labels: ProcessTraceLabels }) {
-  const input = toolInputPayload(call);
-  if (!isToolPayloadRecord(input) || Object.keys(input).length === 0) {
-    return null;
+  const { raw, arguments: argumentsList } = prepareToolArguments(toolInputPayload(call));
+  if (raw) {
+    return <div className="pb-1 pt-1" role="group" aria-label={labels.tool.detail.argumentsTitle}><ToolPre>{raw}</ToolPre></div>;
   }
-
-  const argumentsList = Object.entries(input).map(([key, value]) => {
-    const text = formatArgumentValue(value);
-    const compact = (value === null || ["string", "number", "boolean"].includes(typeof value))
-      && !text.includes("\n")
-      && text.length <= 48;
-    return { key, text, compact };
-  });
+  if (argumentsList.length === 0) return null;
   const compactArguments = argumentsList.filter((argument) => argument.compact);
   const expandedArguments = argumentsList.filter((argument) => !argument.compact);
 

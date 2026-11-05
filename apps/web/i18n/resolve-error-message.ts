@@ -653,7 +653,8 @@ export function resolveInputLimitPresentation(reason: InputLimitReason, locale: 
   const tokenEstimate = dimension.endsWith("Tokens");
   const contextTokens = dimension === "contextTokens" || dimension === "currentTurnTokens";
   const parsedLimit = dimension.startsWith("parsed");
-  const fileSize = dimension === "imageSingleBytes" || dimension === "pdfSingleBytes" || dimension === "uploadFileBytes";
+  const fileSize = dimension === "imageSingleBytes" || dimension === "pdfSingleBytes" || dimension === "uploadFileBytes"
+    || dimension === "attachmentSingleBytes";
   const number = new Intl.NumberFormat(locale);
   const measurement = (value: number) => {
     if (dimension.endsWith("Bytes")) {

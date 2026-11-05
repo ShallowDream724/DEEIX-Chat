@@ -25,6 +25,7 @@ type assistantGeneratedFilesInput struct {
 	Route              llm.RouteConfig
 	Content            string
 	Files              []llm.GeneratedFile
+	Images             []llm.GeneratedImage
 }
 
 type assistantGeneratedFilesResult struct {
@@ -32,6 +33,7 @@ type assistantGeneratedFilesResult struct {
 	AttachmentRows      []model.Attachment
 	AttachmentSnapshots []AttachmentInput
 	CreatedFileIDs      []string
+	Failures            []generatedArtifactFailure
 }
 
 func mergeAssistantGeneratedFiles(existing, next []llm.GeneratedFile) []llm.GeneratedFile {
@@ -62,6 +64,9 @@ func mergeAssistantGeneratedFiles(existing, next []llm.GeneratedFile) []llm.Gene
 }
 
 func (s *Service) saveAssistantGeneratedFiles(ctx context.Context, input assistantGeneratedFilesInput) (result *assistantGeneratedFilesResult, retErr error) {
+	if llm.NormalizeAdapter(input.Route.Protocol) == llm.AdapterChat01ChatCompletions {
+		return s.saveChat01GeneratedArtifacts(ctx, input)
+	}
 	if len(input.Files) == 0 {
 		return nil, nil
 	}

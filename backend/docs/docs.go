@@ -23010,6 +23010,7 @@ const docTemplate = `{
                         "google",
                         "xai",
                         "openrouter",
+                        "chat01",
                         "custom"
                     ]
                 },
@@ -33422,6 +33423,7 @@ const docTemplate = `{
                         "google",
                         "xai",
                         "openrouter",
+                        "chat01",
                         "custom"
                     ]
                 },

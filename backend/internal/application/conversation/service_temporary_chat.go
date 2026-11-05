@@ -110,7 +110,12 @@ func (s *Service) StreamTemporaryChat(
 	for _, item := range input.Messages {
 		messages = append(messages, llm.Message{Role: strings.TrimSpace(item.Role), Content: item.Content})
 	}
-	attachmentContext, err := s.prepareTemporaryAttachmentContext(ctx, input, messages, resolveNativeInputPolicy(route, cfg.InputLimitsJSON))
+	attachmentPolicy := resolveNativeInputPolicy(route, cfg.InputLimitsJSON)
+	attachmentPolicy.HTTPS = promptPolicyForRoute(route).OriginalAttachments && s.attachmentHTTPSAvailable()
+	attachmentContext, err := s.prepareTemporaryAttachmentContext(ctx, input, messages, attachmentPolicy)
+	if attachmentContext.cleanup != nil {
+		defer attachmentContext.cleanup()
+	}
 	if input.ReleaseAttachmentSources != nil {
 		input.ReleaseAttachmentSources()
 	}
@@ -123,11 +128,11 @@ func (s *Service) StreamTemporaryChat(
 		userID: input.UserID, session: contextObservationHash(strings.TrimSpace(input.SessionID)), route: meter.identity,
 	}
 	cacheKey.ancestry, meter.prior = s.temporaryContextCache.ancestors(cacheKey, messages, time.Now())
-	uiComponents, err := s.resolveUIComponents(ctx, input.UserID, input.UIComponentIDs)
+	uiComponents, err := s.resolveUIComponents(ctx, input.UserID, routeUIComponentIDs(route, input.UIComponentIDs))
 	if err != nil {
 		return nil, err
 	}
-	systemPrompt := resolveMessageSystemPromptInjection(cfg, route, "", requestPromptOptions{HTMLVisual: input.HTMLVisualPromptEnabled, UIComponents: uiComponents, UIBlockVersion: input.UIBlockVersion})
+	systemPrompt := resolveMessageSystemPromptInjection(cfg, route, "", requestPromptOptions{HTMLVisual: input.HTMLVisualPromptEnabled && promptPolicyForRoute(route).UIComponents, UIComponents: uiComponents, UIBlockVersion: input.UIBlockVersion})
 	if systemPrompt.Content != "" {
 		if systemPrompt.InlineToUser {
 			messages = inlineSystemPromptIntoLatestUserMessage(messages, systemPrompt.Content)
@@ -135,10 +140,7 @@ func (s *Service) StreamTemporaryChat(
 			messages = append([]llm.Message{{Role: "system", Content: systemPrompt.Content}}, messages...)
 		}
 	}
-	if err := s.ValidateSelectedToolIDs(input.SelectedToolIDs); err != nil {
-		return nil, err
-	}
-	toolRuntime, err := s.resolveSelectedToolRuntime(ctx, input.SelectedToolIDs)
+	toolRuntime, err := s.resolveRouteToolRuntime(ctx, route, input.SelectedToolIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -154,12 +156,15 @@ func (s *Service) StreamTemporaryChat(
 		return nil, err
 	}
 	recordSkillPromptTrace(traceRecorder, skillPrompts)
+	skillPrompts = routeSkillPrompts(skillPrompts, cfg.SkillsPrompt, promptPolicyForRoute(route))
 	knowledgeContext, knowledgeSources, err := s.prepareTemporaryKnowledgeContext(ctx, input, traceRecorder)
 	if err != nil {
 		traceRecorder.fail(err)
 		return nil, err
 	}
-	knowledgeContext.UIStates = resolveTemporaryUIStates(cfg, input.Messages, input.UIStates)
+	if promptPolicyForRoute(route).UIComponents {
+		knowledgeContext.UIStates = resolveTemporaryUIStates(cfg, input.Messages, input.UIStates)
+	}
 	promptPlan := buildPromptPlan(ctx, promptPlanInput{
 		BaseMessages:   messages,
 		TurnDocuments:  attachmentContext.documents,
@@ -187,6 +192,7 @@ func (s *Service) StreamTemporaryChat(
 		NativeToolKeys: authorizedNativeToolKeys(route.Protocol, filteredOptions, route.ModelCapabilitiesJSON),
 		Ephemeral:      true,
 	}
+	generateInput = enforceRouteGeneratePolicy(route.Protocol, generateInput)
 	applyOpenAIResponsesInstructions(route, routeConfig.Endpoint, &generateInput)
 	estimatedInputTokens := meter.estimate(generateInput)
 	budget := resolveContextBudgetPolicy(cfg, route.UpstreamModel, route.ModelCapabilitiesJSON)
@@ -257,7 +263,8 @@ func (s *Service) StreamTemporaryChat(
 		return nil, ErrUpstreamEmptyResponse
 	}
 	assistantText := output.Text
-	if generateErr == nil && strings.TrimSpace(assistantText) == "" {
+	chat01Artifacts := llm.NormalizeAdapter(routeConfig.Protocol) == llm.AdapterChat01ChatCompletions
+	if generateErr == nil && strings.TrimSpace(assistantText) == "" && (!chat01Artifacts || len(output.GeneratedFiles)+len(output.GeneratedImages) == 0) {
 		if moderationCoord != nil {
 			moderationCoord.WaitInputOnly(ctx)
 		}
@@ -286,6 +293,28 @@ func (s *Service) StreamTemporaryChat(
 	}
 	now := time.Now()
 	temporaryAssistant.Content = assistantText
+	var temporaryCreatedFiles []string
+	if generateErr == nil && chat01Artifacts {
+		artifacts, artifactErr := s.saveChat01GeneratedArtifacts(ctx, assistantGeneratedFilesInput{
+			UserID: input.UserID, Route: routeConfig, Content: assistantText,
+			Files: output.GeneratedFiles, Images: output.GeneratedImages,
+		})
+		if artifactErr != nil {
+			generateErr = artifactErr
+		} else if artifacts != nil {
+			temporaryCreatedFiles = artifacts.CreatedFileIDs
+			assistantText = artifacts.Content
+			temporaryAssistant.Content = artifacts.Content
+			temporaryAssistant.ContentType = "markdown"
+			for _, row := range artifacts.AttachmentRows {
+				if row.Kind == "image" {
+					temporaryAssistant.ContentType = "mixed"
+					break
+				}
+			}
+			temporaryAssistant.Attachments = marshalAttachmentSnapshots(artifacts.AttachmentSnapshots)
+		}
+	}
 	temporaryAssistant.OutputTokens = outputTokens
 	temporaryAssistant.ReasoningTokens = usage.ReasoningTokens
 	temporaryAssistant.ReasoningEffort = optionalReasoningEffort(reasoningEffort)
@@ -338,7 +367,11 @@ func (s *Service) StreamTemporaryChat(
 		StartedAt:           startedAt,
 	}
 	if moderationCoord != nil {
-		applyBarrierOutcome(result, moderationCoord.AfterGeneration(ctx, assistantText, nil))
+		images := s.loadOutputImagesForModeration(ctx, moderationCoord, input.UserID, temporaryAssistant.Attachments)
+		applyBarrierOutcome(result, moderationCoord.AfterGeneration(ctx, assistantText, images))
+		if result.IsModerationBlocked() {
+			s.cleanupGeneratedFiles(ctx, input.UserID, temporaryCreatedFiles)
+		}
 	}
 	if generateErr != nil {
 		return result, wrapTemporaryGenerationError(generateErr)

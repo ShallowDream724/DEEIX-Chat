@@ -12,6 +12,7 @@ import (
 
 	apperrorlog "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/errorlog"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/security"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -23,6 +24,35 @@ const maxLoggedErrorBytes = 4096
 type ErrorRecorder interface {
 	Record(ctx context.Context, input apperrorlog.RecordInput)
 }
+
+// RedactAttachmentTraceErrors runs inside tracing middleware so Gin's final
+// diagnostic errors cannot place attachment bearer URLs in span events/status.
+// Handlers and access logging see the original error before this unwinds.
+func RedactAttachmentTraceErrors() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Next()
+		for _, item := range c.Errors {
+			if item.Err != nil {
+				if text := security.RedactAttachmentFetchURLs(item.Err.Error()); text != item.Err.Error() {
+					item.Err = attachmentTraceError{original: item.Err, text: text}
+				}
+			}
+			if item.Meta != nil {
+				if text := fmt.Sprint(item.Meta); security.RedactAttachmentFetchURLs(text) != text {
+					item.Meta = security.RedactAttachmentFetchURLs(text)
+				}
+			}
+		}
+	}
+}
+
+type attachmentTraceError struct {
+	original error
+	text     string
+}
+
+func (e attachmentTraceError) Error() string { return e.text }
+func (e attachmentTraceError) Unwrap() error { return e.original }
 
 // AccessLog 输出请求访问日志。
 // 错误响应额外记录对外错误码与原始失败原因：客户端只拿到错误码和 RequestID，
@@ -51,6 +81,7 @@ func AccessLog(logger *zap.Logger, recorder ErrorRecorder) gin.HandlerFunc {
 		if rawQuery := c.Request.URL.RawQuery; rawQuery != "" {
 			path = path + "?" + redactQuery(rawQuery)
 		}
+		path = security.RedactAttachmentFetchURLs(path)
 		route := c.FullPath()
 		if route == "" {
 			route = "-"
@@ -104,19 +135,19 @@ func AccessLog(logger *zap.Logger, recorder ErrorRecorder) gin.HandlerFunc {
 				Detail:     errorDiagnosticDetail(cause),
 				LatencyMS:  latency.Milliseconds(),
 				ClientIP:   c.ClientIP(),
-				UserAgent:  c.Request.UserAgent(),
+				UserAgent:  security.RedactAttachmentFetchURLs(c.Request.UserAgent()),
 				OccurredAt: started,
 			})
 		}
 
 		switch {
 		case status >= 500:
-			logger.Error(message.String())
+			logger.Error(security.RedactAttachmentFetchURLs(message.String()))
 		case status >= 400 || errorCode != "" || cause != nil:
 			// 流式接口在写出 200 后才可能失败，终态错误同样按告警记录。
-			logger.Warn(message.String())
+			logger.Warn(security.RedactAttachmentFetchURLs(message.String()))
 		default:
-			logger.Info(message.String())
+			logger.Info(security.RedactAttachmentFetchURLs(message.String()))
 		}
 	}
 }
@@ -199,6 +230,7 @@ var (
 // redactSecrets 在写入日志前去掉错误文本中的凭证：URL 的 userinfo 与敏感 query 值、Bearer 凭证、
 // 显式的 key=value 凭证。它是兜底措施，不替代“不要把凭证拼进错误”的约定。
 func redactSecrets(text string) string {
+	text = security.RedactAttachmentFetchURLs(text)
 	text = loggedURLPattern.ReplaceAllStringFunc(text, redactLoggedURL)
 	text = bearerPattern.ReplaceAllString(text, "$1 "+redactedValue)
 	return secretAssignmentPattern.ReplaceAllString(text, "${1}="+redactedValue)

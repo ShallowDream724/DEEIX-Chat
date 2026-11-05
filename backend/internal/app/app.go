@@ -15,6 +15,7 @@ import (
 
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/admin"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/announcement"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/attachmentdelivery"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/audit"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/auth"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/billing"
@@ -103,6 +104,7 @@ import (
 	settingshttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/settings"
 	skillhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/skill"
 	uicomponenthttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/uicomponent"
+	uploadhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/upload"
 	userhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/user"
 	usersettingshttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/usersettings"
 	"github.com/gin-gonic/gin"
@@ -378,6 +380,10 @@ func NewAppWithOptions(opts Options) (*App, error) {
 	untrustedMediaArtifactClient := mediaartifact.NewForUntrustedEndpoints(sharedsecurity.NewPublicOnlyOutboundPolicy())
 	channelService := channel.NewServiceWithRuntime(runtimeCfg, channelRepo, channelRepo, channelCache, llmClient)
 	channelService.SetLogger(log)
+	channelService.SetSettingsRefreshHook(func(ctx context.Context) error {
+		runtimeSettings.InvalidateCache(ctx, "file", "input_limits")
+		return runtimeSettings.ApplyTo(ctx, runtimeCfg)
+	})
 	channelService.SetObjectStoreProvider(objectStoreProvider)
 	channelService.SetModelIconAssetRepository(channelRepo)
 	channelService.SetBillingModelPricingFilter(billingService)
@@ -432,6 +438,8 @@ func NewAppWithOptions(opts Options) (*App, error) {
 		appprocessing.DefaultExtractorVersion,
 	)
 	uploadService.SetObjectStoreProvider(objectStoreProvider)
+	attachmentDeliveryService := attachmentdelivery.NewService(runtimeCfg, conversationRepo, cacheBackend.AttachmentGrants(), objectStoreProvider)
+	attachmentDeliveryModule := uploadhttp.NewModule(uploadhttp.NewHandler(attachmentDeliveryService))
 	ragService := apprag.NewServiceWithRuntime(runtimeCfg, conversationRepo, conversationCache, embedClient)
 	// 用户自带 Key：组合路由在平台路由前识别 personal: 引用，其余原样交给平台。
 	personalProviderService := apppersonalprovider.NewService(runtimeCfg, personalproviderrepo.NewRepo(db), llmClient)
@@ -460,6 +468,7 @@ func NewAppWithOptions(opts Options) (*App, error) {
 	conversationService.SetBillingService(billingService)
 	conversationService.SetAuditWriter(auditService)
 	conversationService.SetObjectStoreProvider(objectStoreProvider)
+	conversationService.SetAttachmentDeliveryService(attachmentDeliveryService)
 	conversationService.SetMCPRepository(mcpRepo)
 	contentModerationRepo := contentmoderationrepo.NewRepo(db)
 	contentModerationService := appcontentmoderation.NewService(settingsRepo, contentModerationRepo, keyring, log)
@@ -544,26 +553,27 @@ func NewAppWithOptions(opts Options) (*App, error) {
 	personalProviderHandler.SetUserLabelResolver(adminService)
 	personalProviderModule := personalproviderhttp.NewModule(personalProviderHandler, rateLimiter)
 	engine, err := platformhttp.NewEngine(runtimeCfg, log, platformhttp.Modules{
-		Auth:              authModule,
-		AuthService:       authService,
-		Channel:           channelModule,
-		Conversation:      conversationModule,
-		MCP:               mcpModule,
-		Memory:            memoryModule,
-		Billing:           billingModule,
-		Admin:             adminModule,
-		ContentModeration: contentModerationModule,
-		Announcement:      announcementModule,
-		PromptPreset:      promptPresetModule,
-		Skill:             skillModule,
-		UIComponent:       uiComponentModule,
-		KnowledgeBase:     knowledgeBaseModule,
-		Settings:          settingsModule,
-		UserSettings:      userSettingsModule,
-		User:              userModule,
-		PersonalProvider:  personalProviderModule,
-		Shutdown:          shutdownSignal,
-		ErrorRecorder:     errorLogService,
+		Auth:               authModule,
+		AuthService:        authService,
+		Channel:            channelModule,
+		Conversation:       conversationModule,
+		AttachmentDelivery: attachmentDeliveryModule,
+		MCP:                mcpModule,
+		Memory:             memoryModule,
+		Billing:            billingModule,
+		Admin:              adminModule,
+		ContentModeration:  contentModerationModule,
+		Announcement:       announcementModule,
+		PromptPreset:       promptPresetModule,
+		Skill:              skillModule,
+		UIComponent:        uiComponentModule,
+		KnowledgeBase:      knowledgeBaseModule,
+		Settings:           settingsModule,
+		UserSettings:       userSettingsModule,
+		User:               userModule,
+		PersonalProvider:   personalProviderModule,
+		Shutdown:           shutdownSignal,
+		ErrorRecorder:      errorLogService,
 		StartupLog: func(log *zap.Logger) {
 			if log == nil || bootstrapSuperAdmin == nil {
 				return
@@ -579,6 +589,7 @@ func NewAppWithOptions(opts Options) (*App, error) {
 	}
 
 	backgroundCtx, backgroundCancel := context.WithCancel(context.Background())
+	attachmentDeliveryService.StartBackgroundWorkers(backgroundCtx)
 	if _, reconcileErr := embeddingService.ReconcileIndex(backgroundCtx); reconcileErr != nil {
 		log.Warn("embedding index reconciliation failed", zap.Error(reconcileErr))
 	}

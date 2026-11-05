@@ -3,6 +3,7 @@ import { isRecord } from "@/shared/lib/type-guards";
 
 export const INPUT_LIMIT_DIMENSIONS = [
   "messageFileCount", "imageCount", "imageSingleBytes", "imageBytes",
+  "attachmentCount", "attachmentSingleBytes", "attachmentBytes",
   "nativeCount", "nativeBytes", "pdfSingleBytes", "pdfBytes", "pdfPages", "nonPDFBytes",
   "imageEncodedBytes", "imageWidth", "imageHeight", "requestBytes", "uploadFileBytes",
   "parsedTextBytes", "parsedTextTokens", "parsedPDFPages",

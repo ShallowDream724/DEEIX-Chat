@@ -719,6 +719,7 @@
       "delete": "删除"
     },
     "protocols": {
+      "chat01_chat_completions": "Chat Completions (Chat01)",
       "openai_chat_completions": "Chat Completions (OpenAI)",
       "openai_responses": "Responses (OpenAI)",
       "anthropic_messages": "Messages (Anthropic)",

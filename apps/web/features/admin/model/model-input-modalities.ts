@@ -1,7 +1,7 @@
 import { parseCapabilitiesObject, stringifyCapabilitiesObject } from "@/features/admin/model/capabilities-json";
 
 // Keep in sync with the backend (domain/channel/model_input_modalities.go).
-export const MODEL_MODALITIES = ["text", "image", "pdf", "audio", "video"] as const;
+export const MODEL_MODALITIES = ["text", "image", "pdf", "audio", "video", "attachment"] as const;
 
 export type ModelModality = (typeof MODEL_MODALITIES)[number];
 

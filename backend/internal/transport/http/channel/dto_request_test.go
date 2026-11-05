@@ -6,6 +6,23 @@ import (
 	"github.com/gin-gonic/gin/binding"
 )
 
+func TestChat01UpstreamRequestsAcceptCompatibleIdentity(t *testing.T) {
+	compatible := "chat01"
+	requests := []any{
+		CreateUpstreamRequest{Name: "Chat01", BaseURL: "https://example.com/v1", APIKeys: "test-key", Compatible: compatible},
+		UpdateUpstreamRequest{Compatible: &compatible},
+	}
+	for _, request := range requests {
+		if err := binding.Validator.ValidateStruct(request); err != nil {
+			t.Fatalf("Chat01 request rejected: %v", err)
+		}
+	}
+	invalid := "chat01_responses"
+	if err := binding.Validator.ValidateStruct(UpdateUpstreamRequest{Compatible: &invalid}); err == nil {
+		t.Fatal("unregistered compatible identity accepted")
+	}
+}
+
 func TestUpsertUpstreamModelRequestRequiresCompleteProtocolSet(t *testing.T) {
 	emptyProtocols := []string{}
 	validProtocols := []string{"openai_responses"}

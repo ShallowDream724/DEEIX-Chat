@@ -128,6 +128,7 @@ func (s *Service) prepareRouteGeneration(ctx context.Context, input routeGenerat
 		Options:                filteredOptions,
 		NativeToolKeys:         authorizedNativeToolKeys(route.Protocol, filteredOptions, route.ModelCapabilitiesJSON),
 	}
+	generateInput = enforceRouteGeneratePolicy(route.Protocol, generateInput)
 	plan.contextMeter = contextInputMeter{
 		identity: contextObservationRouteIdentity(route, gen.statefulContextConfig),
 		prior:    s.contextInputBaselines(ctx, gen.contextObservationScope),
@@ -373,22 +374,13 @@ func (c *generationCall) handleStreamEvent(generationCtx context.Context, curren
 		if r.traceRecorder.enabled() && r.traceRecorder.onEvent != nil {
 			c.observation.markObservable()
 		}
-		toolStatus := normalizeStreamServerToolStatus(event.ServerToolCall.Status)
-		observeServerTool(c.observedServerTools, *event.ServerToolCall, toolStatus)
-		summary, markdown, payload := buildToolTrace([]model.ToolCall{{
-			RunID:      r.runID,
-			ToolCallID: strings.TrimSpace(event.ServerToolCall.ToolCallID),
-			ToolType:   strings.TrimSpace(event.ServerToolCall.ToolType),
-			ToolName:   strings.TrimSpace(event.ServerToolCall.ToolName),
-			Status:     toolStatus,
-			InputJSON:  strings.TrimSpace(event.ServerToolCall.ArgumentsJSON),
-			OutputJSON: strings.TrimSpace(event.ServerToolCall.OutputJSON),
-			ErrorJSON:  strings.TrimSpace(event.ServerToolCall.ErrorJSON),
-		}})
-		r.traceRecorder.syncToolSection(summary, markdown, payload, traceStatusFromToolStatus(toolStatus))
+		syncStreamingServerToolTrace(r.traceRecorder, *event.ServerToolCall, r.runID, c.observedServerTools)
 	}
 	if r.onDelta == nil || event.Delta == "" {
 		return nil
+	}
+	if event.ContentNormalized {
+		return c.emitVisibleDelta(event.Delta)
 	}
 	visibleDelta, thinkDelta := c.thinkingRouter.consume(event.Delta)
 	if thinkDelta != "" {
@@ -410,6 +402,7 @@ func (c *generationCall) handleStreamEvent(generationCtx context.Context, curren
 // generate 执行一次上游调用：优先流式，流式不受支持或在产生任何副作用前失败时回退到非流式。
 // fullMessages 是本次调用对应的完整上下文，有状态续传时用于估算上游实际计费的输入规模。
 func (r *messageGenerationRunner) generate(ctx context.Context, currentInput llm.GenerateInput, fullMessages []llm.Message) (*llm.GenerateOutput, error) {
+	currentInput = enforceRouteGeneratePolicy(r.routeConfig.Protocol, currentInput)
 	// The retained context shares the media budget even when Responses sends
 	// only a delta. Validate before recording an attempted upstream call.
 	fullInput := fullContextObservationInput(currentInput, fullMessages)
@@ -421,6 +414,12 @@ func (r *messageGenerationRunner) generate(ctx context.Context, currentInput llm
 	if err := r.contextBudget.evaluate(fullInput, estimatedInputTokens).err(); err != nil {
 		return nil, err
 	}
+	transportInput, releaseTransport, transportErr := r.service.prepareAttachmentTransport(ctx, r.routeConfig.Protocol, r.input.UserID, currentInput)
+	if transportErr != nil {
+		return nil, transportErr
+	}
+	defer releaseTransport()
+	currentInput = transportInput
 	call := &generationCall{
 		runner:              r,
 		observation:         &generationAttemptObservation{},

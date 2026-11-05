@@ -13,6 +13,7 @@ export function resolveProviderProtocol(requested: string | null | undefined, pr
 
 /** Translation key for each protocol the server offers for user-supplied keys. */
 const PROTOCOL_LABEL_KEYS: Record<ProviderImportProtocol, `protocols.${ProviderImportProtocol}`> = {
+  chat01_chat_completions: "protocols.chat01_chat_completions",
   openai_chat_completions: "protocols.openai_chat_completions",
   openai_responses: "protocols.openai_responses",
   anthropic_messages: "protocols.anthropic_messages",

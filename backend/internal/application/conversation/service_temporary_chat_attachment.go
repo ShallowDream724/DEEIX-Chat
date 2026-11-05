@@ -23,6 +23,7 @@ type TemporaryChatAttachment struct {
 }
 
 type temporaryAttachmentContext struct {
+	cleanup          func()
 	messages         []llm.Message
 	documents        turnDocumentPlacement
 	moderationImages []appcm.OutputImageSource
@@ -33,10 +34,21 @@ func (s *Service) prepareTemporaryAttachmentContext(
 	input TemporaryChatInput,
 	messages []llm.Message,
 	policy nativeInputPolicy,
-) (temporaryAttachmentContext, error) {
-	result := temporaryAttachmentContext{
+) (result temporaryAttachmentContext, retErr error) {
+	result = temporaryAttachmentContext{
 		messages: append([]llm.Message(nil), messages...),
 	}
+	var stagedFiles []*appupload.PreparedTemporaryFile
+	result.cleanup = func() {
+		for _, file := range stagedFiles {
+			file.Cleanup()
+		}
+	}
+	defer func() {
+		if retErr != nil {
+			result.cleanup()
+		}
+	}()
 	if len(input.Attachments) == 0 {
 		return result, nil
 	}
@@ -69,7 +81,7 @@ func (s *Service) prepareTemporaryAttachmentContext(
 		if err != nil {
 			return result, attachmentInputError(AttachmentInput{FileName: item.FileName, Current: item.MessageIndex == len(messages)-1}, err)
 		}
-		defer file.Cleanup()
+		stagedFiles = append(stagedFiles, file)
 		att := AttachmentInput{
 			FileID: file.FileID, FileName: file.FileName, MimeType: file.MimeType, DetectedMIME: file.DetectedMIME,
 			FileCategory: file.FileCategory, FileSize: file.SizeBytes, StoragePath: file.AbsolutePath, SHA256: file.SHA256,
@@ -147,13 +159,22 @@ func (s *Service) prepareTemporaryAttachmentContext(
 				FileID: att.FileID, Data: resized, MimeType: mimeType, SHA256: att.SHA256,
 			})
 		case policy.accepts(att):
-			data, err := readTemporaryAttachment(item.file)
-			if err != nil {
-				return result, attachmentInputErrorWithReason(att, err, attachmentInputReadFailed)
+			var data []byte
+			if !policy.HTTPS {
+				var err error
+				data, err = readTemporaryAttachment(item.file)
+				if err != nil {
+					return result, attachmentInputErrorWithReason(att, err, attachmentInputReadFailed)
+				}
+			}
+			part := newNativeInputPart(att, data)
+			if policy.HTTPS {
+				part.Reference = attachmentReference(att)
+				part.Reference.TemporaryPath = item.file.AbsolutePath
 			}
 			att.ContextMode = fileContextModeNativeDocument
 			documentsByMessage[item.messageIndex] = append(documentsByMessage[item.messageIndex], turnDocument{
-				Attachment: att, Access: turnDocumentNative, Native: newNativeInputPart(att, data),
+				Attachment: att, Access: turnDocumentNative, Native: part,
 			})
 		default:
 			switch att.FileCategory {

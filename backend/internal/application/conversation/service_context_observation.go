@@ -57,6 +57,7 @@ func describeContextInput(identity string, input llm.GenerateInput, fullMessages
 		SourceFileIDs          []string
 		Pages                  int
 		Duration               int64
+		Size                   int64
 	}
 	media := make([]mediaPart, 0)
 	var system []string
@@ -76,9 +77,13 @@ func describeContextInput(identity string, input llm.GenerateInput, fullMessages
 					hash := sha256.Sum256([]byte(part.Text))
 					media = append(media, mediaPart{Kind: part.Kind, Hash: hex.EncodeToString(hash[:]), SourceFileIDs: part.SourceFileIDs})
 				}
-			case llm.ContentPartImage, llm.ContentPartDocument, llm.ContentPartAudio, llm.ContentPartVideo:
+			case llm.ContentPartImage, llm.ContentPartDocument, llm.ContentPartAudio, llm.ContentPartVideo, llm.ContentPartAttachment:
 				hash := sha256.Sum256(part.Data)
-				media = append(media, mediaPart{part.Kind, part.MimeType, part.FileName, hex.EncodeToString(hash[:]), part.SourceFileIDs, part.PageCount, part.DurationSeconds})
+				contentHash := hex.EncodeToString(hash[:])
+				if part.Reference != nil {
+					contentHash = part.Reference.SHA256
+				}
+				media = append(media, mediaPart{part.Kind, part.MimeType, part.FileName, contentHash, part.SourceFileIDs, part.PageCount, part.DurationSeconds, part.ByteSize()})
 			}
 		}
 	}

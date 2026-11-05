@@ -13,6 +13,8 @@ import (
 // compatibleForProtocol 把服务的接口协议映射到平台的兼容类型，用于推断媒体模型的配套协议。
 func compatibleForProtocol(protocol string) string {
 	switch llm.NormalizeAdapter(protocol) {
+	case llm.AdapterChat01ChatCompletions:
+		return compatibleChat01
 	case llm.AdapterAnthropicMessages:
 		return compatibleAnthropic
 	case llm.AdapterGoogleGenerateContent, llm.AdapterGoogleImageGeneration, llm.AdapterGeminiInteractions:
@@ -30,6 +32,9 @@ func compatibleForProtocol(protocol string) string {
 // 对话模型沿用服务协议；图片、视频模型取服务厂商对应的媒体协议（及配套协议）。推断不出时回退到服务协议。
 func SuggestExternalModelProtocols(providerProtocol string, model string) []string {
 	providerProtocol = llm.NormalizeAdapter(providerProtocol)
+	if providerProtocol == llm.AdapterChat01ChatCompletions {
+		return []string{providerProtocol}
+	}
 	name := externalModelBaseName(model)
 	kindsJSON := inferKindsJSON(name)
 	if routeProtocolSupportsAllKinds(providerProtocol, parseKinds(kindsJSON)) {

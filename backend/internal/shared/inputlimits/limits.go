@@ -14,10 +14,14 @@ import (
 // Limits are effective values. Zero disables that additional budget. Byte
 // budgets use bytes, including decimal provider limits where applicable.
 type Limits struct {
-	MessageFileCount int   `json:"messageFileCount"`
-	RequestBytes     int64 `json:"requestBytes"`
-	ImageCount       int   `json:"imageCount"`
-	ImageBytes       int64 `json:"imageBytes"`
+	MessageFileCount int `json:"messageFileCount"`
+	// Attachment budgets combine images and original files in the full request.
+	AttachmentCount       int   `json:"attachmentCount"`
+	AttachmentBytes       int64 `json:"attachmentBytes"`
+	AttachmentSingleBytes int64 `json:"attachmentSingleBytes"`
+	RequestBytes          int64 `json:"requestBytes"`
+	ImageCount            int   `json:"imageCount"`
+	ImageBytes            int64 `json:"imageBytes"`
 	// ImageSingleBytes limits one prepared image before Base64 encoding.
 	ImageSingleBytes int64 `json:"imageSingleBytes"`
 	NativeCount      int   `json:"nativeCount"`
@@ -29,17 +33,20 @@ type Limits struct {
 }
 
 type overrides struct {
-	MessageFileCount *int   `json:"messageFileCount,omitempty"`
-	RequestBytes     *int64 `json:"requestBytes,omitempty"`
-	ImageCount       *int   `json:"imageCount,omitempty"`
-	ImageBytes       *int64 `json:"imageBytes,omitempty"`
-	ImageSingleBytes *int64 `json:"imageSingleBytes,omitempty"`
-	NativeCount      *int   `json:"nativeCount,omitempty"`
-	NativeBytes      *int64 `json:"nativeBytes,omitempty"`
-	PDFSingleBytes   *int64 `json:"pdfSingleBytes,omitempty"`
-	PDFBytes         *int64 `json:"pdfBytes,omitempty"`
-	PDFPages         *int   `json:"pdfPages,omitempty"`
-	NonPDFBytes      *int64 `json:"nonPDFBytes,omitempty"`
+	MessageFileCount      *int   `json:"messageFileCount,omitempty"`
+	AttachmentCount       *int   `json:"attachmentCount,omitempty"`
+	AttachmentBytes       *int64 `json:"attachmentBytes,omitempty"`
+	AttachmentSingleBytes *int64 `json:"attachmentSingleBytes,omitempty"`
+	RequestBytes          *int64 `json:"requestBytes,omitempty"`
+	ImageCount            *int   `json:"imageCount,omitempty"`
+	ImageBytes            *int64 `json:"imageBytes,omitempty"`
+	ImageSingleBytes      *int64 `json:"imageSingleBytes,omitempty"`
+	NativeCount           *int   `json:"nativeCount,omitempty"`
+	NativeBytes           *int64 `json:"nativeBytes,omitempty"`
+	PDFSingleBytes        *int64 `json:"pdfSingleBytes,omitempty"`
+	PDFBytes              *int64 `json:"pdfBytes,omitempty"`
+	PDFPages              *int   `json:"pdfPages,omitempty"`
+	NonPDFBytes           *int64 `json:"nonPDFBytes,omitempty"`
 }
 
 type configuration struct {
@@ -154,6 +161,9 @@ func decode(raw string) (configuration, error) {
 	_ = json.Unmarshal([]byte(raw), &root)
 	allowed := map[string]bool{"requestBytes": true, "imageCount": true, "imageBytes": true, "imageSingleBytes": true, "nativeCount": true, "nativeBytes": true, "pdfSingleBytes": true, "pdfBytes": true, "pdfPages": true, "nonPDFBytes": true}
 	allowed["messageFileCount"] = true
+	allowed["attachmentCount"] = true
+	allowed["attachmentBytes"] = true
+	allowed["attachmentSingleBytes"] = true
 	validateFields := func(path string, raw json.RawMessage) error {
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
@@ -220,7 +230,7 @@ func validateOverride(path string, value *overrides) error {
 		var number int64
 		_ = json.Unmarshal(rawValue, &number)
 		max := int64(9_007_199_254_740_991) // largest exact integer in the settings UI
-		if key == "messageFileCount" || key == "imageCount" || key == "nativeCount" || key == "pdfPages" {
+		if key == "messageFileCount" || key == "attachmentCount" || key == "imageCount" || key == "nativeCount" || key == "pdfPages" {
 			max = 2_147_483_647
 		}
 		if number < 0 || number > max {
@@ -236,6 +246,15 @@ func apply(dst *Limits, src *overrides) {
 	}
 	if src.MessageFileCount != nil {
 		dst.MessageFileCount = *src.MessageFileCount
+	}
+	if src.AttachmentCount != nil {
+		dst.AttachmentCount = *src.AttachmentCount
+	}
+	if src.AttachmentBytes != nil {
+		dst.AttachmentBytes = *src.AttachmentBytes
+	}
+	if src.AttachmentSingleBytes != nil {
+		dst.AttachmentSingleBytes = *src.AttachmentSingleBytes
 	}
 	if src.RequestBytes != nil {
 		dst.RequestBytes = *src.RequestBytes

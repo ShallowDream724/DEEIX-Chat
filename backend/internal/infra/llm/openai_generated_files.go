@@ -30,6 +30,9 @@ var _ portllm.GeneratedFileReader = (*Client)(nil)
 // OpenGeneratedFile downloads an explicitly cited container file using the exact
 // generation route. The response remains streaming until its caller closes Body.
 func (c *Client) OpenGeneratedFile(ctx context.Context, route portllm.RouteConfig, file portllm.GeneratedFile) (*portllm.GeneratedFileContent, error) {
+	if portllm.NormalizeAdapter(route.Protocol) == portllm.AdapterChat01ChatCompletions {
+		return c.openChat01GeneratedFile(ctx, route, file)
+	}
 	if portllm.NormalizeAdapter(route.Protocol) != portllm.AdapterOpenAIResponses {
 		return nil, fmt.Errorf("generated file source is not supported for this adapter")
 	}

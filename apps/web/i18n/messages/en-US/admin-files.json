@@ -64,6 +64,18 @@
       "openrouter_images": "OpenRouter Images"
     },
     "fields": {
+      "attachmentCount": {
+        "label": "Attachments per request",
+        "description": "Maximum images and original files across the complete request, including history."
+      },
+      "attachmentSingleBytes": {
+        "label": "Single attachment",
+        "description": "Maximum prepared image or original file size before encoding."
+      },
+      "attachmentBytes": {
+        "label": "Total attachment size",
+        "description": "Combined prepared image and original file size across the complete request, including history."
+      },
       "messageFileCount": {
         "label": "Attachments per message",
         "description": "Maximum attachments per message on this channel, including images and files."

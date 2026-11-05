@@ -21,6 +21,7 @@ const PROVIDER_IMPORT_PATH = "/import";
 
 /** Protocols a link may preselect. The server owns the authoritative list. */
 export const PROVIDER_IMPORT_PROTOCOLS = [
+  "chat01_chat_completions",
   "openai_chat_completions",
   "openai_responses",
   "anthropic_messages",

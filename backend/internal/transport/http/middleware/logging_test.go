@@ -267,3 +267,27 @@ func TestAccessLogPersistsDiagnosticDetailFromErrorChain(t *testing.T) {
 		t.Fatalf("detail must keep the raw body but mask credentials: %q", detail)
 	}
 }
+
+func TestAccessLogRedactsAttachmentFetchCredentialsEverywhere(t *testing.T) {
+	token := strings.Repeat("c", 43)
+	address := "https://files.example/api/v1/attachments/fetch/" + token
+	core, logs := observer.New(zap.InfoLevel)
+	persisted := &errorRecorderStub{}
+	router := gin.New()
+	router.Use(AccessLog(zap.New(core), persisted))
+	router.GET("/api/v1/attachments/fetch/:token", func(c *gin.Context) {
+		if c.Param("token") != token || !strings.Contains(c.Request.URL.Path, token) {
+			t.Fatal("logging changed the real authorization URL")
+		}
+		response.InternalError(c, fmt.Errorf("download %s: %w", address, diagnosticErrorStub{body: `{"url":"` + address + `"}`}))
+	})
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/attachments/fetch/"+token, nil)
+	request.Header.Set("User-Agent", "fetch "+address)
+	router.ServeHTTP(httptest.NewRecorder(), request)
+	if len(persisted.inputs) != 1 || logs.Len() != 1 {
+		t.Fatal("expected access and persisted error records")
+	}
+	if text := fmt.Sprint(persisted.inputs) + logs.All()[0].Message; strings.Contains(text, token) {
+		t.Fatalf("credential reached diagnostic records: %s", text)
+	}
+}

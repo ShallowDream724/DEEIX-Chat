@@ -702,6 +702,7 @@ func TestAllowedProtocolsAreTheStreamingChatProtocols(t *testing.T) {
 		llm.AdapterXAIResponses,
 		llm.AdapterOpenRouterChat,
 		llm.AdapterOpenRouterResponses,
+		llm.AdapterChat01ChatCompletions,
 	}
 	got := AllowedProtocols()
 	if strings.Join(got, ",") != strings.Join(want, ",") {

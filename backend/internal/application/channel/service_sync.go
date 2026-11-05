@@ -73,7 +73,7 @@ func (s *Service) ListRemoteModels(ctx context.Context, upstreamID uint) (*Upstr
 		if name == "" {
 			continue
 		}
-		kindsJSON := inferKindsJSON(name)
+		kindsJSON := inferredKindsForCompatible(name, upstreamItem.Compatible)
 		suggestedProtocols, err := suggestSyncProtocols(upstreamItem.Compatible, upstreamItem.ProtocolDefaultsJSON, kindsJSON)
 		if err != nil {
 			return nil, err
@@ -210,7 +210,7 @@ func (s *Service) reconcileRemoteModelSnapshot(
 		for _, item := range items {
 			name := item.ID
 			remoteNameSet[name] = struct{}{}
-			kindsJSON := inferKindsJSON(name)
+			kindsJSON := inferredKindsForCompatible(name, upstreamItem.Compatible)
 			protocol, resolveErr := suggestSyncProtocol(upstreamItem.Compatible, upstreamItem.ProtocolDefaultsJSON, kindsJSON)
 			if resolveErr != nil {
 				return resolveErr
@@ -365,7 +365,7 @@ func buildUpstreamModelSyncPlan(
 			plan.ProtectedModels = append(plan.ProtectedModels, name)
 			continue
 		}
-		kindsJSON := inferKindsJSON(name)
+		kindsJSON := inferredKindsForCompatible(name, upstream.Compatible)
 		protocol, err := suggestSyncProtocol(upstream.Compatible, upstream.ProtocolDefaultsJSON, kindsJSON)
 		if err != nil {
 			return UpstreamModelSyncPlanView{}, err
@@ -584,6 +584,9 @@ func syncedUpstreamModel(
 		"owned_by": strings.TrimSpace(item.OwnedBy),
 	})
 	vendor := normalizeModelVendor(item.OwnedBy, name, upstream.Name, upstream.BaseURL)
+	if normalizeCompatible(upstream.Compatible) == compatibleChat01 {
+		vendor = compatibleChat01
+	}
 	return &domainchannel.UpstreamModel{
 		UpstreamID:        upstream.ID,
 		BindingCode:       bindingCode,
@@ -616,7 +619,7 @@ func (s *Service) importSingleUpstreamModel(ctx context.Context, upstreamItem *d
 
 	kindsJSON := strings.TrimSpace(input.KindsJSON)
 	if kindsJSON == "" {
-		kindsJSON = inferKindsJSON(platformModelName)
+		kindsJSON = inferredKindsForCompatible(platformModelName, upstreamItem.Compatible)
 	}
 	explicitProtocols := append([]string{}, input.Protocols...)
 	if len(explicitProtocols) == 0 && strings.TrimSpace(input.Protocol) != "" {

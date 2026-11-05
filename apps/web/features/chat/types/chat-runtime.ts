@@ -48,7 +48,7 @@ export type ChatModelOption = {
   contextWindow: number | null;
 };
 
-export const MODEL_MODALITIES = ["text", "image", "pdf", "audio", "video"] as const;
+export const MODEL_MODALITIES = ["text", "image", "pdf", "audio", "video", "attachment"] as const;
 
 export type ModelModality = (typeof MODEL_MODALITIES)[number];
 

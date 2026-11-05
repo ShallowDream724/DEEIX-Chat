@@ -34,16 +34,19 @@ func (s *Service) validateMessageFileCount(fileIDs []string) error {
 // The intersection treats zero as an unbounded dimension.
 func intersectChannelInputLimits(a, b inputlimits.Limits) inputlimits.Limits {
 	return inputlimits.Limits{
-		RequestBytes:     lowerPositive(a.RequestBytes, b.RequestBytes),
-		ImageCount:       lowerPositive(a.ImageCount, b.ImageCount),
-		ImageBytes:       lowerPositive(a.ImageBytes, b.ImageBytes),
-		ImageSingleBytes: lowerPositive(a.ImageSingleBytes, b.ImageSingleBytes),
-		NativeCount:      lowerPositive(a.NativeCount, b.NativeCount),
-		NativeBytes:      lowerPositive(a.NativeBytes, b.NativeBytes),
-		PDFSingleBytes:   lowerPositive(a.PDFSingleBytes, b.PDFSingleBytes),
-		PDFBytes:         lowerPositive(a.PDFBytes, b.PDFBytes),
-		PDFPages:         lowerPositive(a.PDFPages, b.PDFPages),
-		NonPDFBytes:      lowerPositive(a.NonPDFBytes, b.NonPDFBytes),
+		AttachmentCount:       lowerPositive(a.AttachmentCount, b.AttachmentCount),
+		AttachmentBytes:       lowerPositive(a.AttachmentBytes, b.AttachmentBytes),
+		AttachmentSingleBytes: lowerPositive(a.AttachmentSingleBytes, b.AttachmentSingleBytes),
+		RequestBytes:          lowerPositive(a.RequestBytes, b.RequestBytes),
+		ImageCount:            lowerPositive(a.ImageCount, b.ImageCount),
+		ImageBytes:            lowerPositive(a.ImageBytes, b.ImageBytes),
+		ImageSingleBytes:      lowerPositive(a.ImageSingleBytes, b.ImageSingleBytes),
+		NativeCount:           lowerPositive(a.NativeCount, b.NativeCount),
+		NativeBytes:           lowerPositive(a.NativeBytes, b.NativeBytes),
+		PDFSingleBytes:        lowerPositive(a.PDFSingleBytes, b.PDFSingleBytes),
+		PDFBytes:              lowerPositive(a.PDFBytes, b.PDFBytes),
+		PDFPages:              lowerPositive(a.PDFPages, b.PDFPages),
+		NonPDFBytes:           lowerPositive(a.NonPDFBytes, b.NonPDFBytes),
 	}
 }
 

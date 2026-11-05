@@ -12,22 +12,15 @@ func syncUpstreamOutputThinking(traceRecorder *messageTraceRecorder, output *llm
 	if output == nil {
 		return ""
 	}
-	assistantText, extractedThink := splitAssistantOutputThinkingContent(output.Text)
+	assistantText, extractedThink := output.Text, ""
+	if !output.ContentNormalized {
+		assistantText, extractedThink = splitAssistantOutputThinkingContent(output.Text)
+	}
 	if assistantText == "" && strings.TrimSpace(extractedThink) == "" {
 		assistantText = strings.TrimSpace(output.Text)
 	}
 	if traceRecorder != nil && output.Reasoning != nil {
-		traceRecorder.syncStructuredThink(
-			output.Reasoning.Text,
-			output.Reasoning.Summary,
-			reasoningPayload(&llm.ReasoningDelta{
-				EventType:        "response.completed",
-				ItemID:           output.Reasoning.ItemID,
-				Status:           output.Reasoning.Status,
-				Kind:             messageTraceThinkKindContent,
-				EncryptedContent: output.Reasoning.EncryptedContent,
-			}),
-		)
+		syncFinalReasoningTrace(traceRecorder, output.Reasoning, false)
 	} else if traceRecorder != nil && strings.TrimSpace(extractedThink) != "" {
 		traceRecorder.syncStructuredThink(extractedThink, "", nil)
 	}
@@ -40,6 +33,13 @@ func syncUpstreamOutputThinking(traceRecorder *messageTraceRecorder, output *llm
 func syncUpstreamOutputTrace(traceRecorder *messageTraceRecorder, output *llm.GenerateOutput, runID string) (string, []model.ToolCall) {
 	if output == nil {
 		return "", nil
+	}
+	if len(output.ProcessOrder) > 0 {
+		rows := upstreamServerToolCallRows(output, runID)
+		syncOrderedOutputProcess(traceRecorder, output, rows)
+		// Extract visible text without replaying aggregate reasoning after the
+		// ordered segment references have already been consumed.
+		return syncUpstreamOutputThinking(nil, output), rows
 	}
 	// 原生 server-side tools 是上游在同一次 Responses 调用内部完成的工具。
 	// 当本轮没有本地函数调用时，先记录工具再记录最终 reasoning，避免 UI 看起来缺少工具后的最后一次思考。
@@ -55,6 +55,59 @@ func syncUpstreamOutputTrace(traceRecorder *messageTraceRecorder, output *llm.Ge
 	return assistantText, serverToolRows
 }
 
+func syncOrderedOutputProcess(recorder *messageTraceRecorder, output *llm.GenerateOutput, rows []model.ToolCall) {
+	if recorder == nil {
+		return
+	}
+	var segments []llm.ReasoningOutput
+	if output.Reasoning != nil {
+		segments = output.Reasoning.Segments
+	}
+	reasoningIndices := make(map[string]int, len(segments))
+	toolIndices := make(map[string]int, len(rows))
+	for index, segment := range segments {
+		if segment.ItemID != "" {
+			reasoningIndices[segment.ItemID] = index
+		}
+	}
+	for index, row := range rows {
+		if row.ToolCallID != "" {
+			toolIndices[row.ToolCallID] = index
+		}
+	}
+	usedReasoning, usedTools := make([]bool, len(segments)), make([]bool, len(rows))
+	recordReasoning := func(index int) {
+		if usedReasoning[index] {
+			return
+		}
+		usedReasoning[index] = true
+		syncFinalReasoningTrace(recorder, &segments[index], false)
+		recorder.completeUpstreamThink()
+	}
+	recordTool := func(index int) {
+		if usedTools[index] {
+			return
+		}
+		usedTools[index] = true
+		appendUpstreamServerToolTrace(recorder, rows[index:index+1])
+	}
+	for _, item := range output.ProcessOrder {
+		if index, found := reasoningIndices[item.ReasoningItemID]; found {
+			recordReasoning(index)
+		}
+		if index, found := toolIndices[item.ToolCallID]; found {
+			recordTool(index)
+		}
+	}
+	// A partial reference list must not drop otherwise valid process records.
+	for index := range segments {
+		recordReasoning(index)
+	}
+	for index := range rows {
+		recordTool(index)
+	}
+}
+
 // finalizeStreamingOutputTrace 对最终推理快照进行对账，且不
 // 重放流中已发出的 trace 事件。部分适配器仅在最终输出中
 // 暴露服务端工具；当某次调用未观察到实时服务端工具事件时，
@@ -68,21 +121,32 @@ func finalizeStreamingOutputTrace(traceRecorder *messageTraceRecorder, output *l
 		appendUpstreamServerToolTrace(traceRecorder, serverToolRows)
 	}
 	if output.Reasoning != nil {
-		traceRecorder.reconcileStructuredThink(
-			output.Reasoning.Text,
-			output.Reasoning.Summary,
-			reasoningPayload(&llm.ReasoningDelta{
-				EventType:        "response.completed",
-				ItemID:           output.Reasoning.ItemID,
-				Status:           output.Reasoning.Status,
-				Kind:             messageTraceThinkKindContent,
-				EncryptedContent: output.Reasoning.EncryptedContent,
-			}),
-		)
+		syncFinalReasoningTrace(traceRecorder, output.Reasoning, true)
 	}
 	traceRecorder.completeUpstreamThink()
 	if !shouldSyncServerToolsBeforeThinking(output) {
 		appendUpstreamServerToolTrace(traceRecorder, serverToolRows)
+	}
+}
+
+func syncFinalReasoningTrace(recorder *messageTraceRecorder, reasoning *llm.ReasoningOutput, streamed bool) {
+	if recorder == nil || reasoning == nil {
+		return
+	}
+	segments := reasoning.Segments
+	if len(segments) == 0 {
+		segments = []llm.ReasoningOutput{*reasoning}
+	}
+	for _, segment := range segments {
+		payload := reasoningPayload(&llm.ReasoningDelta{EventType: "response.completed", ItemID: segment.ItemID, Status: segment.Status, Kind: messageTraceThinkKindContent, EncryptedContent: segment.EncryptedContent})
+		if streamed {
+			recorder.reconcileStructuredThink(segment.Text, segment.Summary, payload)
+		} else {
+			recorder.syncStructuredThink(segment.Text, segment.Summary, payload)
+		}
+		if len(reasoning.Segments) > 0 {
+			recorder.completeUpstreamThink()
+		}
 	}
 }
 
@@ -97,6 +161,21 @@ func observeServerTool(statuses map[string]string, call llm.ToolCall, status str
 	statuses[key] = normalizeStreamServerToolStatus(status)
 }
 
+// syncStreamingServerToolTrace shares server-process delivery between ordinary
+// and temporary conversations. These records never enter the local tool queue.
+func syncStreamingServerToolTrace(recorder *messageTraceRecorder, call llm.ToolCall, runID string, observed map[string]string) {
+	if recorder == nil {
+		return
+	}
+	// A throttled reasoning delta must obtain its snapshot position before the
+	// following tool record, without declaring that reasoning has completed.
+	recorder.flushUpstreamThinkLiveUpdate(recorder.upstreamThink, upstreamThinkLiveUpdateOptions{PersistSnapshot: true})
+	status := normalizeStreamServerToolStatus(call.Status)
+	observeServerTool(observed, call, status)
+	summary, markdown, payload := buildToolTrace([]model.ToolCall{{RunID: strings.TrimSpace(runID), ToolCallID: strings.TrimSpace(call.ToolCallID), ToolType: strings.TrimSpace(call.ToolType), ToolName: strings.TrimSpace(call.ToolName), Status: status, InputJSON: strings.TrimSpace(call.ArgumentsJSON), OutputJSON: strings.TrimSpace(call.OutputJSON), ErrorJSON: strings.TrimSpace(call.ErrorJSON)}})
+	recorder.syncToolSection(summary, markdown, payload, traceStatusFromToolStatus(status))
+}
+
 func unreconciledServerToolRows(rows []model.ToolCall, observed map[string]string) []model.ToolCall {
 	if len(rows) == 0 {
 		return nil
@@ -106,6 +185,12 @@ func unreconciledServerToolRows(rows []model.ToolCall, observed map[string]strin
 		key := serverToolTraceKey(row.ToolCallID, row.ToolType, row.ToolName)
 		status, found := observed[key]
 		if found && isTerminalServerToolStatus(status) {
+			continue
+		}
+		if found && status == "incomplete" && strings.TrimSpace(row.Status) == "incomplete" && hasChat01ToolProvenance(row.ToolCallID, row.InputJSON) {
+			// Chat01 streams each updated process record through its final parser
+			// delta. Replaying its snapshot into the last round would duplicate
+			// records already attached to earlier reasoning rounds.
 			continue
 		}
 		pending = append(pending, row)
@@ -143,6 +228,9 @@ func outputReasoningContent(output *llm.GenerateOutput) string {
 			return text
 		}
 	}
+	if output.ContentNormalized {
+		return ""
+	}
 	_, extractedThink := splitAssistantOutputThinkingContent(output.Text)
 	return strings.TrimSpace(extractedThink)
 }
@@ -165,7 +253,7 @@ func upstreamServerToolCallRows(output *llm.GenerateOutput, runID string) []mode
 			status = "streaming"
 		}
 		outputJSON := strings.TrimSpace(item.OutputJSON)
-		if outputJSON == "" && isSearchServerToolCall(item) {
+		if outputJSON == "" && isSearchServerToolCall(item) && canAttachResponseCitationsToTool(item) {
 			outputJSON = citationsToolOutputJSON(output.Citations)
 		}
 		rows = append(rows, model.ToolCall{
@@ -180,6 +268,24 @@ func upstreamServerToolCallRows(output *llm.GenerateOutput, runID string) []mode
 		})
 	}
 	return rows
+}
+
+func canAttachResponseCitationsToTool(call llm.ToolCall) bool {
+	if strings.EqualFold(strings.TrimSpace(call.Status), "incomplete") {
+		return false
+	}
+	return !hasChat01ToolProvenance(call.ToolCallID, call.ArgumentsJSON)
+}
+
+func hasChat01ToolProvenance(callID, argsJSON string) bool {
+	if strings.HasPrefix(strings.TrimSpace(callID), "chat01:") {
+		return true
+	}
+	var args struct {
+		Provider string `json:"provider"`
+	}
+	_ = json.Unmarshal([]byte(argsJSON), &args)
+	return strings.EqualFold(strings.TrimSpace(args.Provider), "chat01")
 }
 
 func appendUpstreamServerToolTrace(traceRecorder *messageTraceRecorder, rows []model.ToolCall) {

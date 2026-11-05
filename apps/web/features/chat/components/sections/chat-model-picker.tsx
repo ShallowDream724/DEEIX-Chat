@@ -2,7 +2,7 @@
 
 import { AnimatePresence, useReducedMotion } from "motion/react";
 import * as React from "react";
-import { ArrowRight, AudioLines, Check, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileText, Image as ImageIcon, KeyRound, TicketSlash, Type, Video } from "lucide-react";
+import { ArrowRight, AudioLines, Check, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, FileText, Image as ImageIcon, KeyRound, Paperclip, TicketSlash, Type, Video } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { Badge } from "@/components/ui/badge";
@@ -464,6 +464,7 @@ const MODALITY_ICONS: Record<ModelModality, React.ComponentType<{ className?: st
   pdf: FileText,
   audio: AudioLines,
   video: Video,
+  attachment: Paperclip,
 };
 
 // Text is implied for every chat model, so only the other modalities are worth pointing out.
@@ -978,6 +979,7 @@ export function ChatModelPicker({
         pdf: t("inputModalities.pdf"),
         audio: t("inputModalities.audio"),
         video: t("inputModalities.video"),
+        attachment: t("inputModalities.attachment"),
       },
     }),
     [t],

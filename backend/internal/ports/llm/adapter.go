@@ -14,6 +14,7 @@ const (
 	AdapterOpenRouterResponses    = "openrouter_responses"        // POST /v1/responses（OpenRouter Responses Beta）
 	AdapterOpenRouterImages       = "openrouter_images"           // POST /v1/images（OpenRouter 统一图片端点，生成与参考图编辑）
 	AdapterOpenAIChatCompletions  = "openai_chat_completions"     // POST /v1/chat/completions
+	AdapterChat01ChatCompletions  = "chat01_chat_completions"     // POST /v1/chat/completions（Chat01）
 	AdapterOpenAIImageGenerations = "openai_image_generations"    // POST /v1/images/generations
 	AdapterOpenAIImageEdits       = "openai_image_edits"          // POST /v1/images/edits
 	AdapterAnthropicMessages      = "anthropic_messages"          // POST /v1/messages
@@ -46,7 +47,7 @@ func NormalizeAdapter(raw string) string {
 // IsImplementedAdapter 返回协议是否已有可用的传输层实现。
 func IsImplementedAdapter(raw string) bool {
 	switch NormalizeAdapter(raw) {
-	case AdapterOpenAIResponses, AdapterOpenRouterChat, AdapterOpenRouterResponses, AdapterOpenRouterImages, AdapterOpenAIChatCompletions, AdapterOpenAIImageGenerations, AdapterOpenAIImageEdits, AdapterXAIResponses,
+	case AdapterOpenAIResponses, AdapterOpenRouterChat, AdapterOpenRouterResponses, AdapterOpenRouterImages, AdapterOpenAIChatCompletions, AdapterChat01ChatCompletions, AdapterOpenAIImageGenerations, AdapterOpenAIImageEdits, AdapterXAIResponses,
 		AdapterAnthropicMessages, AdapterGoogleGenerateContent, AdapterGoogleImageGeneration, AdapterGeminiInteractions, AdapterXAIImage, AdapterXAIImageEdits, AdapterXAIVideo, AdapterXAIVideoExtensions:
 		return true
 	default:
@@ -62,6 +63,7 @@ func SupportsStreamingAdapter(raw string) bool {
 		AdapterOpenRouterResponses,
 		AdapterOpenRouterImages,
 		AdapterOpenAIChatCompletions,
+		AdapterChat01ChatCompletions,
 		AdapterOpenAIImageGenerations,
 		AdapterOpenAIImageEdits,
 		AdapterAnthropicMessages,
@@ -137,7 +139,7 @@ func IsVideoGenerationAdapter(raw string) bool {
 // DefaultEndpointForAdapter 返回协议对应的固定端点标识。
 func DefaultEndpointForAdapter(adapter string) string {
 	switch NormalizeAdapter(adapter) {
-	case AdapterOpenAIChatCompletions, AdapterOpenRouterChat:
+	case AdapterOpenAIChatCompletions, AdapterOpenRouterChat, AdapterChat01ChatCompletions:
 		return EndpointChatCompletions
 	case AdapterOpenAIImageGenerations, AdapterGoogleImageGeneration, AdapterXAIImage:
 		return EndpointImageGenerations
@@ -185,6 +187,8 @@ func OptionPolicyProtocolKey(protocol string) string {
 		return "gemini_interactions"
 	case AdapterOpenAIChatCompletions:
 		return "openai_chat_completions"
+	case AdapterChat01ChatCompletions, "chat01":
+		return AdapterChat01ChatCompletions
 	case AdapterOpenRouterChat:
 		return "openrouter_chat_completions"
 	case AdapterOpenRouterImages:

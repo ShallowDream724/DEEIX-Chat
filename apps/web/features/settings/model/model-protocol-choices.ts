@@ -14,6 +14,7 @@ export type ModelProtocolKind = "chat" | "image" | "video";
 // Protocol names are technical terms (the upstream API endpoints); like the admin console they are
 // shown in English and not translated.
 const PROTOCOLS: Record<string, { vendor: string; name: string; kind: ModelProtocolKind }> = {
+  chat01_chat_completions: { vendor: "Chat01", name: "Chat Completions", kind: "chat" },
   openai_chat_completions: { vendor: "OpenAI", name: "Chat Completions", kind: "chat" },
   openai_responses: { vendor: "OpenAI", name: "Responses", kind: "chat" },
   openai_image_generations: { vendor: "OpenAI", name: "Images Generations", kind: "image" },

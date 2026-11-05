@@ -1,5 +1,8 @@
 export const INPUT_LIMIT_FIELDS = [
 	{ key: "messageFileCount", unit: "count", group: "request" },
+  { key: "attachmentCount", unit: "count", group: "request" },
+  { key: "attachmentSingleBytes", unit: "mb", group: "request" },
+  { key: "attachmentBytes", unit: "mb", group: "request" },
   { key: "requestBytes", unit: "mb", group: "request" },
   { key: "imageCount", unit: "count", group: "images" },
   { key: "imageSingleBytes", unit: "mb", group: "images" },

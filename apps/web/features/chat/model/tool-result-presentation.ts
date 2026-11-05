@@ -1,4 +1,4 @@
-import { parseJSON } from "@/shared/lib/type-guards";
+import { parseJSON } from "../../../shared/lib/type-guards.ts";
 
 export type ToolResultCategory = "web_search" | "code_execution" | "image_generation" | "shell" | "generic";
 
@@ -81,6 +81,40 @@ export function parseToolPayload(value: string | undefined): unknown {
   } catch {
     return text;
   }
+}
+
+export function prepareToolArguments(input: unknown): {
+  raw: string;
+  arguments: Array<{ key: string; text: string; compact: boolean }>;
+} {
+  if (!isToolPayloadRecord(input)) {
+    return { raw: readToolPayloadString(input), arguments: [] };
+  }
+  return {
+    raw: "",
+    arguments: Object.entries(input).map(([key, value]) => {
+      const text = formatArgumentValue(value);
+      const compact = (value === null || ["string", "number", "boolean"].includes(typeof value))
+        && !text.includes("\n") && text.length <= 48;
+      return { key, text, compact };
+    }),
+  };
+}
+
+function formatArgumentValue(value: unknown): string {
+  try {
+    if (Array.isArray(value)) {
+      return value.map((item) => (typeof item === "object" ? JSON.stringify(item) : String(item))).join(", ");
+    }
+    if (typeof value === "object" && value !== null) {
+      return Object.entries(value)
+        .map(([key, item]) => `${key}: ${typeof item === "object" ? JSON.stringify(item) : String(item)}`)
+        .join(", ");
+    }
+  } catch {
+    return String(value);
+  }
+  return String(value);
 }
 
 function parseEmbeddedJSON(value: string): unknown {

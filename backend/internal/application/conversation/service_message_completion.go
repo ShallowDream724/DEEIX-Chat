@@ -189,6 +189,7 @@ func (s *Service) persistAssistantAttachmentsIfPresent(ctx context.Context, inpu
 		UserID: input.SendInput.UserID, ConversationID: input.SendInput.ConversationID,
 		AssistantMessageID: input.AssistantMessage.ID, Route: input.ArtifactRoute,
 		Content: input.AssistantText, Files: input.GeneratedFiles,
+		Images: input.GeneratedImages,
 	})
 	if err != nil {
 		return false, err
@@ -203,7 +204,10 @@ func (s *Service) persistAssistantAttachmentsIfPresent(ctx context.Context, inpu
 		input.AssistantText = files.Content
 	}
 	var normalized *assistantImageContentNormalization
-	if len(input.GeneratedImages) > 0 {
+	chat01Artifacts := llm.NormalizeAdapter(input.ArtifactRoute.Protocol) == llm.AdapterChat01ChatCompletions
+	if chat01Artifacts {
+		// Chat01 images and files already share one partial-result batch above.
+	} else if len(input.GeneratedImages) > 0 {
 		normalized, err = s.normalizeAssistantGeneratedImages(ctx, assistantGeneratedImagesInput{
 			UserID:             input.SendInput.UserID,
 			ConversationID:     input.SendInput.ConversationID,
@@ -228,6 +232,14 @@ func (s *Service) persistAssistantAttachmentsIfPresent(ctx context.Context, inpu
 		return false, nil
 	}
 	contentType, content := "markdown", input.AssistantText
+	if chat01Artifacts && files != nil {
+		for _, attachment := range files.AttachmentRows {
+			if attachment.Kind == "image" {
+				contentType = "mixed"
+				break
+			}
+		}
+	}
 	if normalized != nil {
 		contentType, content = "image", normalized.Content
 		if len(input.GeneratedImages) > 0 && strings.TrimSpace(input.AssistantText) != "" {

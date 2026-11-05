@@ -22,6 +22,16 @@ func (c *Cache) maybeSweepLocked(now time.Time) {
 }
 
 func (c *Cache) sweepExpiredLocked(now time.Time) {
+	for key, expiry := range c.attachmentRevokedRuns {
+		if !now.Before(expiry) {
+			delete(c.attachmentRevokedRuns, key)
+		}
+	}
+	for key, item := range c.attachmentGrants {
+		if !now.Before(item.ExpiresAt) {
+			c.removeAttachmentGrantLocked(key)
+		}
+	}
 	for key, item := range c.settings {
 		if now.After(item.expiresAt) {
 			delete(c.settings, key)

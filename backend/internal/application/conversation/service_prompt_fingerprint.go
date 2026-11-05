@@ -46,6 +46,11 @@ func buildPromptStateFingerprint(input promptStateFingerprintInput) string {
 			writeFingerprintField(hasher, "part_text", part.Text)
 			writeFingerprintField(hasher, "part_mime", part.MimeType)
 			writeFingerprintField(hasher, "part_file", part.FileName)
+			if part.Reference != nil {
+				writeFingerprintField(hasher, "part_source", part.Reference.FileID)
+				writeFingerprintField(hasher, "part_hash", part.Reference.SHA256)
+				writeFingerprintField(hasher, "part_size", fmt.Sprintf("%d", part.ByteSize()))
+			}
 			if len(part.Data) > 0 {
 				dataHash := sha256.Sum256(part.Data)
 				writeFingerprintField(hasher, "part_data", hex.EncodeToString(dataHash[:]))

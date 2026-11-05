@@ -148,6 +148,7 @@ type Service struct {
 	billingSvc               *appbilling.Service
 	auditWriter              auditWriter
 	storeProvider            appstorage.Provider
+	attachmentDelivery       attachmentDeliveryService
 	logger                   *zap.Logger
 	moderationSvc            *appcm.Service
 	toolLimiters             sync.Map

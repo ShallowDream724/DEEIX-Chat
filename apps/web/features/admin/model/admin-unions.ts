@@ -17,6 +17,7 @@ export const ADMIN_LLM_MODEL_ACCESS_SCOPES = ["public", "internal"] as const;
 export const isAdminLLMModelAccessScope = isOneOf(ADMIN_LLM_MODEL_ACCESS_SCOPES);
 
 export const ADMIN_LLM_ADAPTERS = [
+  "chat01_chat_completions",
   "openai_responses",
   "openrouter_chat_completions",
   "openrouter_responses",
@@ -37,7 +38,7 @@ export const ADMIN_LLM_ADAPTERS = [
 ] as const;
 export const isAdminLLMAdapter = isOneOf(ADMIN_LLM_ADAPTERS);
 
-export const ADMIN_LLM_COMPATIBLES = ["openai", "anthropic", "google", "xai", "openrouter", "custom"] as const;
+export const ADMIN_LLM_COMPATIBLES = ["openai", "anthropic", "google", "xai", "openrouter", "chat01", "custom"] as const;
 export const isAdminLLMCompatible = isOneOf(ADMIN_LLM_COMPATIBLES);
 
 export const ADMIN_LLM_CB_LOGICS = ["or", "and"] as const;

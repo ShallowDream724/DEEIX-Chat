@@ -26,7 +26,8 @@ import (
 //     OpenAI 兼容协议只在官方地址或显式声明时启用，第三方中转站可能不认识这些内容块；
 //  4. 大小、页数与数量在保守上限内。
 //
-// 文件一律以 base64 内嵌在请求体中，不使用各家 Files API。路由不支持原生 PDF 时可使用文本提取。
+// 已有协议继续以内联字节发送。支持通用原件的路由可在传输准备阶段把可信引用
+// 转为 HTTPS 授权地址；不使用供应商 Files API。没有原生能力时仍需可用的文本提取路径。
 // 原生预算不足时停止发送；音频和视频没有文本回退，历史文件同样需要可用的处理路径。
 // 策略按路由计算：故障转移到另一条路由时会重新判断，不会把原生内容块发给不支持它的协议。
 
@@ -41,7 +42,7 @@ const (
 	officialOpenRouterHost   = "openrouter.ai"
 )
 
-// nativeInputKind 是可以原生发送的文件类型。
+// nativeInputKind 标识需要沿用分类预算和 token 估算的已知原件类型。
 type nativeInputKind string
 
 const (
@@ -101,6 +102,8 @@ func nativeInputMIME(att AttachmentInput) string {
 
 // nativeInputPolicy 是某条路由上可以原生发送的输入类型。
 type nativeInputPolicy struct {
+	Attachment       bool
+	HTTPS            bool
 	Budget           nativeInputBudget
 	InputLimits      inputlimits.Limits
 	budgetConfigured bool
@@ -137,8 +140,18 @@ func (p nativeInputPolicy) withoutPDFPageBudget() nativeInputPolicy {
 	return p
 }
 
+func inlineRequestByteLimit(p nativeInputPolicy) int64 {
+	if p.HTTPS {
+		return 0
+	}
+	return p.InputLimits.RequestBytes
+}
+
 // accepts 判断附件能否在该路由上原生发送（不含预算）。
 func (p nativeInputPolicy) accepts(att AttachmentInput) bool {
+	if p.Attachment && !isImageOriginal(att) {
+		return true
+	}
 	switch nativeInputKindOf(att) {
 	case nativeInputPDF:
 		return p.PDF
@@ -164,7 +177,11 @@ func resolveNativeInputPolicy(route *channel.ResolvedRoute, configuration ...str
 	if route == nil {
 		return nativeInputPolicy{}
 	}
-	modalities := domainchannel.ResolveInputModalities(route.ModelCapabilitiesJSON, route.CatalogInputModalities)
+	catalog := route.CatalogInputModalities
+	if promptPolicyForRoute(route).OriginalAttachments {
+		catalog = domainchannel.Chat01InputModalities()
+	}
+	modalities := domainchannel.ResolveInputModalities(route.ModelCapabilitiesJSON, catalog)
 	support := nativeProtocolSupportFor(route, modalities.Source == domainchannel.InputModalitiesSourceExplicit)
 	rawLimits := ""
 	if len(configuration) > 0 {
@@ -173,6 +190,7 @@ func resolveNativeInputPolicy(route *channel.ResolvedRoute, configuration ...str
 	routeConfig := routeConfigFromResolved(route, llm.DefaultEndpointForAdapter(route.Protocol), "", "", config.Config{InputLimitsJSON: rawLimits})
 	limits := llm.EffectiveInputMediaLimits(routeConfig)
 	policy := nativeInputPolicy{
+		Attachment:       promptPolicyForRoute(route).OriginalAttachments && modalities.Supports(domainchannel.InputModalityAttachment),
 		InputLimits:      limits,
 		budgetConfigured: true,
 		Budget: nativeInputBudget{
@@ -188,6 +206,9 @@ func resolveNativeInputPolicy(route *channel.ResolvedRoute, configuration ...str
 	}
 	if modalities.Supports(domainchannel.InputModalityVideo) {
 		policy.VideoMIMEs = support.videoMIMEs
+	}
+	if policy.Attachment {
+		policy.PDF = true
 	}
 	return policy
 }
@@ -266,7 +287,11 @@ func isNativeInputCandidate(att AttachmentInput) bool {
 		return false
 	}
 	// Extracting text or ancillary metadata is independent of reading the original.
-	return nativeInputKindOf(att) != ""
+	return !isImageOriginal(att)
+}
+
+func isImageOriginal(att AttachmentInput) bool {
+	return strings.EqualFold(att.Kind, "image") || strings.EqualFold(att.FileCategory, fileCategoryImage) || strings.HasPrefix(nativeInputMIME(att), "image/")
 }
 
 // selectNativeInputs 仅在所有原生文件均可放入预算时返回可读文件。
@@ -314,7 +339,7 @@ func selectNativeInputsWithRejections(attachments []AttachmentInput, policy nati
 		{"pdfBytes", pdfBytes, budget.PDFBytes},
 		{"pdfPages", pdfPages, int64(budget.PDFPages)},
 		{"nonPDFBytes", totalBytes - pdfBytes, budget.NonPDFBytes},
-		{"requestBytes", encodedBytes, policy.InputLimits.RequestBytes},
+		{"requestBytes", encodedBytes, inlineRequestByteLimit(policy)},
 	} {
 		if limit.limit > 0 && limit.actual > limit.limit {
 			err := llm.NewInputLimitError(limit.dimension, limit.actual, limit.limit)
@@ -432,7 +457,7 @@ func (n nativeInputs) unsupported(att AttachmentInput) bool {
 	return isUserMediaAttachment(att) && !n.Policy.accepts(att)
 }
 
-// resolveNativeInputs 计算路由策略并读取预算内的原始内容。发送入口和每次路由
+// resolveNativeInputs 计算路由策略，按传输能力保留可信引用或读取预算内的原始内容。发送入口和每次路由
 // 规划随后校验原生预算及读取结果，确保完整分支中的附件未丢失。
 func (s *Service) resolveNativeInputs(ctx context.Context, route *channel.ResolvedRoute, attachments []AttachmentInput, cache *nativeInputCache, configuration ...config.Config) nativeInputs {
 	var cfg config.Config
@@ -442,6 +467,7 @@ func (s *Service) resolveNativeInputs(ctx context.Context, route *channel.Resolv
 		cfg = s.cfg.Snapshot()
 	}
 	result := nativeInputs{Policy: resolveNativeInputPolicy(route, cfg.InputLimitsJSON)}
+	result.Policy.HTTPS = promptPolicyForRoute(route).OriginalAttachments && s.attachmentHTTPSAvailable()
 	if result.Policy.PDF && result.Policy.budget().PDFPages > 0 {
 		// Don't open stored PDFs to count pages when metadata already proves
 		// the selection cannot fit a count, byte or request-size budget.
@@ -463,6 +489,15 @@ func (s *Service) resolveNativeInputs(ctx context.Context, route *channel.Resolv
 	result.Selected = make(map[string]bool, len(selected))
 	for _, att := range selected {
 		result.Selected[strings.TrimSpace(att.FileID)] = true
+	}
+	if result.Policy.HTTPS {
+		result.Parts = make(map[string]llm.ContentPart, len(selected))
+		for _, att := range selected {
+			part := newNativeInputPart(att, nil)
+			part.Reference = attachmentReference(att)
+			result.Parts[strings.TrimSpace(att.FileID)] = part
+		}
+		return result
 	}
 	missing := make([]AttachmentInput, 0, len(selected))
 	for _, att := range selected {
@@ -576,9 +611,13 @@ func newNativeInputPart(att AttachmentInput, data []byte) llm.ContentPart {
 		part.Kind = llm.ContentPartVideo
 		part.DurationSeconds = att.DurationSeconds
 	default:
-		part.Kind = llm.ContentPartDocument
-		part.MimeType = nativeDocumentMIMEPDF
-		part.PageCount = att.PageCount
+		if nativeInputKindOf(att) == nativeInputPDF {
+			part.Kind = llm.ContentPartDocument
+			part.MimeType = nativeDocumentMIMEPDF
+			part.PageCount = att.PageCount
+		} else {
+			part.Kind = llm.ContentPartAttachment
+		}
 	}
 	return part
 }

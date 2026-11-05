@@ -45,6 +45,9 @@
     "tokens": "{count} token",
     "review": "输入限制",
     "titles": {
+      "attachmentCount": "完整请求附件数量超限",
+      "attachmentSingleBytes": "附件过大",
+      "attachmentBytes": "附件总大小超限",
       "modelTaskUnsupported": "所选模型不支持此操作",
       "contextTokens": "对话内容过长",
       "currentTurnTokens": "当前消息过长",
@@ -62,6 +65,9 @@
       "temporaryMessageCount": "临时对话消息过多"
     },
     "labels": {
+      "attachmentCount": "完整请求附件数量",
+      "attachmentSingleBytes": "单个附件大小",
+      "attachmentBytes": "附件总大小",
       "messageFileCount": "单条消息附件数量",
       "imageCount": "图片数量",
       "imageSingleBytes": "单张图片大小",

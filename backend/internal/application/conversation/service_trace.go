@@ -102,6 +102,7 @@ type messageTraceRecorder struct {
 	process         *messageTraceDraft
 	tools           *messageTraceDraft
 	upstreamThink   *messageTraceDraft
+	reasoningItems  map[string]*messageTraceDraft
 	promptTrace     *model.MessagePromptTrace
 	nextEventSeq    int
 	nextRoundSeq    int
@@ -625,6 +626,7 @@ func (r *messageTraceRecorder) appendUpstreamReasoning(kind string, text string,
 		draft.status = messageTraceStatusStreaming
 	}
 	mergeUpstreamReasoningPayload(draft, kind, payload)
+	r.rememberReasoningItem(draft)
 	r.queueUpstreamThinkLiveUpdate(draft, kind, text, "", payload)
 }
 
@@ -654,6 +656,14 @@ func (r *messageTraceRecorder) syncStructuredThink(content string, summary strin
 func (r *messageTraceRecorder) reconcileStructuredThink(content string, summary string, payload *tracePayload) {
 	if !r.enabled() || (content == "" && summary == "") {
 		return
+	}
+	if payload != nil {
+		if prior := r.reasoningItems[strings.TrimSpace(payload.ReasoningItemID())]; prior != nil && prior != r.upstreamThink {
+			current := r.upstreamThink
+			r.flushUpstreamThinkLiveUpdate(current, upstreamThinkLiveUpdateOptions{Force: true})
+			r.upstreamThink = prior
+			defer func() { r.upstreamThink = current }()
+		}
 	}
 	r.completeProcess()
 	draft := r.upstreamThink
@@ -697,8 +707,23 @@ func (r *messageTraceRecorder) updateStructuredThinkDraft(draft *messageTraceDra
 		draft.status = messageTraceStatusStreaming
 	}
 	mergeUpstreamReasoningPayload(draft, messageTraceThinkKindContent, payload)
+	r.rememberReasoningItem(draft)
 	deltaText, replaceText := diffUpstreamThinkContent(previousContent, draft.contentMarkdown)
 	r.queueUpstreamThinkLiveUpdate(draft, messageTraceThinkKindContent, deltaText, replaceText, payload)
+}
+
+func (r *messageTraceRecorder) rememberReasoningItem(draft *messageTraceDraft) {
+	if draft == nil || draft.payload == nil {
+		return
+	}
+	id := strings.TrimSpace(draft.payload.ReasoningItemID())
+	if id == "" {
+		return
+	}
+	if r.reasoningItems == nil {
+		r.reasoningItems = make(map[string]*messageTraceDraft)
+	}
+	r.reasoningItems[id] = draft
 }
 
 func reasoningItemChanged(draft *messageTraceDraft, payload *tracePayload) bool {
@@ -1776,6 +1801,9 @@ func summarizeToolTracePayload(payload *tracePayload) string {
 	if len(items) == 0 {
 		return ""
 	}
+	if summary := summarizePartialToolTrace(items); summary != "" {
+		return summary
+	}
 	errorCount := 0
 	for _, item := range items {
 		switch strings.TrimSpace(item.Status) {
@@ -1796,9 +1824,49 @@ func summarizeToolTraceDraft(draft *messageTraceDraft) string {
 		payloadTotal = len(draft.payload.ToolCalls)
 	}
 	if contentTotal > payloadTotal {
+		if strings.Contains(draft.contentMarkdown, "结果未完整提供") || strings.Contains(draft.contentMarkdown, "已有过程记录") {
+			return fmt.Sprintf("已记录 %d 段工具过程", contentTotal)
+		}
 		return formatToolTraceSummary(contentTotal, contentErrors)
 	}
 	return summarizeToolTracePayload(draft.payload)
+}
+
+// Missing execution results are process records, not successful tool calls.
+// Keep this shared by the live builder and merged/final snapshots.
+func summarizePartialToolTrace(items []traceToolCall) string {
+	var incomplete, unknown, active, success, failed int
+	for _, item := range items {
+		switch strings.TrimSpace(item.Status) {
+		case "incomplete":
+			incomplete++
+		case "requested", "streaming", "in_progress", "queued", "searching", "generating":
+			active++
+		case "success", "completed", "reused":
+			success++
+		case "error", "failed":
+			failed++
+		default:
+			unknown++
+		}
+	}
+	if incomplete == 0 && unknown == 0 {
+		return ""
+	}
+	parts := []string{fmt.Sprintf("已记录 %d 段工具过程", len(items))}
+	if incomplete > 0 {
+		parts = append(parts, fmt.Sprintf("%d 段结果未完整提供", incomplete))
+	}
+	if active > 0 {
+		parts = append(parts, fmt.Sprintf("%d 项进行中", active))
+	}
+	if success > 0 {
+		parts = append(parts, fmt.Sprintf("%d 次已完成", success))
+	}
+	if failed > 0 {
+		parts = append(parts, fmt.Sprintf("%d 次失败", failed))
+	}
+	return strings.Join(parts, "，")
 }
 
 func formatToolTraceSummary(total int, errorCount int) string {
@@ -2071,9 +2139,12 @@ func buildToolTrace(rows []model.ToolCall) (string, string, *tracePayload) {
 			toolName = "unknown"
 		}
 		status := strings.TrimSpace(row.Status)
-		statusLabel := "已完成"
+		statusLabel := "已有过程记录，可查看已有信息"
+		if isCodeToolTrace(row) {
+			statusLabel = "已有过程记录，可查看代码和已有信息"
+		}
 		switch status {
-		case "success":
+		case "success", "completed":
 			statusLabel = "已完成"
 			successCount++
 		case "reused":
@@ -2085,8 +2156,13 @@ func buildToolTrace(rows []model.ToolCall) (string, string, *tracePayload) {
 		case "error", "failed":
 			statusLabel = "失败"
 			errorCount++
+		case "incomplete":
+			statusLabel = "结果未完整提供，可查看已有信息"
+			if isCodeToolTrace(row) {
+				statusLabel = "结果未完整提供，可查看代码和已有信息"
+			}
 		case "":
-			status = "completed"
+			status = "unknown"
 		}
 		parts := []string{statusLabel}
 		if row.LatencyMS > 0 {
@@ -2126,7 +2202,15 @@ func buildToolTrace(rows []model.ToolCall) (string, string, *tracePayload) {
 	} else if successCount == len(rows) {
 		summary = fmt.Sprintf("%d 次工具调用已完成", len(rows))
 	}
+	if partial := summarizePartialToolTrace(toolCalls); partial != "" {
+		summary = partial
+	}
 	return summary, strings.Join(lines, "\n"), &tracePayload{ToolCalls: toolCalls}
+}
+
+func isCodeToolTrace(row model.ToolCall) bool {
+	kind := strings.ToLower(strings.TrimSpace(row.ToolType) + " " + strings.TrimSpace(row.ToolName))
+	return strings.Contains(kind, "code") || strings.Contains(kind, "python") || strings.Contains(kind, "shell")
 }
 
 func toolOutputPreview(raw string, presentation *toolresult.Presentation) string {

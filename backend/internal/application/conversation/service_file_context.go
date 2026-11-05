@@ -49,9 +49,9 @@ type conversationFileContextPlan struct {
 
 // AttachmentInputError adds the context needed to recover from a file input error.
 type AttachmentInputError struct {
-	FileName string `json:"fileName,omitempty"`
-	Scope    string `json:"scope"`
-	Reason   string `json:"reason,omitempty"`
+	FileName string
+	Scope    string
+	Reason   string
 	cause    error
 }
 
@@ -93,7 +93,7 @@ func isAggregateAttachmentLimit(err error) bool {
 		return false
 	}
 	switch limit.Dimension {
-	case "nativeCount", "nativeBytes", "pdfBytes", "pdfPages", "nonPDFBytes", "requestBytes", "imageCount", "imageBytes":
+	case "nativeCount", "nativeBytes", "pdfBytes", "pdfPages", "nonPDFBytes", "requestBytes", "imageCount", "imageBytes", "attachmentCount", "attachmentBytes":
 		return true
 	default:
 		return false

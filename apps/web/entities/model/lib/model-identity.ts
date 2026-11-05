@@ -28,6 +28,14 @@ const GENERIC_VENDOR_KEYS = new Set(["openrouter", "copilot", "unknown"]);
 
 const VENDOR_CATALOG: readonly VendorCatalogItem[] = [
   {
+    key: "chat01",
+    label: "Chat01",
+    vendorIcon: "/icons/chat01.jpg",
+    modelIcon: "/icons/chat01.jpg",
+    aliases: ["chat01"],
+    patterns: [/\bchat01\b/i],
+  },
+  {
     key: "openai",
     label: "OpenAI",
     vendorIcon: "openai",
@@ -298,6 +306,10 @@ function chooseResolvedVendor(input: ModelIdentityInput): VendorCatalogItem | nu
   const normalizedVendor = normalizeValue(input.vendor);
   const normalizedProvider = normalizeValue(input.provider);
 
+  if (normalizedVendor === "chat01") {
+    return findVendorByExactValue(normalizedVendor);
+  }
+
   const vendorFromName = findVendorByText(normalizedCode);
 
   if (vendorFromName) {
@@ -345,7 +357,8 @@ export function resolveModelIdentity(input: ModelIdentityInput): ResolvedModelId
     vendorKey: resolvedVendor.key,
     vendorLabel: resolvedVendor.label,
     vendorIcon: resolvedVendor.vendorIcon,
-    modelIcon: rawIcon && !shouldOverrideGenericIcon ? rawIcon : detectedModelIcon || resolvedVendor.modelIcon,
+    modelIcon: rawIcon && !shouldOverrideGenericIcon ? rawIcon
+      : resolvedVendor.key === "chat01" ? resolvedVendor.modelIcon : detectedModelIcon || resolvedVendor.modelIcon,
   };
 }
 
@@ -386,6 +399,7 @@ export function resolveVendorLabel(vendor: string): string {
 
 export function resolveModelIconURL(icon: string): string | null {
   const normalized = icon.trim();
+  if (normalized.toLowerCase() === "chat01") return "/icons/chat01.jpg";
   if (!normalized) {
     return null;
   }

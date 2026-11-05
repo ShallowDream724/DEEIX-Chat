@@ -146,6 +146,7 @@ func BuiltInModelVendors() []ModelVendor {
 		{Key: "baidu", Name: "Baidu", Icon: "baidu", BuiltIn: true, SortOrder: 2200},
 		{Key: "openrouter", Name: "OpenRouter", Icon: "openrouter", BuiltIn: true, SortOrder: 2300},
 		{Key: "copilot", Name: "GitHub Copilot", Icon: "copilot", BuiltIn: true, SortOrder: 2400},
+		{Key: "chat01", Name: "Chat01", Icon: "/icons/chat01.jpg", BuiltIn: true, SortOrder: 2450},
 		{Key: "unknown", Name: "Unknown", Icon: "", BuiltIn: true, SortOrder: 2500},
 	}
 }

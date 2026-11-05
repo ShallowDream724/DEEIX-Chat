@@ -711,7 +711,8 @@
       "image": "图片",
       "pdf": "PDF",
       "audio": "音频",
-      "video": "视频"
+      "video": "视频",
+      "attachment": "文件"
     },
     "viewPricing": "查看价格",
     "freeBadge": "免费",

@@ -432,7 +432,8 @@
         "image": "Image",
         "pdf": "PDF",
         "audio": "Audio",
-        "video": "Video"
+        "video": "Video",
+        "attachment": "File"
       }
     },
     "circuitBreak": "Model circuit breaker",

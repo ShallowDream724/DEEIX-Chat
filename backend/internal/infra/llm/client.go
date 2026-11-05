@@ -527,6 +527,7 @@ func newClientWithUntrustedPolicy(outboundPolicy security.OutboundPolicy, untrus
 		portllm.AdapterOpenRouterResponses:    &openRouterResponsesAdapter{client: client},
 		portllm.AdapterOpenRouterImages:       &openRouterImagesAdapter{client: client},
 		portllm.AdapterOpenAIChatCompletions:  &openAIChatCompletionsAdapter{client: client},
+		portllm.AdapterChat01ChatCompletions:  &chat01Adapter{client: client},
 		portllm.AdapterOpenAIImageGenerations: &openAIImageGenerationsAdapter{client: client},
 		portllm.AdapterOpenAIImageEdits:       &openAIImageEditsAdapter{client: client},
 		portllm.AdapterXAIResponses:           &xAIResponsesAdapter{client: client},
@@ -567,9 +568,15 @@ func newRouteHTTPClient(policy security.OutboundPolicy, redirectPolicy security.
 	transport.IdleConnTimeout = 90 * time.Second
 	transport.ForceAttemptHTTP2 = true
 
+	var roundTripper http.RoundTripper = transport
+	if !fileDownload {
+		roundTripper = platformtracing.NewHTTPTransport(transport)
+	}
+	// Artifact URLs can carry signed query parameters. Their application-layer
+	// errors are already sanitized; avoid recording full URLs in HTTP tracing.
 	client := &http.Client{
 		Timeout:   0,
-		Transport: platformtracing.NewHTTPTransport(transport),
+		Transport: roundTripper,
 	}
 	if trustedOrigin != "" {
 		client.CheckRedirect = outboundhttp.NewRedirectPolicy(redirectPolicy, trustedOrigin, "model provider")

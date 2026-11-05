@@ -13,6 +13,8 @@ import (
 )
 
 type messageRoutePromptInput struct {
+	ResolveBroadContext      func(context.Context) userContextInput
+	UIComponentIDs           []uint
 	UserID                   uint
 	UserContent              string
 	ProjectSystemPrompt      string
@@ -72,6 +74,34 @@ func (s *Service) planRoutePrompt(
 }
 
 func (s *Service) buildMessageRoutePrompt(ctx context.Context, route *channel.ResolvedRoute, input messageRoutePromptInput) (PromptPlan, error) {
+	policy := promptPolicyForRoute(route)
+	if policy.BroadMemory && input.ResolveBroadContext != nil {
+		broad := input.ResolveBroadContext(ctx)
+		input.DynamicContext.Memory = broad.Memory
+		input.DynamicContext.RecallChunks = broad.RecallChunks
+		input.DynamicContext.HistoricalArtifacts = broad.HistoricalArtifacts
+	}
+	if !policy.UIComponents {
+		input.HTMLVisualPromptEnabled = false
+		input.UIComponents = nil
+		input.DynamicContext.UIStates = nil
+	}
+	if !policy.LocalTools {
+		input.ToolRuntime = selectedToolRuntime{}
+	}
+	if policy.UIComponents && len(input.UIComponents) == 0 && len(input.UIComponentIDs) > 0 {
+		var err error
+		input.UIComponents, err = s.resolveUIComponents(ctx, input.UserID, input.UIComponentIDs)
+		if err != nil {
+			return PromptPlan{}, err
+		}
+	}
+	input.SkillPrompts = routeSkillPrompts(input.SkillPrompts, input.Config.SkillsPrompt, policy)
+	if !policy.BroadMemory {
+		input.DynamicContext.Memory = nil
+		input.DynamicContext.RecallChunks = nil
+		input.DynamicContext.HistoricalArtifacts = nil
+	}
 	// 模型上下文预算在最终 GenerateInput 完整组装后统一执行。这里保留完整活跃
 	// 分支，避免先按历史消息耗尽预算，再遗漏文件、RAG、Skill 与工具定义开销。
 	routeMessages := input.DomainMessages
@@ -94,6 +124,7 @@ func (s *Service) buildMessageRoutePrompt(ctx context.Context, route *channel.Re
 		return PromptPlan{}, err
 	}
 	dynamicContext := input.DynamicContext
+	dynamicContext = withoutNativeParsedContext(dynamicContext, native)
 	imageMessages := routeMessages
 	if input.SkipImageAttachments {
 		imageMessages, files, dynamicContext.Attachments = withoutProcessedRouteImages(imageMessages, files, dynamicContext)
@@ -204,9 +235,12 @@ func (s *Service) resolveRouteParsedAttachments(ctx context.Context, input messa
 		if _, ok := native.Parts[strings.TrimSpace(att.FileID)]; ok {
 			continue
 		}
-		// The initial route read the original PDF and bypassed extraction.
+		// The initial route selected an original and bypassed extraction.
 		// A text-only fallback can send the parsed document if it is available.
 		att.ContextMode = fileContextModeFull
+		if !attachmentHasTextExtractionPath(att) {
+			return nil, attachmentInputError(att, ErrFileUnsupportedByModel)
+		}
 		if strings.TrimSpace(att.ExtractedText) == "" && s.processingSvc != nil && input.UserID != 0 {
 			hydrated, err := s.hydrateAttachmentsForSend(ctx, input.UserID, []AttachmentInput{att}, nil)
 			if err != nil {
@@ -217,6 +251,48 @@ func (s *Service) resolveRouteParsedAttachments(ctx context.Context, input messa
 		files[i] = att
 	}
 	return files, nil
+}
+
+func attachmentHasTextExtractionPath(att AttachmentInput) bool {
+	switch strings.ToLower(strings.TrimSpace(att.FileCategory)) {
+	case "pdf", "word", "presentation", "excel", "text", "document":
+		return true
+	default:
+		return strings.TrimSpace(att.ExtractedText) != ""
+	}
+}
+
+// A route that sends an original must not also receive that file's extracted
+// text, retrieval excerpts, or an outdated no-match status from another route.
+func withoutNativeParsedContext(input userContextInput, native nativeInputs) userContextInput {
+	if len(native.Parts) == 0 {
+		return input
+	}
+	files := input.Files
+	input.Files = nil
+	for _, att := range files {
+		if _, ok := native.Parts[strings.TrimSpace(att.FileID)]; !ok {
+			input.Files = append(input.Files, att)
+		}
+	}
+	chunks := input.RAGChunks
+	input.RAGChunks = nil
+	for _, chunk := range chunks {
+		if _, ok := native.Parts[strings.TrimSpace(chunk.FileID)]; !ok {
+			input.RAGChunks = append(input.RAGChunks, chunk)
+		}
+	}
+	unretrieved := input.UnretrievedFiles
+	input.UnretrievedFiles = nil
+	for _, item := range unretrieved {
+		if _, ok := native.Parts[strings.TrimSpace(item.Attachment.FileID)]; !ok {
+			input.UnretrievedFiles = append(input.UnretrievedFiles, item)
+		}
+	}
+	if len(input.RAGChunks) == 0 && len(input.UnretrievedFiles) == 0 {
+		input.RAGNotice = ""
+	}
+	return input
 }
 
 func withoutProcessedRouteImages(messages []model.Message, files []AttachmentInput, dynamic userContextInput) ([]model.Message, []AttachmentInput, []AttachmentInput) {

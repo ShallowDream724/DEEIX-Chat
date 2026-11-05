@@ -419,14 +419,14 @@ func promptMessageHasContent(message llm.Message) bool {
 
 func contentPartHasContent(part llm.ContentPart) bool {
 	if isBinaryContentPart(part) {
-		return len(part.Data) > 0
+		return part.ByteSize() > 0
 	}
 	return strings.TrimSpace(part.Text) != ""
 }
 
 func isBinaryContentPart(part llm.ContentPart) bool {
 	switch part.Kind {
-	case llm.ContentPartImage, llm.ContentPartAudio, llm.ContentPartVideo, llm.ContentPartDocument:
+	case llm.ContentPartImage, llm.ContentPartAudio, llm.ContentPartVideo, llm.ContentPartDocument, llm.ContentPartAttachment:
 		return true
 	default:
 		return false

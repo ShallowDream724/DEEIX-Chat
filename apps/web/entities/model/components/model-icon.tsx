@@ -87,7 +87,7 @@ export function ModelIcon({
   }
 
   return (
-    <span className={cn("inline-flex shrink-0 items-center justify-center", className)} style={{ width: dimension, height: dimension }}>
+    <span className={cn("inline-flex shrink-0 items-center justify-center", iconSrc === "/icons/chat01.jpg" && "overflow-hidden rounded", className)} style={{ width: dimension, height: dimension }}>
       {content}
       <span className="sr-only">{label}</span>
     </span>

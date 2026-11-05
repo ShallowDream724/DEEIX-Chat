@@ -1,7 +1,7 @@
 "use client";
 
 import type * as React from "react";
-import { AudioLines, FileText, Image as ImageIcon, MoveRight, Type, Video } from "lucide-react";
+import { AudioLines, FileText, Image as ImageIcon, MoveRight, Paperclip, Type, Video } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
@@ -24,6 +24,7 @@ const MODALITY_ICONS: Record<ModelModality, React.ComponentType<{ className?: st
   pdf: FileText,
   audio: AudioLines,
   video: Video,
+  attachment: Paperclip,
 };
 
 type ModelModalitiesFieldProps = {
@@ -31,6 +32,7 @@ type ModelModalitiesFieldProps = {
   override: ModelModality[] | null;
   resolution: AdminLLMModelCatalogResolution | null;
   disabled?: boolean;
+  attachmentInput?: boolean;
   onChange: (modalities: ModelModality[] | null) => boolean;
 };
 
@@ -38,22 +40,26 @@ type ModelModalitiesFieldProps = {
  * Input → output modalities of the model, as resolved by the server: an explicit `inputModalities`
  * declaration wins, otherwise the models.dev catalog. Output modalities come from the catalog only.
  */
-export function ModelModalitiesField({ override, resolution, disabled = false, onChange }: ModelModalitiesFieldProps) {
+export function ModelModalitiesField({ override, resolution, disabled = false, attachmentInput = false, onChange }: ModelModalitiesFieldProps) {
   const t = useTranslations("adminModels");
   const match = resolution?.matched ? resolution : null;
   const catalogInputs = normalizeModalities(match?.inputModalities);
   const outputs = normalizeModalities(match?.outputModalities);
-  const inputs = override ?? catalogInputs;
+  const inputChoices: readonly ModelModality[] = attachmentInput ? ["image", "attachment"] : CONFIGURABLE_INPUT_MODALITIES;
+  const defaultInputs: ModelModality[] = attachmentInput ? ["text", "image", "attachment"] : catalogInputs;
+  const inputs = (override ?? defaultInputs)
+    .filter((modality) => modality === "text" || inputChoices.includes(modality));
   const names: Record<ModelModality, string> = {
     text: t("sheet.modalities.names.text"),
     image: t("sheet.modalities.names.image"),
     pdf: t("sheet.modalities.names.pdf"),
     audio: t("sheet.modalities.names.audio"),
     video: t("sheet.modalities.names.video"),
+    attachment: t("sheet.modalities.names.attachment"),
   };
 
   function toggle(modality: ModelModality) {
-    const base = override ?? (catalogInputs.length > 0 ? catalogInputs : ["text" as const]);
+    const base = inputs.length > 0 ? inputs : ["text" as const];
     const next = base.includes(modality) ? base.filter((value) => value !== modality) : [...base, modality];
     onChange(normalizeModalities([...next, "text"]));
   }
@@ -78,7 +84,7 @@ export function ModelModalitiesField({ override, resolution, disabled = false, o
             <Type strokeWidth={1.8} aria-hidden="true" />
             <span>{names.text}</span>
           </ModelCapabilityMenuItem>
-          {CONFIGURABLE_INPUT_MODALITIES.map((modality) => {
+          {inputChoices.map((modality) => {
             const Icon = MODALITY_ICONS[modality];
             return (
               <ModelCapabilityMenuItem

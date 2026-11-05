@@ -432,7 +432,8 @@
         "image": "图片",
         "pdf": "PDF",
         "audio": "音频",
-        "video": "视频"
+        "video": "视频",
+        "attachment": "文件"
       }
     },
     "circuitBreak": "模型熔断机制",

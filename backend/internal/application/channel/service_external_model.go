@@ -63,6 +63,16 @@ func (s *Service) BuildExternalRoute(input ExternalRouteInput) (*ResolvedRoute, 
 		UntrustedEndpoint:               true,
 	}
 	protocolKeys := []string{llm.OptionPolicyProtocolKey(protocol)}
+	if protocol == llm.AdapterChat01ChatCompletions {
+		route.ModelVendor = compatibleChat01
+		route.ModelIcon = resolveVendorIcon(compatibleChat01)
+		route.ModelCapabilitiesJSON = domainchannel.Chat01DefaultCapabilitiesJSON
+		route.CatalogInputModalities = domainchannel.Chat01InputModalities()
+		route.ConnectTimeoutMS = chat01ConnectTimeoutMS
+		route.ReadTimeoutMS = chat01LongTimeoutMS
+		route.StreamIdleTimeoutMS = chat01LongTimeoutMS
+		return route, nil
+	}
 	if catalog := s.activeModelCatalog(); catalog != nil {
 		entry := catalog.Match(model, vendor, protocolKeys)
 		route.CatalogReasoning, _ = domainchannel.CatalogReasoningCapability(entry, protocolKeys[0], vendor)
@@ -86,7 +96,7 @@ func (s *Service) ExternalModelView(model ExternalModel) ModelView {
 		protocols = append(protocols, llm.NormalizeAdapter(protocol))
 	}
 	protocolsJSON, _ := json.Marshal(protocols)
-	return ModelView{
+	view := ModelView{
 		PlatformModelName: name,
 		Vendor:            vendor,
 		VendorName:        vendor,
@@ -98,4 +108,12 @@ func (s *Service) ExternalModelView(model ExternalModel) ModelView {
 		Status:            "active",
 		ProtocolsJSON:     string(protocolsJSON),
 	}
+	if onlyChat01Protocols(protocols) {
+		view.Vendor = compatibleChat01
+		view.VendorName = "Chat01"
+		view.VendorIcon = resolveVendorIcon(compatibleChat01)
+		view.Icon = resolveVendorIcon(compatibleChat01)
+		view.CapabilitiesJSON = domainchannel.Chat01DefaultCapabilitiesJSON
+	}
+	return view
 }

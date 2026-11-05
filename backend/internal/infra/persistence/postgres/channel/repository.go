@@ -13,6 +13,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/dberror"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/models"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/inputlimits"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -57,13 +58,43 @@ func NewRepo(db *gorm.DB) *Repo {
 // ---------------------------------------------------------------------------
 
 // CreateUpstream 创建上游。
-func (r *Repo) CreateUpstream(ctx context.Context, item *domainchannel.Upstream) error {
-	entity := toUpstreamModel(item)
-	if err := r.db.WithContext(ctx).Create(&entity).Error; err != nil {
-		return dberror.Translate(err)
+func (r *Repo) CreateUpstream(ctx context.Context, input repository.CreateChannelUpstreamInput) (*repository.CreateChannelUpstreamResult, error) {
+	if input.Upstream == nil {
+		return nil, repository.ErrInvalidInput
 	}
-	*item = toUpstreamDomain(entity)
-	return nil
+	entity := toUpstreamModel(input.Upstream)
+	result := &repository.CreateChannelUpstreamResult{}
+	err := r.transact(ctx, func(tx *gorm.DB) error {
+		if err := tx.Create(&entity).Error; err != nil {
+			return err
+		}
+		if strings.TrimSpace(input.InitialInputLimitsJSON) == "" {
+			return nil
+		}
+		// Creating the singleton first also serializes concurrent initialization
+		// when the settings seed has not yet installed the row.
+		setting := models.SystemSetting{Namespace: "file", Key: "input_limits", Value: inputlimits.DefaultConfigJSON(), ValueType: "json"}
+		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "namespace"}, {Name: "key"}}, DoNothing: true}).Create(&setting).Error; err != nil {
+			return err
+		}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("namespace = ? AND key = ?", "file", "input_limits").First(&setting).Error; err != nil {
+			return err
+		}
+		merged, err := inputlimits.InitializeUpstreamDefaults(setting.Value, entity.ID, input.InitialInputLimitsJSON)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&setting).Update("value", merged).Error; err != nil {
+			return err
+		}
+		result.InputLimitsJSON = merged
+		return nil
+	})
+	if err != nil {
+		return nil, dberror.Translate(err)
+	}
+	*input.Upstream = toUpstreamDomain(entity)
+	return result, nil
 }
 
 // UpdateUpstream 更新上游。

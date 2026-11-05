@@ -21,6 +21,7 @@ const MODEL_PROVIDER_PRESETS: readonly ModelProviderPreset[] = [
   { id: "xai", name: "xAI", baseURL: "https://api.x.ai/v1", protocol: "xai_responses", icon: "xai" },
   { id: "deepseek", name: "DeepSeek", baseURL: "https://api.deepseek.com/v1", protocol: "openai_chat_completions", icon: "deepseek" },
   { id: "openrouter", name: "OpenRouter", baseURL: "https://openrouter.ai/api/v1", protocol: "openrouter_chat_completions", icon: "openrouter" },
+  { id: "chat01", name: "Chat01", baseURL: "https://chat01.ai/v1", protocol: "chat01_chat_completions", icon: "/icons/chat01.jpg" },
 ];
 
 function hostOf(url: string): string {

@@ -1429,6 +1429,7 @@ export interface CreateUpstreamRequest {
     | "google"
     | "xai"
     | "openrouter"
+    | "chat01"
     | "custom";
   connectTimeoutMS?: number;
   /** @maxLength 10000 */
@@ -4886,6 +4887,7 @@ export interface UpdateUpstreamRequest {
     | "google"
     | "xai"
     | "openrouter"
+    | "chat01"
     | "custom";
   connectTimeoutMS?: number;
   deleteAPIKeyIDs?: string[];

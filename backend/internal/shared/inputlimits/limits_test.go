@@ -83,7 +83,7 @@ func TestDefaultConfigContainsOneCompleteBudget(t *testing.T) {
 	if err := json.Unmarshal([]byte(DefaultConfigJSON()), &cfg); err != nil {
 		t.Fatal(err)
 	}
-	if len(cfg) != 2 || len(cfg["defaults"]) != 11 || cfg["upstreams"] == nil || len(cfg["upstreams"]) != 0 {
+	if len(cfg) != 2 || len(cfg["defaults"]) != 14 || cfg["upstreams"] == nil || len(cfg["upstreams"]) != 0 {
 		t.Fatalf("unexpected configuration shape: %+v", cfg)
 	}
 	for key, value := range cfg["defaults"] {

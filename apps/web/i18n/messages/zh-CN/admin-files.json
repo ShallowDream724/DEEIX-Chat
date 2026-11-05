@@ -64,6 +64,18 @@
       "openrouter_images": "OpenRouter Images"
     },
     "fields": {
+      "attachmentCount": {
+        "label": "完整请求附件数量",
+        "description": "完整请求中的图片与原件总数，包含历史附件。"
+      },
+      "attachmentSingleBytes": {
+        "label": "单个附件大小",
+        "description": "单张处理后图片或单个文件原件的大小上限，按编码前字节计。"
+      },
+      "attachmentBytes": {
+        "label": "附件总大小",
+        "description": "完整请求中处理后图片与文件原件的合计大小，包含历史附件。"
+      },
       "messageFileCount": {
         "label": "单条消息附件数量",
         "description": "所选渠道单条消息允许添加的附件总数，包含图片和文件。"

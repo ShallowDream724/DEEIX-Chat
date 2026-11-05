@@ -63,18 +63,33 @@ const (
 	// ContentPartDocument 是原生发送的文档（目前仅 application/pdf，原始字节，序列化时 base64 编码）。
 	// 只有支持原生文档内容块的 adapter 会收到它，见会话层的原生输入策略。
 	ContentPartDocument = "document"
+	// ContentPartAttachment is an original non-image file for adapters that
+	// explicitly support arbitrary attachments. It never means extracted text.
+	ContentPartAttachment = "attachment"
 )
+
+// InputFileReference identifies a server-authorized source without loading the
+// entire file. URL is a short-lived transport grant and is excluded from stable
+// context fingerprints. TemporaryPath is assigned only by the staging service.
+type InputFileReference struct {
+	FileID        string
+	SHA256        string
+	SizeBytes     int64
+	URL           string
+	TemporaryPath string
+}
 
 // ContentPart 表示多模态消息中的一个内容片段。
 type ContentPart struct {
 	// SourceFileIDs identifies source attachments for tracing; it is never sent upstream.
-	SourceFileIDs []string      `json:"-"`
-	Kind          string        // text | image | audio | video | file | document
-	Text          string        // Kind=text 或 Kind=file 时的文本内容
-	MimeType      string        // Kind=image / audio / video / document 时的 MIME 类型（如 "image/jpeg"、"audio/mp3"、"application/pdf"）
-	Data          []byte        // Kind=image / audio / video / document 时的原始字节（发送时 base64 编码）
-	FileName      string        // Kind=file / audio / video / document 时的文件显示名
-	CacheControl  *CacheControl // 支持块级缓存的 adapter 可读取该提示
+	SourceFileIDs []string            `json:"-"`
+	Kind          string              // text | image | audio | video | file | document
+	Text          string              // Kind=text 或 Kind=file 时的文本内容
+	MimeType      string              // Kind=image / audio / video / document 时的 MIME 类型（如 "image/jpeg"、"audio/mp3"、"application/pdf"）
+	Data          []byte              // Kind=image / audio / video / document 时的原始字节（发送时 base64 编码）
+	Reference     *InputFileReference `json:"-"`
+	FileName      string              // Kind=file / audio / video / document 时的文件显示名
+	CacheControl  *CacheControl       // 支持块级缓存的 adapter 可读取该提示
 	// PageCount 为 Kind=document 时的页数（未知为 0），用于上下文预算估算。
 	PageCount int
 	// DurationSeconds 为 Kind=audio / video 时的时长（未知为 0），用于上下文预算估算。
@@ -82,6 +97,14 @@ type ContentPart struct {
 	// Dynamic 标记仅本轮有效的上下文（检索片段、记忆、召回等）。它不会出现在下一轮的历史里，
 	// 规划器据此把缓存断点放在它之前，状态指纹也会剔除它；adapter 按普通内容发送即可。
 	Dynamic bool
+}
+
+// ByteSize counts the trusted source even when transport carries only a URL.
+func (p ContentPart) ByteSize() int64 {
+	if p.Reference != nil {
+		return p.Reference.SizeBytes
+	}
+	return int64(len(p.Data))
 }
 
 // CacheControl 表示可被支持方言渲染为 prompt cache breakpoint 的提示。
@@ -246,6 +269,9 @@ type ToolResult struct {
 
 // ReasoningOutput 定义结构化 reasoning 输出。
 type ReasoningOutput struct {
+	// Segments preserves ordered provider item identities when Text is an aggregate.
+	// Entries are leaves; callers must not replay Text after reconciling Segments.
+	Segments         []ReasoningOutput
 	ItemID           string
 	Status           string
 	Summary          string
@@ -254,8 +280,19 @@ type ReasoningOutput struct {
 	EncryptedContent string
 }
 
+// ProcessItemReference preserves ordering without duplicating process payloads.
+// Exactly one identity is set; it refers to a reasoning segment or server tool.
+type ProcessItemReference struct {
+	ReasoningItemID string
+	ToolCallID      string
+}
+
 // GenerateOutput 定义上游推理结果。
 type GenerateOutput struct {
+	// ContentNormalized means the adapter has already separated wire markers and
+	// reasoning from literal answer text. Generic think-tag extraction must not run again.
+	ContentNormalized   bool
+	ProcessOrder        []ProcessItemReference
 	ResponseID          string
 	ModelVersion        string
 	Text                string
@@ -302,6 +339,7 @@ type ReasoningDelta struct {
 
 // GenerateStreamEvent 定义上游流式增量片段。
 type GenerateStreamEvent struct {
+	ContentNormalized     bool
 	Delta                 string
 	Reasoning             *ReasoningDelta
 	Usage                 Usage

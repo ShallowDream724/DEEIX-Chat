@@ -45,6 +45,10 @@ func (b redisBackend) ProviderAuthBridge() repository.ProviderAuthBridgeReposito
 	return redis.NewProviderAuthBridge(b.client)
 }
 
+func (b redisBackend) AttachmentGrants() repository.AttachmentGrantRepository {
+	return redis.NewAttachmentGrants(b.client)
+}
+
 func (b redisBackend) Ping(ctx context.Context) error {
 	return b.client.Ping(ctx).Err()
 }

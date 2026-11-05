@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	domainchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/channel"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/pagination"
@@ -97,12 +98,15 @@ func (s *Service) UpsertUpstreamModel(ctx context.Context, upstreamID uint, inpu
 		if txErr != nil {
 			return txErr
 		}
+		if !kindsExplicit {
+			kindsJSON = inferredKindsForCompatible(platformModelName, upstream.Compatible)
+		}
 		protocols, txErr := resolveRouteProtocols(input.Protocols, upstream.Compatible, upstream.ProtocolDefaultsJSON, kindsJSON)
 		if txErr != nil {
 			return txErr
 		}
 
-		platformModel, platformModelCreated, txErr := ensurePlatformModel(ctx, txRepo, platformModelName, kindsJSON, upstreamModelName)
+		platformModel, platformModelCreated, txErr := ensurePlatformModel(ctx, txRepo, platformModelName, kindsJSON, protocols[0], upstreamModelName)
 		if txErr != nil {
 			return txErr
 		}
@@ -114,6 +118,9 @@ func (s *Service) UpsertUpstreamModel(ctx context.Context, upstreamID uint, inpu
 		}
 
 		upstreamModelVendor := normalizeModelVendor("", upstreamModelName, upstream.Name, upstream.BaseURL)
+		if onlyChat01Protocols(protocols) {
+			upstreamModelVendor = compatibleChat01
+		}
 		upstreamModelIcon := normalizeModelIcon("", upstreamModelVendor, upstreamModelName)
 		upstreamModelSource := "manual"
 		if input.CatalogSource != nil {
@@ -280,7 +287,7 @@ func applyRouteOverrides(route *domainchannel.PlatformModelRoute, input UpsertUp
 	}
 }
 
-func ensurePlatformModel(ctx context.Context, repo repository.ChannelRepository, platformModelName string, kindsJSON string, candidates ...string) (*domainchannel.PlatformModel, bool, error) {
+func ensurePlatformModel(ctx context.Context, repo repository.ChannelRepository, platformModelName string, kindsJSON string, protocol string, candidates ...string) (*domainchannel.PlatformModel, bool, error) {
 	if item, err := repo.GetModelByName(ctx, platformModelName); err == nil {
 		return item, false, nil
 	} else if !errors.Is(err, ErrModelNotFound) {
@@ -295,6 +302,11 @@ func ensurePlatformModel(ctx context.Context, repo repository.ChannelRepository,
 		CapabilitiesJSON:  "{}",
 		Status:            "active",
 		Description:       "",
+	}
+	if llm.NormalizeAdapter(protocol) == llm.AdapterChat01ChatCompletions {
+		item.Vendor = compatibleChat01
+		item.Icon = resolveVendorIcon(compatibleChat01)
+		item.CapabilitiesJSON = domainchannel.Chat01DefaultCapabilitiesJSON
 	}
 	if err := repo.CreateModel(ctx, item); err != nil {
 		if !errors.Is(err, repository.ErrDuplicate) {

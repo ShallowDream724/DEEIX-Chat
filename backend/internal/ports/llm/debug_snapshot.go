@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/security"
 )
 
 // MaxUpstreamDebugBodyBytes 是调试请求/响应体保留的最大字节数。
@@ -60,13 +62,22 @@ func SanitizeUpstreamDebugPayload(raw []byte) SanitizedUpstreamDebugBody {
 	}
 
 	if sanitized, redacted, ok := sanitizeUpstreamDebugSSE(string(raw)); ok {
-		result.RedactedParts = redacted
+		result.RedactedParts += redacted
+		// SSE comments and incomplete/non-JSON event lines are diagnostics too.
+		if safe := security.RedactAttachmentFetchURLs(sanitized); safe != sanitized {
+			sanitized = safe
+			result.RedactedParts++
+		}
 		if len(sanitized) <= MaxUpstreamDebugBodyBytes {
 			result.Body = sanitized
 			return result
 		}
 	}
 	result.Body = redactDebugDataURLs(string(raw), &result.RedactedParts)
+	if safe := security.RedactAttachmentFetchURLs(result.Body); safe != result.Body {
+		result.Body = safe
+		result.RedactedParts++
+	}
 	return result
 }
 
@@ -95,6 +106,10 @@ func sanitizeUpstreamDebugValue(value any, parentKey string, parent map[string]a
 			return upstreamDebugBinaryPlaceholder(parentKey, current)
 		}
 		if sanitized, ok := sanitizeNestedDebugJSONString(current, redactedParts); ok {
+			return sanitized
+		}
+		if sanitized := security.RedactAttachmentFetchURLs(current); sanitized != current {
+			(*redactedParts)++
 			return sanitized
 		}
 	}

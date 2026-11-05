@@ -113,6 +113,7 @@ type Service struct {
 	subGroupResolver    subscriptionGroupResolver
 	logger              *zap.Logger
 	objectStoreProvider appstorage.Provider
+	settingsRefreshHook func(context.Context) error
 	localAPIKeyCounters sync.Map
 
 	modelCatalogMu         sync.RWMutex
@@ -129,6 +130,12 @@ type Service struct {
 	breakerDefaults           domainchannel.BreakerDefaults
 	breakerDefaultsLoaded     bool
 	breakerDefaultsValidUntil time.Time
+}
+
+// SetSettingsRefreshHook publishes committed settings through the application's
+// standard cache invalidation and runtime refresh mechanism.
+func (s *Service) SetSettingsRefreshHook(hook func(context.Context) error) {
+	s.settingsRefreshHook = hook
 }
 
 // SetObjectStoreProvider 注入运行时对象存储，用于管理员自定义模型图标。

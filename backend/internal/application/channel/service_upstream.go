@@ -16,6 +16,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/pagination"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/security"
+	"go.uber.org/zap"
 )
 
 // ---------------------------------------------------------------------------
@@ -168,6 +169,10 @@ func (s *Service) CreateUpstream(ctx context.Context, input CreateUpstreamInput)
 		return nil, err
 	}
 
+	connectDefault, readDefault, idleDefault := 10_000, 120_000, 60_000
+	if compatible == compatibleChat01 {
+		connectDefault, readDefault, idleDefault = chat01ConnectTimeoutMS, chat01LongTimeoutMS, chat01LongTimeoutMS
+	}
 	item := &domainchannel.Upstream{
 		Name:                 strings.TrimSpace(input.Name),
 		BaseURL:              strings.TrimSpace(input.BaseURL),
@@ -175,9 +180,9 @@ func (s *Service) CreateUpstream(ctx context.Context, input CreateUpstreamInput)
 		ProtocolDefaultsJSON: protocolDefaults,
 		APIKeysEnc:           apiKeysEnc,
 		Status:               normalizeStatus(input.Status),
-		ConnectTimeoutMS:     normalizeTimeout(input.ConnectTimeoutMS, 10000),
-		ReadTimeoutMS:        normalizeTimeout(input.ReadTimeoutMS, 120000),
-		StreamIdleTimeoutMS:  normalizeTimeout(input.StreamIdleTimeoutMS, 60000),
+		ConnectTimeoutMS:     normalizeTimeout(input.ConnectTimeoutMS, connectDefault),
+		ReadTimeoutMS:        normalizeTimeout(input.ReadTimeoutMS, readDefault),
+		StreamIdleTimeoutMS:  normalizeTimeout(input.StreamIdleTimeoutMS, idleDefault),
 		CbFailureThreshold:   input.CbFailureThreshold,
 		CbModelThreshold:     input.CbModelThreshold,
 		CbThresholdLogic:     normalizeCbLogic(input.CbThresholdLogic),
@@ -185,8 +190,27 @@ func (s *Service) CreateUpstream(ctx context.Context, input CreateUpstreamInput)
 		CbWindowMin:          input.CbWindowMin,
 		HeadersJSON:          strings.TrimSpace(input.HeadersJSON),
 	}
-	if err := s.repo.CreateUpstream(ctx, item); err != nil {
+	createInput := repository.CreateChannelUpstreamInput{Upstream: item}
+	if compatible == compatibleChat01 {
+		createInput.InitialInputLimitsJSON = chat01InitialInputLimitsJSON
+	}
+	created, err := s.repo.CreateUpstream(ctx, createInput)
+	if err != nil {
 		return nil, err
+	}
+	if created != nil && created.InputLimitsJSON != "" {
+		// Publish the committed value even if a subsequent cache refresh fails.
+		// Returning a creation error after commit would encourage duplicate creates.
+		if s.cfg != nil {
+			next := s.cfg.Snapshot()
+			next.InputLimitsJSON = created.InputLimitsJSON
+			s.cfg.Store(next)
+		}
+		if s.settingsRefreshHook != nil {
+			if refreshErr := s.settingsRefreshHook(ctx); refreshErr != nil {
+				s.warn("channel_settings_refresh_failed", zap.Uint("upstream_id", item.ID), zap.Error(refreshErr))
+			}
+		}
 	}
 	view := toUpstreamView(repository.ChannelUpstreamListRow{Upstream: *item})
 	view.APIKeysMasked = s.maskAPIKeysEnc(item.APIKeysEnc)

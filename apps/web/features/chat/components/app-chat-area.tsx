@@ -66,6 +66,7 @@ import { useAuthSession } from "@/shared/auth/auth-session-context";
 import { DeleteFilesOption, isFileProcessing } from "@/entities/file";
 import { hasMultipleImageAttachmentProcessors, normalizeImageAttachmentProcessorSelection } from "@/entities/mcp";
 import { resolveChatContentWidthClassName } from "@/entities/user-settings";
+import { usesChat01Protocol, withoutLocalToolOptions } from "@/entities/model";
 
 const EMPTY_CONVERSATION_OPTIONS: ConversationOptions = {};
 const EMPTY_LIST: never[] = [];
@@ -270,6 +271,7 @@ export function AppChatArea() {
     () => modelOptions.find((item) => item.platformModelName === selectedPlatformModelName) ?? null,
     [modelOptions, selectedPlatformModelName],
   );
+  const localToolsDisabled = usesChat01Protocol(selectedModel?.protocols ?? EMPTY_LIST);
   const modelOptionPolicyDisabled = modelOptionPolicy?.mode?.trim() === "disabled";
   const refreshModelCatalogForComposer = React.useCallback(async () => {
     await refreshModelCatalog();
@@ -294,8 +296,11 @@ export function AppChatArea() {
   // Requests carry the raw options (native tools; advanced JSON for administrators) plus the model
   // control selections, which the server resolves into the administrator's parameter patches.
   const requestOptions = React.useMemo(
-    () => withControlSelections(modelOptionPolicyDisabled ? EMPTY_CONVERSATION_OPTIONS : options, requestControls),
-    [modelOptionPolicyDisabled, options, requestControls],
+    () => {
+      const effective = withControlSelections(modelOptionPolicyDisabled ? EMPTY_CONVERSATION_OPTIONS : options, requestControls);
+      return localToolsDisabled ? withoutLocalToolOptions(effective) : effective;
+    },
+    [localToolsDisabled, modelOptionPolicyDisabled, options, requestControls],
   );
   const {
     selectedToolIDs,
@@ -435,7 +440,7 @@ export function AppChatArea() {
     conversationID,
     model: temporaryMode || composerSubmitDecision.task === "chat" ? selectedPlatformModelName : "",
     parentMessagePublicID: preflightParent?.conversationID === conversationID ? preflightParent?.messageID : null,
-    selectedToolIDs,
+    selectedToolIDs: localToolsDisabled ? EMPTY_LIST : selectedToolIDs,
     attachments,
     setAttachments,
     updateAttachmentStatuses,
@@ -480,11 +485,11 @@ export function AppChatArea() {
     activeConversation: currentConversation,
     selectedPlatformModelName,
     modelOptions,
-    selectedToolIDs,
+    selectedToolIDs: localToolsDisabled ? EMPTY_LIST : selectedToolIDs,
     selectedSkills,
     selectedKnowledgeBaseIDs,
-    uiComponentIDs: effectiveUIComponentIDs,
-    htmlVisualPromptEnabled: htmlVisualPrompt.enabled,
+    uiComponentIDs: localToolsDisabled ? EMPTY_LIST : effectiveUIComponentIDs,
+    htmlVisualPromptEnabled: !localToolsDisabled && htmlVisualPrompt.enabled,
     options: requestOptions,
     draft,
     attachments,
@@ -512,7 +517,7 @@ export function AppChatArea() {
     onConversationRunStarted: registerConversationRun,
     resumingActivityLabel,
     resumingRunID,
-    collectUIStates: uiBlockState.collectTurnUIStates,
+    collectUIStates: localToolsDisabled ? undefined : uiBlockState.collectTurnUIStates,
   });
   const generating = sending;
   const uploadDropDisabled = loading || uploading;
@@ -706,11 +711,11 @@ export function AppChatArea() {
     draft,
     model: selectedPlatformModelName,
     options: requestOptions,
-    selectedToolIDs: temporarySelectedToolIDs,
+    selectedToolIDs: localToolsDisabled ? EMPTY_LIST : temporarySelectedToolIDs,
     selectedSkillIDs: temporarySelectedSkillIDs,
     selectedKnowledgeBaseIDs,
-    uiComponentIDs: effectiveUIComponentIDs,
-    htmlVisualPromptEnabled: htmlVisualPrompt.enabled,
+    uiComponentIDs: localToolsDisabled ? EMPTY_LIST : effectiveUIComponentIDs,
+    htmlVisualPromptEnabled: !localToolsDisabled && htmlVisualPrompt.enabled,
     attachments,
     onDraftChange: setDraft,
     getComposerRevision,
@@ -720,7 +725,7 @@ export function AppChatArea() {
     maxTemporaryAttachments,
     onAttachmentsConsumed: onTemporaryAttachmentsConsumed,
     releaseAttachments,
-    collectUIStates: uiBlockState.collectTurnUIStates,
+    collectUIStates: localToolsDisabled ? undefined : uiBlockState.collectTurnUIStates,
   });
   const parentMessageID = resolvePersistedPublicID(currentLeafMessage?.publicID)
     ?? resolveDefaultSubmissionParentMessage(visibleMessages)?.publicID ?? null;
@@ -752,7 +757,8 @@ export function AppChatArea() {
     } else if (selectedModel?.inputModalities.length) {
       // Temporary PDF and document files can still use text extraction.
       for (const kind of ["image", "audio", "video"] as const) {
-        if (selectedModel.inputModalities.includes(kind)) continue;
+        if (selectedModel.inputModalities.includes(kind)
+          || (kind !== "image" && localToolsDisabled && selectedModel.inputModalities.includes("attachment"))) continue;
         const matches = (attachment: { fileCategory?: string; mimeType?: string }) =>
           attachment.fileCategory === kind || attachment.mimeType?.startsWith(`${kind}/`);
         const currentFile = attachments.find(matches);
@@ -762,7 +768,7 @@ export function AppChatArea() {
       }
     }
     return issues;
-  }, [attachments, channelMaxFiles, composerSubmitDecision.blockedReason, draft, nativeInputIssues, selectedModel, tSubmit,
+  }, [attachments, channelMaxFiles, composerSubmitDecision.blockedReason, draft, localToolsDisabled, nativeInputIssues, selectedModel, tSubmit,
     temporaryMode, temporaryRuntime.historyAttachments, temporaryRuntime.inputIssues]);
   const processingAttachments = !temporaryMode && composerSubmitDecision.task === "chat" && attachments.some((item) =>
     !item.processingReady && !item.ragReady && isFileProcessing(item)
@@ -884,18 +890,18 @@ export function AppChatArea() {
     billingDisplayUsdToCnyRate,
     billingEnabled,
     selectedPlatformModelName,
-    availableTools: temporaryMode ? temporaryAvailableTools : availableTools,
-    selectedToolIDs: temporaryMode ? temporarySelectedToolIDs : selectedToolIDs,
+    availableTools: localToolsDisabled ? EMPTY_LIST : temporaryMode ? temporaryAvailableTools : availableTools,
+    selectedToolIDs: localToolsDisabled ? EMPTY_LIST : temporaryMode ? temporarySelectedToolIDs : selectedToolIDs,
     selectedSkills,
     selectedKnowledgeBaseIDs,
     defaultToolIDs,
     uiComponents: uiComponents ?? EMPTY_LIST,
     uiComponentsLoading,
-    selectedUIComponentIDs: effectiveUIComponentIDs,
+    selectedUIComponentIDs: localToolsDisabled ? EMPTY_LIST : effectiveUIComponentIDs,
     defaultUIComponentIDs,
     onSelectedUIComponentsChange: setSelectedUIComponents,
     queuedMessages: temporaryMode ? EMPTY_LIST : queuedMessages,
-    htmlVisualPromptEnabled: htmlVisualPrompt.enabled,
+    htmlVisualPromptEnabled: !localToolsDisabled && htmlVisualPrompt.enabled,
     maxSelectedTools: mcpMaxSelectedTools,
     toolsLoading,
     options: effectiveOptions,

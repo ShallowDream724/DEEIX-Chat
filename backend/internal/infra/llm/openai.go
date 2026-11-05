@@ -294,6 +294,9 @@ func mergeLeadingSystemMessages(messages []portllm.Message, explicitPromptCache 
 }
 
 func buildOpenAIRequestBody(protocol string, model string, endpoint string, input portllm.GenerateInput, stream bool) (map[string]any, error) {
+	if portllm.NormalizeAdapter(protocol) == portllm.AdapterChat01ChatCompletions {
+		return buildChat01RequestBody(model, input, stream)
+	}
 	endpoint = normalizeEndpoint(endpoint)
 	adapter := portllm.NormalizeAdapter(protocol)
 	messages := mergeLeadingSystemMessages(
@@ -503,6 +506,9 @@ func consumeOpenAIGenerateStream(
 	onEvent func(portllm.GenerateStreamEvent) error,
 	allowTextEncodedToolCalls bool,
 ) error {
+	if portllm.NormalizeAdapter(adapter) == portllm.AdapterChat01ChatCompletions {
+		return consumeChat01Stream(reader, result, onEvent)
+	}
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxUpstreamBodyBytes)
 
@@ -596,6 +602,9 @@ func consumeOpenAIGenerateStream(
 }
 
 func parseOpenAIGenerateOutput(endpoint string, adapter string, body []byte, allowTextEncodedToolCalls bool) (*portllm.GenerateOutput, error) {
+	if portllm.NormalizeAdapter(adapter) == portllm.AdapterChat01ChatCompletions {
+		return parseChat01Output(body)
+	}
 	parsed := make(map[string]any)
 	if err := json.Unmarshal(body, &parsed); err != nil {
 		return nil, err

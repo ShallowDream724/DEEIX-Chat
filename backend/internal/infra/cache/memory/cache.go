@@ -37,6 +37,9 @@ type Cache struct {
 
 	providerAuthTransactions map[string]expiringProviderAuthTransaction
 	providerAuthGrants       map[string]expiringProviderAuthGrant
+	attachmentGrants         map[string]repository.AttachmentGrant
+	attachmentRevokedRuns    map[string]time.Time
+	attachmentRunGrants      map[string]map[string]struct{}
 }
 
 type expiringString struct {

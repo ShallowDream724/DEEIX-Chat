@@ -324,6 +324,8 @@ func canonicalVendorKey(raw string) string {
 		return ""
 	case "openai":
 		return "openai"
+	case "chat01":
+		return "chat01"
 	case "anthropic", "claude":
 		return "anthropic"
 	case "google", "gemini", "gemma":
@@ -518,6 +520,8 @@ func detectModelVendor(candidates ...string) string {
 
 func resolveVendorIcon(vendor string) string {
 	switch canonical := canonicalVendorKey(vendor); canonical {
+	case "chat01":
+		return "/icons/chat01.jpg"
 	case "anthropic":
 		return "claude"
 	case "google":
@@ -661,6 +665,9 @@ func modelIdentityCandidateValues(raw string) []string {
 func normalizeModelIcon(raw string, vendor string, candidates ...string) string {
 	if v := strings.TrimSpace(raw); v != "" {
 		return v
+	}
+	if canonicalVendorKey(vendor) == "chat01" {
+		return resolveVendorIcon("chat01")
 	}
 	if icon := detectModelIcon(candidates...); icon != "" {
 		return icon

@@ -309,6 +309,15 @@ func (s *Service) ResolveModelCatalog(ctx context.Context, input ModelCatalogRes
 	if name == "" {
 		return result
 	}
+	if onlyChat01Protocols(protocolKeys) {
+		result.Matched = true
+		result.Provider = compatibleChat01
+		result.ModelID = name
+		result.InputModalities = domainchannel.Chat01InputModalities()
+		result.OutputModalities = []string{domainchannel.InputModalityText}
+		result.ContextWindow = domainchannel.Chat01DefaultContextWindow
+		return result
+	}
 
 	reasoningCatalog := s.activeModelCatalog()
 	var reasoningEntry *domainchannel.ModelCatalogEntry
@@ -363,6 +372,9 @@ func (s *Service) catalogInputModalitiesForRoute(route *ResolvedRoute) []string 
 	if route == nil {
 		return nil
 	}
+	if llm.NormalizeAdapter(route.Protocol) == llm.AdapterChat01ChatCompletions {
+		return domainchannel.Chat01InputModalities()
+	}
 	catalog := s.activeModalityCatalog()
 	if catalog == nil {
 		return nil
@@ -399,6 +411,9 @@ func truncateModelCatalogError(message string) string {
 // 优先级判断（显式声明、旧配置推断优先）由请求链路的 ResolveReasoningCapability 完成。
 func (s *Service) catalogReasoningForRoute(route *ResolvedRoute) *domainchannel.ReasoningCapability {
 	if route == nil || domainchannel.HasExplicitReasoning(route.ModelCapabilitiesJSON) {
+		return nil
+	}
+	if llm.NormalizeAdapter(route.Protocol) == llm.AdapterChat01ChatCompletions {
 		return nil
 	}
 	catalog := s.activeModelCatalog()
@@ -446,6 +461,9 @@ func (s *Service) ModelCapabilityResolver() ModelCapabilityResolver {
 // 改用 MatchExternal，使中转站常用的 OpenRouter 式 id 也能识别，与 BuildExternalRoute 的发送判断一致。
 func (r ModelCapabilityResolver) ResolveExternal(view ModelView) ModelCapabilityInfo {
 	info := r.Resolve(view)
+	if onlyChat01Protocols(modelReasoningProtocolKeys(view.ProtocolsJSON)) {
+		return info
+	}
 	if r.modalities == nil {
 		return info
 	}
@@ -462,6 +480,14 @@ func (r ModelCapabilityResolver) ResolveExternal(view ModelView) ModelCapability
 // Resolve 解析模型的生效推理能力与用户控件；目录能力只在没有显式声明与原生参数推断时兜底。
 func (r ModelCapabilityResolver) Resolve(view ModelView) ModelCapabilityInfo {
 	protocolKeys := modelReasoningProtocolKeys(view.ProtocolsJSON)
+	if onlyChat01Protocols(protocolKeys) {
+		return ModelCapabilityInfo{
+			Controls:         domainchannel.ResolveModelControls(view.CapabilitiesJSON, protocolKeys, nil, ""),
+			InputModalities:  domainchannel.ResolveInputModalities(view.CapabilitiesJSON, domainchannel.Chat01InputModalities()),
+			OutputModalities: []string{domainchannel.InputModalityText},
+			ContextWindow:    domainchannel.ResolveDisplayContextWindow(view.CapabilitiesJSON, domainchannel.Chat01DefaultContextWindow),
+		}
+	}
 	var suggestion *domainchannel.ReasoningCapability
 	if r.catalog != nil && len(protocolKeys) > 0 {
 		entry := r.catalog.Match(view.PlatformModelName, view.Vendor, protocolKeys)

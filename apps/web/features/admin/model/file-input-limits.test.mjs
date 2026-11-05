@@ -46,3 +46,13 @@ test("decimal MB remains exact and invalid edits cannot be serialized", () => {
   assert.equal(parseInputLimitValue("", true), null);
   assert.equal(parseInputLimitValue("0", true), 0);
 });
+
+test("mixed request attachment budgets preserve channel overrides and unlimited defaults", () => {
+  const config = { defaults: { attachmentCount: 0, attachmentBytes: 0, attachmentSingleBytes: 0 },
+    upstreams: { "7": { attachmentCount: 10, attachmentBytes: 104_857_600, attachmentSingleBytes: 104_857_600 } } };
+  const parsed = parseInputLimits(JSON.stringify(config));
+  assert.deepEqual(parsed, config);
+  assert.equal(resolveInputLimitValues(parsed, "7").attachmentBytes, 104_857_600);
+  assert.equal(resolveInputLimitValues(parsed, "8").attachmentCount, 0);
+  assert.equal(resolveInputLimitValues(setInputLimit(parsed, "7", "attachmentCount", null), "7").attachmentCount, 0);
+});

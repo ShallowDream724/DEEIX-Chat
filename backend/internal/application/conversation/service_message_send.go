@@ -200,9 +200,6 @@ func (s *Service) sendMessageInternal(
 	}()
 
 	// application 层保留兜底校验，保证非 HTTP 调用路径也遵守同一 MCP 工具数量策略。
-	if err := s.ValidateSelectedToolIDs(input.SelectedToolIDs); err != nil {
-		return nil, err
-	}
 
 	startedAt := time.Now()
 	runID := normalizeRunID(input.ClientRunID)
@@ -484,7 +481,7 @@ func (s *Service) sendMessageInternal(
 	// 语义召回必须先限定到当前活跃分支，再由向量存储执行 Top-K，避免 sibling 分支占用名额。
 	// 召回仍与附件和 RAG 处理并行，200ms 超时后按原行为优雅跳过。
 	var recallCh chan []model.MessageChunk
-	if cfg.EmbeddingEnabled && cfg.SemanticContextEnabled && historicalScope.Valid() {
+	if promptPolicyForRoute(route).BroadMemory && cfg.EmbeddingEnabled && cfg.SemanticContextEnabled && historicalScope.Valid() {
 		recallCh = make(chan []model.MessageChunk, 1)
 		go func() {
 			recallCtx, cancel := context.WithTimeout(ctx, semanticRecallDeadline)
@@ -521,7 +518,7 @@ func (s *Service) sendMessageInternal(
 		retErr = err
 		return nil, err
 	}
-	toolRuntime, err := s.resolveSelectedToolRuntime(ctx, input.SelectedToolIDs)
+	toolRuntime, err := s.resolveRouteToolRuntime(ctx, route, input.SelectedToolIDs)
 	if err != nil {
 		retErr = err
 		return nil, err
@@ -593,7 +590,7 @@ func (s *Service) sendMessageInternal(
 			preferencePrompt = buildPreferencePrompt(prefMems, 400)
 		}
 		otherMems := filterMemoriesByScope(prefetch.userMemories, "profile", "custom")
-		if len(otherMems) > 0 {
+		if promptPolicyForRoute(route).BroadMemory && len(otherMems) > 0 {
 			userCtx.Memory = s.selectRelevantUserMemories(ctx, input.UserID, input.Content, otherMems, 5)
 		}
 	}
@@ -638,14 +635,16 @@ func (s *Service) sendMessageInternal(
 	if recallCh != nil {
 		userCtx.RecallChunks = <-recallCh // 阻塞等待，最多 semanticRecallDeadline（200ms）
 	}
-	userCtx.HistoricalArtifacts = s.recallHistoricalContextArtifacts(ctx, historicalContextRecallInput{
-		Scope:              historicalScope,
-		HasCurrentSnapshot: promptScope.Snapshot != nil,
-		Query:              input.Content,
-		CurrentRAGChunks:   ragContextChunks,
-		CurrentFallbacks:   ragFallbackEvidenceAttachments(ragFallbacks),
-		CurrentRecall:      userCtx.RecallChunks,
-	})
+	if promptPolicyForRoute(route).BroadMemory {
+		userCtx.HistoricalArtifacts = s.recallHistoricalContextArtifacts(ctx, historicalContextRecallInput{
+			Scope:              historicalScope,
+			HasCurrentSnapshot: promptScope.Snapshot != nil,
+			Query:              input.Content,
+			CurrentRAGChunks:   ragContextChunks,
+			CurrentFallbacks:   ragFallbackEvidenceAttachments(ragFallbacks),
+			CurrentRecall:      userCtx.RecallChunks,
+		})
+	}
 	userCtx.CurrentArtifacts = s.persistPromptContextArtifacts(ctx, promptContextArtifactInput{
 		ConversationID: input.ConversationID,
 		UserID:         input.UserID,
@@ -662,13 +661,14 @@ func (s *Service) sendMessageInternal(
 		retErr = err
 		return nil, err
 	}
-	uiComponents, err := s.resolveUIComponents(ctx, input.UserID, input.UIComponentIDs)
+	uiComponents, err := s.resolveUIComponents(ctx, input.UserID, routeUIComponentIDs(route, input.UIComponentIDs))
 	if err != nil {
 		retErr = err
 		return nil, err
 	}
 	recordSkillPromptTrace(traceRecorder, skillPrompts)
 	routePromptInput := messageRoutePromptInput{
+		UIComponentIDs:          input.UIComponentIDs,
 		UserContent:             input.Content,
 		ProjectSystemPrompt:     conversation.ProjectSystemPrompt,
 		HTMLVisualPromptEnabled: input.HTMLVisualPromptEnabled,
@@ -683,6 +683,28 @@ func (s *Service) sendMessageInternal(
 		ToolRuntime:             toolRuntime,
 		SkipImageAttachments:    imageProcessing.Routed,
 		Config:                  cfg,
+	}
+	if !promptPolicyForRoute(route).BroadMemory {
+		// A failover to another adapter restores its normal recall preferences.
+		// Keep this lazy so Chat01 never starts those retrieval operations.
+		loaded := false
+		var broad userContextInput
+		routePromptInput.ResolveBroadContext = func(recallCtx context.Context) userContextInput {
+			if loaded {
+				return broad
+			}
+			loaded = true
+			if memories := filterMemoriesByScope(prefetch.userMemories, "profile", "custom"); len(memories) > 0 {
+				broad.Memory = s.selectRelevantUserMemories(recallCtx, input.UserID, input.Content, memories, 5)
+			}
+			if cfg.EmbeddingEnabled && cfg.SemanticContextEnabled && historicalScope.Valid() {
+				limited, cancel := context.WithTimeout(recallCtx, semanticRecallDeadline)
+				broad.RecallChunks = s.recallSemanticContext(limited, historicalScope, input.Content)
+				cancel()
+			}
+			broad.HistoricalArtifacts = s.recallHistoricalContextArtifacts(recallCtx, historicalContextRecallInput{Scope: historicalScope, HasCurrentSnapshot: promptScope.Snapshot != nil, Query: input.Content, CurrentRAGChunks: ragContextChunks, CurrentFallbacks: ragFallbackEvidenceAttachments(ragFallbacks), CurrentRecall: broad.RecallChunks})
+			return broad
+		}
 	}
 	promptPlan, reasoningContentPassback, err := s.planRoutePrompt(ctx, input.UserID, routePromptInput, route)
 	if err != nil {
@@ -840,7 +862,25 @@ func (s *Service) sendMessageInternal(
 			break
 		}
 
+		previousLocalTools := promptPolicyForRoute(route).LocalTools
 		route = nextRoute
+		if !promptPolicyForRoute(route).LocalTools {
+			toolRuntime = selectedToolRuntime{}
+		} else if !previousLocalTools {
+			toolRuntime, err = s.resolveRouteToolRuntime(ctx, route, input.SelectedToolIDs)
+			if err != nil {
+				retErr = err
+				return nil, err
+			}
+			if imageProcessing.Routed {
+				toolRuntime = toolRuntime.withoutAttachmentProcessor()
+			}
+			if len(toolCallRows) >= s.resolveMaxToolCallsPerRun() {
+				toolRuntime = toolRuntime.withoutDefinitions()
+			}
+		}
+		routePromptInput.ToolRuntime = toolRuntime
+		gen.tools = toolRuntime.definitions
 		if err := validateRouteMessageFileCount(cfg, route, len(resolvedAttachments)); err != nil {
 			retErr = err
 			return nil, err
@@ -946,7 +986,7 @@ func (s *Service) sendMessageInternal(
 		))
 	}
 
-	for len(upstreamOutput.ToolCalls) > 0 && llmCallCount < runner.maxLLMCalls && remainingToolCalls > 0 {
+	for promptPolicyForRoute(route).LocalTools && len(upstreamOutput.ToolCalls) > 0 && llmCallCount < runner.maxLLMCalls && remainingToolCalls > 0 {
 		pendingToolCalls := upstreamOutput.ToolCalls
 		if len(pendingToolCalls) > remainingToolCalls {
 			pendingToolCalls = pendingToolCalls[:remainingToolCalls]
@@ -1077,7 +1117,7 @@ func (s *Service) sendMessageInternal(
 		nextNativeToolRows := upstreamServerToolCallRows(upstreamOutput, runID)
 		toolCallRows = append(toolCallRows, nextNativeToolRows...)
 	}
-	if len(upstreamOutput.ToolCalls) > 0 && remainingToolCalls <= 0 && llmCallCount < runner.maxLLMCalls {
+	if promptPolicyForRoute(route).LocalTools && len(upstreamOutput.ToolCalls) > 0 && remainingToolCalls <= 0 && llmCallCount < runner.maxLLMCalls {
 		finalInput := generateInput
 		finalInput.Messages = buildFinalToolSynthesisMessages(llmMessages, "The maximum number of tool calls for this run has been reached. Stop calling tools and produce the final answer based on the tool results already available. If the information is insufficient, state the missing information directly.")
 		finalInput.Tools = nil

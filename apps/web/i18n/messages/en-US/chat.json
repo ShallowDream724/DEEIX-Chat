@@ -711,7 +711,8 @@
       "image": "images",
       "pdf": "PDF",
       "audio": "audio",
-      "video": "video"
+      "video": "video",
+      "attachment": "files"
     },
     "viewPricing": "View pricing",
     "freeBadge": "Free",

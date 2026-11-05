@@ -29,6 +29,7 @@ type Backend interface {
 	Conversation() repository.ConversationCacheRepository
 	RateLimiter() RateLimiter
 	ProviderAuthBridge() repository.ProviderAuthBridgeRepository
+	AttachmentGrants() repository.AttachmentGrantRepository
 	Ping(ctx context.Context) error
 	Close() error
 }
@@ -69,6 +70,10 @@ func (b memoryBackend) RateLimiter() RateLimiter {
 
 func (b memoryBackend) ProviderAuthBridge() repository.ProviderAuthBridgeRepository {
 	return memory.NewProviderAuthBridge(b.cache)
+}
+
+func (b memoryBackend) AttachmentGrants() repository.AttachmentGrantRepository {
+	return memory.NewAttachmentGrants(b.cache)
 }
 
 func (memoryBackend) Ping(context.Context) error { return nil }

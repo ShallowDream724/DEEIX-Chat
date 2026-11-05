@@ -117,6 +117,7 @@ const PROTOCOL_OPTIONS_BY_KIND: Record<(typeof PROTOCOL_DEFAULT_KINDS)[number], 
     "xai_responses",
     "openrouter_chat_completions",
     "openrouter_responses",
+    "chat01_chat_completions",
   ],
   audio: [
     "openai_chat_completions",
@@ -410,7 +411,12 @@ export function UpstreamSheet({
     setForm((prev) => ({
       ...prev,
       compatible: value,
-      protocolDefaultsJson: "",
+      protocolDefaultsJson: value === "chat01" ? JSON.stringify({ chat: "chat01_chat_completions" }) : "",
+      ...(mode === "create" && value === "chat01" ? {
+        connectTimeoutMs: prev.connectTimeoutMs || "30000",
+        readTimeoutMs: prev.readTimeoutMs || "9000000",
+        streamIdleTimeoutMs: prev.streamIdleTimeoutMs || "9000000",
+      } : {}),
     }));
   }
 

@@ -442,9 +442,22 @@ type ModelIconAssetRepository interface {
 }
 
 // ChannelRepository 定义渠道管理依赖的仓储能力。
+// CreateChannelUpstreamInput optionally initializes a sparse administrator budget
+// in the same transaction as the new upstream. Empty JSON leaves settings alone.
+type CreateChannelUpstreamInput struct {
+	Upstream               *domainchannel.Upstream
+	InitialInputLimitsJSON string
+}
+
+// CreateChannelUpstreamResult carries the committed settings value for immediate
+// local runtime publication; it is empty when no settings were initialized.
+type CreateChannelUpstreamResult struct {
+	InputLimitsJSON string
+}
+
 type ChannelRepository interface {
 	WithinTransaction(ctx context.Context, fn func(ChannelRepository) error) error
-	CreateUpstream(ctx context.Context, item *domainchannel.Upstream) error
+	CreateUpstream(ctx context.Context, input CreateChannelUpstreamInput) (*CreateChannelUpstreamResult, error)
 	UpdateUpstream(ctx context.Context, upstreamID uint, input UpdateChannelUpstreamInput) error
 	GetUpstreamByID(ctx context.Context, upstreamID uint) (*domainchannel.Upstream, error)
 	GetUpstreamListRowByID(ctx context.Context, upstreamID uint) (*ChannelUpstreamListRow, error)

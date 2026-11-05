@@ -106,13 +106,6 @@ func (s *Service) GetNativeReadiness(ctx context.Context, input NativeReadinessI
 	}
 
 	cfg := s.cfg.Snapshot()
-	usesImageProcessor := false
-	if len(current) > 0 && len(input.SelectedToolIDs) > 0 {
-		tools, err := s.resolveSelectedToolRuntime(ctx, input.SelectedToolIDs)
-		// The actual send validates the selected tools. An unresolved tool is
-		// not a verified way to provide an otherwise unsupported image.
-		usesImageProcessor = err == nil && tools.attachmentProcessor != nil
-	}
 	var canUseRAG bool
 	if len(attachments) > 0 && s.ragSvc != nil && s.embeddingSvc != nil && cfg.RAGEnabled && cfg.EmbeddingEnabled {
 		fileMode, err := s.getUserSettingCached(ctx, input.UserID, "chat.file_mode")
@@ -123,6 +116,12 @@ func (s *Service) GetNativeReadiness(ctx context.Context, input NativeReadinessI
 	currentCount := len(current)
 	for i, route := range routes {
 		policy := resolveNativeInputPolicy(route, cfg.InputLimitsJSON)
+		policy.HTTPS = promptPolicyForRoute(route).OriginalAttachments && s.attachmentHTTPSAvailable()
+		usesImageProcessor := false
+		if len(current) > 0 && len(input.SelectedToolIDs) > 0 && promptPolicyForRoute(route).LocalTools {
+			tools, err := s.resolveRouteToolRuntime(ctx, route, input.SelectedToolIDs)
+			usesImageProcessor = err == nil && tools.attachmentProcessor != nil
+		}
 		count := routeMessageFileCount(cfg, route)
 		if i == 0 {
 			result.Limits, result.MessageFileCount = policy.InputLimits, count
@@ -169,6 +168,7 @@ func previewRouteAttachmentMetadata(attachments []AttachmentInput, policy native
 		})
 	}
 	var imageCount, nativeCount, nativeBytes, pdfBytes, pdfPages, nonPDFBytes, requestBytes readinessMeasure
+	var attachmentCount, attachmentBytes readinessMeasure
 	var images, natives []AttachmentInput
 	for _, att := range attachments {
 		if !isUserSubmittedAttachment(att) {
@@ -190,9 +190,16 @@ func previewRouteAttachmentMetadata(attachments []AttachmentInput, policy native
 			} else if !att.Current || !usesImageProcessor {
 				images = append(images, att)
 				imageCount.add(att, 1)
+				attachmentCount.add(att, 1)
 			}
 		case policy.accepts(att) && isNativeInputCandidate(att):
 			natives = append(natives, att)
+			attachmentCount.add(att, 1)
+			attachmentBytes.add(att, att.FileSize)
+			if limit := policy.InputLimits.AttachmentSingleBytes; limit > 0 && att.FileSize > limit {
+				fileIssue(att, "attachmentSingleBytes", att.FileSize, limit)
+				reasons[att.FileID] = "budget_exceeded"
+			}
 			nativeCount.add(att, 1)
 			nativeBytes.add(att, att.FileSize)
 			requestBytes.add(att, ((att.FileSize+2)/3)*4)
@@ -232,12 +239,14 @@ func previewRouteAttachmentMetadata(attachments []AttachmentInput, policy native
 		affected  []AttachmentInput
 	}{
 		{"imageCount", imageCount, int64(limits.ImageCount), images},
+		{"attachmentCount", attachmentCount, int64(limits.AttachmentCount), append(append([]AttachmentInput(nil), images...), natives...)},
+		{"attachmentBytes", attachmentBytes, limits.AttachmentBytes, natives},
 		{"nativeCount", nativeCount, int64(limits.NativeCount), natives},
 		{"nativeBytes", nativeBytes, limits.NativeBytes, natives},
 		{"pdfBytes", pdfBytes, limits.PDFBytes, natives},
 		{"pdfPages", pdfPages, int64(limits.PDFPages), natives},
 		{"nonPDFBytes", nonPDFBytes, limits.NonPDFBytes, natives},
-		{"requestBytes", requestBytes, limits.RequestBytes, natives},
+		{"requestBytes", requestBytes, inlineRequestByteLimit(policy), natives},
 	} {
 		if actual := item.measure.current + item.measure.history; item.limit > 0 && actual > item.limit {
 			issues = append(issues, AttachmentReadinessIssue{Dimension: item.dimension, Actual: actual, Limit: item.limit, Scope: item.measure.scope()})

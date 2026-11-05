@@ -20,6 +20,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/objectstorage"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/apperr"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/inputlimits"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/security"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/tokenestimate"
 )
 
@@ -70,7 +71,7 @@ const (
 func estimateNativeMediaTokens(part llm.ContentPart, tokensPerSecond int64, bytesPerSecond int64) int64 {
 	seconds := part.DurationSeconds
 	if seconds <= 0 {
-		seconds = max(int64(len(part.Data))/bytesPerSecond, 1)
+		seconds = max(part.ByteSize()/bytesPerSecond, 1)
 	}
 	return seconds * tokensPerSecond
 }
@@ -84,11 +85,16 @@ func estimateContentPartTokens(part llm.ContentPart) int64 {
 	case llm.ContentPartDocument:
 		pages := int64(part.PageCount)
 		if pages <= 0 {
-			pages = max(int64(len(part.Data))/nativeDocumentBytesPerPage, 1)
+			pages = max(part.ByteSize()/nativeDocumentBytesPerPage, 1)
 		}
 		return pages * nativeDocumentTokensPerPage
 	case llm.ContentPartImage:
 		return 255
+	case llm.ContentPartAttachment:
+		// A workspace file/container is not injected as its decoded full text.
+		// Count its manifest; actual supplied text is counted in separate parts.
+		// Source bytes remain subject to native and mixed attachment budgets.
+		return tokenestimate.Estimate(part.FileName) + tokenestimate.Estimate(part.MimeType) + 8
 	case llm.ContentPartFile:
 		return tokenestimate.Estimate(part.FileName) + tokenestimate.Estimate(part.Text) + 8
 	default:
@@ -239,7 +245,7 @@ func sanitizeUpstreamDebugSnapshot(debug *llm.UpstreamDebugSnapshot) *llm.Upstre
 	return &llm.UpstreamDebugSnapshot{
 		Request: llm.UpstreamDebugRequest{
 			Method:        debug.Request.Method,
-			Path:          debug.Request.Path,
+			Path:          security.RedactAttachmentFetchURLs(debug.Request.Path),
 			Body:          sanitizeUpstreamNameJSON(llm.SanitizeUpstreamDebugBody(debug.Request.Body)),
 			BodyBytes:     debug.Request.BodyBytes,
 			BodyTruncated: debug.Request.BodyTruncated,
@@ -334,7 +340,7 @@ func normalizeUpstreamErrorMessage(message string) string {
 	if value == "" || looksLikeRawSSEBody(value) {
 		return ""
 	}
-	return value
+	return security.RedactAttachmentFetchURLs(value)
 }
 
 func looksLikeRawSSEBody(value string) bool {

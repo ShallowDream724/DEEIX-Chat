@@ -32,6 +32,7 @@ const (
 	compatibleGoogle     = "google"
 	compatibleXAI        = "xai"
 	compatibleOpenRouter = "openrouter"
+	compatibleChat01     = "chat01"
 	compatibleCustom     = "custom"
 
 	protocolOpenAIImageGenerations = llm.AdapterOpenAIImageGenerations
@@ -65,6 +66,8 @@ func normalizeCompatible(raw string) string {
 		return compatibleXAI
 	case compatibleOpenRouter:
 		return compatibleOpenRouter
+	case compatibleChat01:
+		return compatibleChat01
 	case compatibleCustom:
 		return compatibleCustom
 	case "", compatibleOpenAI:
@@ -126,6 +129,8 @@ func systemFallbackProtocols(compatible string) map[string]string {
 			modelKindImageEdit: protocolOpenAIImageEdits,
 			modelKindVideoGen:  protocolOpenAIVideoGenerations,
 		}
+	case compatibleChat01:
+		return map[string]string{modelKindChat: llm.AdapterChat01ChatCompletions}
 	case compatibleAnthropic:
 		return map[string]string{
 			modelKindChat:  llm.AdapterAnthropicMessages,
@@ -174,6 +179,7 @@ func isKnownProtocol(raw string) bool {
 		llm.AdapterOpenRouterChat,
 		llm.AdapterOpenRouterResponses,
 		llm.AdapterOpenAIChatCompletions,
+		llm.AdapterChat01ChatCompletions,
 		llm.AdapterAnthropicMessages,
 		llm.AdapterGoogleGenerateContent,
 		llm.AdapterXAIResponses,
@@ -412,6 +418,7 @@ func isProtocolAllowedForKind(kind string, protocol string) bool {
 			llm.AdapterOpenRouterChat,
 			llm.AdapterOpenRouterResponses,
 			llm.AdapterOpenAIChatCompletions,
+			llm.AdapterChat01ChatCompletions,
 			llm.AdapterAnthropicMessages,
 			llm.AdapterGoogleGenerateContent,
 			protocolGeminiInteractions,

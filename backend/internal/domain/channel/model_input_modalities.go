@@ -4,13 +4,14 @@ import (
 	"strings"
 )
 
-// 模型输入模态，取值与 models.dev modalities.input 一致。
+// 模型输入模态；attachment 是平台扩展，表示通用非图片原件，仍需适配器明确支持。
 const (
-	InputModalityText  = "text"
-	InputModalityImage = "image"
-	InputModalityPDF   = "pdf"
-	InputModalityAudio = "audio"
-	InputModalityVideo = "video"
+	InputModalityText       = "text"
+	InputModalityImage      = "image"
+	InputModalityPDF        = "pdf"
+	InputModalityAudio      = "audio"
+	InputModalityVideo      = "video"
+	InputModalityAttachment = "attachment"
 )
 
 // 输入模态来源。未声明且目录未匹配时来源为空，表示能力未知。
@@ -23,7 +24,7 @@ const (
 const inputModalitiesCapabilityKey = "inputModalities"
 
 // inputModalityOrder 是输入模态的规范顺序，归一化结果按此排序，保证比较与展示稳定。
-var inputModalityOrder = []string{InputModalityText, InputModalityImage, InputModalityPDF, InputModalityAudio, InputModalityVideo}
+var inputModalityOrder = []string{InputModalityText, InputModalityImage, InputModalityPDF, InputModalityAudio, InputModalityVideo, InputModalityAttachment}
 
 // InputModalities 是模型生效的输入模态及其来源。
 //
@@ -62,7 +63,14 @@ func NormalizeInputModalities(values []string) []string {
 
 // NormalizeOutputModalities 只保留已知模态，去重并按规范顺序排列；不补 text（图像生成模型可能只输出图片）。
 func NormalizeOutputModalities(values []string) []string {
-	return normalizeModalities(values)
+	result := normalizeModalities(values)
+	// attachment 仅描述通用原件输入，不是可推断的输出能力。
+	for index, value := range result {
+		if value == InputModalityAttachment {
+			return append(result[:index], result[index+1:]...)
+		}
+	}
+	return result
 }
 
 func normalizeModalities(values []string) []string {

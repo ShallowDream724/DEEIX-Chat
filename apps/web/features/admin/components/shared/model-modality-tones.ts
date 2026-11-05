@@ -8,4 +8,5 @@ export const MODEL_MODALITY_TONES: Record<ModelModality, string> = {
   pdf: "bg-amber-500/12 text-amber-700 dark:text-amber-300",
   audio: "bg-violet-500/10 text-violet-700 dark:text-violet-300",
   video: "bg-rose-500/10 text-rose-700 dark:text-rose-300",
+  attachment: "bg-amber-500/12 text-amber-700 dark:text-amber-300",
 };

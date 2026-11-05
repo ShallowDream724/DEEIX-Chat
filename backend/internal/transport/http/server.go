@@ -3,6 +3,7 @@ package httpx
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path"
@@ -16,6 +17,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/buildinfo"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/lifecycle"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/response"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/security"
 	adminhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/admin"
 	announcementhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/announcement"
 	authhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/auth"
@@ -33,6 +35,7 @@ import (
 	skillhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/skill"
 	systemhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/system"
 	uicomponenthttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/uicomponent"
+	uploadhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/upload"
 	userhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/user"
 	usersettingshttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/usersettings"
 	"github.com/gin-gonic/gin"
@@ -55,25 +58,26 @@ type HealthChecker interface {
 
 // Modules 聚合可注册的业务模块。
 type Modules struct {
-	Auth              *authhttp.Module
-	AuthService       middleware.SessionValidator
-	Channel           *channelhttp.Module
-	Conversation      *conversationhttp.Module
-	MCP               *mcphttp.Module
-	Memory            *memoryhttp.Module
-	Billing           *billinghttp.Module
-	Admin             *adminhttp.Module
-	ContentModeration *contentmoderationhttp.Module
-	Announcement      *announcementhttp.Module
-	PromptPreset      *promptpresethttp.Module
-	Skill             *skillhttp.Module
-	UIComponent       *uicomponenthttp.Module
-	KnowledgeBase     *knowledgebasehttp.Module
-	Settings          *settingshttp.Module
-	User              *userhttp.Module
-	UserSettings      *usersettingshttp.Module
-	PersonalProvider  *personalproviderhttp.Module
-	StartupLog        func(*zap.Logger)
+	Auth               *authhttp.Module
+	AuthService        middleware.SessionValidator
+	Channel            *channelhttp.Module
+	Conversation       *conversationhttp.Module
+	AttachmentDelivery *uploadhttp.Module
+	MCP                *mcphttp.Module
+	Memory             *memoryhttp.Module
+	Billing            *billinghttp.Module
+	Admin              *adminhttp.Module
+	ContentModeration  *contentmoderationhttp.Module
+	Announcement       *announcementhttp.Module
+	PromptPreset       *promptpresethttp.Module
+	Skill              *skillhttp.Module
+	UIComponent        *uicomponenthttp.Module
+	KnowledgeBase      *knowledgebasehttp.Module
+	Settings           *settingshttp.Module
+	User               *userhttp.Module
+	UserSettings       *usersettingshttp.Module
+	PersonalProvider   *personalproviderhttp.Module
+	StartupLog         func(*zap.Logger)
 	// Shutdown 是进程关停排空信号；排空期间就绪探针返回 503，引导负载均衡摘除流量。
 	Shutdown *lifecycle.Shutdown
 	// ErrorRecorder 持久化失败请求供管理员按错误 ID 检索；nil 时只写进程日志。
@@ -118,7 +122,9 @@ func NewEngine(cfg *config.Runtime, log *zap.Logger, modules Modules, hc HealthC
 	if err != nil {
 		return nil, fmt.Errorf("configure trusted proxy headers: %w", err)
 	}
-	engine.Use(gin.CustomRecovery(func(c *gin.Context, recovered any) {
+	// Gin's default recovery writer dumps the original request before calling
+	// the handler; structured diagnostics below provide the redacted record.
+	engine.Use(gin.CustomRecoveryWithWriter(io.Discard, func(c *gin.Context, recovered any) {
 		// recovery 在 RequestID 外层注册，但 panic 发生时请求上下文里已有 ID，可与用户看到的错误 ID 对应。
 		requestID := middleware.MustRequestID(c)
 		traceID := middleware.MustTraceID(c)
@@ -128,8 +134,8 @@ func NewEngine(cfg *config.Runtime, log *zap.Logger, modules Modules, hc HealthC
 				zap.String("trace_id", traceID),
 				zap.String("method", c.Request.Method),
 				zap.String("route", c.FullPath()),
-				zap.Any("error", recovered),
-				zap.ByteString("stack", debug.Stack()),
+				zap.String("error", security.RedactAttachmentFetchURLs(fmt.Sprint(recovered))),
+				zap.String("stack", security.RedactAttachmentFetchURLs(string(debug.Stack()))),
 			)
 		}
 		// panic 越过了 AccessLog，这里单独写入错误日志；堆栈只留在进程日志里。
@@ -140,20 +146,24 @@ func NewEngine(cfg *config.Runtime, log *zap.Logger, modules Modules, hc HealthC
 				UserID:     middleware.MustUserID(c),
 				Method:     c.Request.Method,
 				Route:      c.FullPath(),
-				Path:       c.Request.URL.Path,
+				Path:       security.RedactAttachmentFetchURLs(c.Request.URL.Path),
 				StatusCode: http.StatusInternalServerError,
 				ErrorCode:  response.CodeInternal,
-				Cause:      fmt.Sprintf("panic: %v", recovered),
+				Cause:      security.RedactAttachmentFetchURLs(fmt.Sprintf("panic: %v", recovered)),
 				ClientIP:   c.ClientIP(),
-				UserAgent:  c.Request.UserAgent(),
+				UserAgent:  security.RedactAttachmentFetchURLs(c.Request.UserAgent()),
 			})
 		}
 		response.ErrorWithCode(c, http.StatusInternalServerError, response.CodeInternal)
 		c.Abort()
 	}))
 	engine.Use(otelgin.Middleware(snapshot.AppName, otelgin.WithFilter(func(req *http.Request) bool {
-		return req.URL.Path != "/healthz"
+		// Fetch URLs carry bearer credentials in the path. Do not hand the
+		// original request URL to tracing instrumentation.
+		metadata := req.URL.String() + " " + req.UserAgent() + " " + req.Referer()
+		return req.URL.Path != "/healthz" && !security.IsAttachmentFetchPath(req.URL.Path) && security.RedactAttachmentFetchURLs(metadata) == metadata
 	})))
+	engine.Use(middleware.RedactAttachmentTraceErrors())
 	// 先判定是否来自受信代理：RequestID 只沿用受信代理透传的 X-Request-ID。
 	engine.Use(trustedProxyHeaders)
 	engine.Use(middleware.RequestID())
@@ -172,6 +182,9 @@ func NewEngine(cfg *config.Runtime, log *zap.Logger, modules Modules, hc HealthC
 	}
 
 	api := engine.Group("/api/v1")
+	if modules.AttachmentDelivery != nil {
+		modules.AttachmentDelivery.RegisterPublicRoutes(api)
+	}
 	// 能力位关闭的功能整组返回 404 feature.disabled；见 docs/ARCHITECTURE.md §4。
 	gate := middleware.NewFeatureGate(cfg)
 	api.GET("/version", func(c *gin.Context) {

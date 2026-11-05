@@ -3319,6 +3319,7 @@ definitions:
         - google
         - xai
         - openrouter
+        - chat01
         - custom
         type: string
       connectTimeoutMS:
@@ -10687,6 +10688,7 @@ definitions:
         - google
         - xai
         - openrouter
+        - chat01
         - custom
         type: string
       connectTimeoutMS:

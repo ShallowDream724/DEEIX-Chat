@@ -45,6 +45,9 @@
     "tokens": "{count} tokens",
     "review": "Input limits",
     "titles": {
+      "attachmentCount": "Too many attachments in the request",
+      "attachmentSingleBytes": "Attachment is too large",
+      "attachmentBytes": "Attachments are too large in total",
       "modelTaskUnsupported": "The selected model cannot perform this task",
       "contextTokens": "Conversation is too long",
       "currentTurnTokens": "Message is too long",
@@ -62,6 +65,9 @@
       "temporaryMessageCount": "Too many temporary chat messages"
     },
     "labels": {
+      "attachmentCount": "Attachments per request",
+      "attachmentSingleBytes": "Size per attachment",
+      "attachmentBytes": "Total attachment size",
       "messageFileCount": "Attachments per message",
       "imageCount": "Number of images",
       "imageSingleBytes": "Size per image",

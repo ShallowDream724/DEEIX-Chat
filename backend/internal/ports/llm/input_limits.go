@@ -41,7 +41,7 @@ func InputLimitDetails(err error) *InputLimitError {
 			value := *detail
 			return &value
 		}
-	case "messageFileCount", "contextTokens", "currentTurnTokens", "parsedTextBytes", "parsedTextTokens", "requestBytes", "provider.requestBytes", "imageSingleBytes", "imageCount", "imageBytes", "nativeCount", "nativeBytes", "pdfSingleBytes", "pdfBytes", "pdfPages", "nonPDFBytes", "provider.imageEncodedBytes", "provider.imageWidth", "provider.imageHeight":
+	case "attachmentCount", "attachmentBytes", "attachmentSingleBytes", "messageFileCount", "contextTokens", "currentTurnTokens", "parsedTextBytes", "parsedTextTokens", "requestBytes", "provider.requestBytes", "imageSingleBytes", "imageCount", "imageBytes", "nativeCount", "nativeBytes", "pdfSingleBytes", "pdfBytes", "pdfPages", "nonPDFBytes", "provider.imageEncodedBytes", "provider.imageWidth", "provider.imageHeight":
 		if detail.Limit > 0 && detail.Actual >= -1 {
 			value := *detail
 			return &value
@@ -57,7 +57,15 @@ func ValidateInputMedia(limits inputlimits.Limits, input GenerateInput) error {
 	var imageCount, imageBytes, nativeCount, nativeBytes, pdfBytes, pdfPages, nonPDFBytes int64
 	for _, message := range input.Messages {
 		for _, part := range message.Parts {
-			size := int64(len(part.Data))
+			size := part.ByteSize()
+			if part.Kind == ContentPartImage || part.Kind == ContentPartDocument || part.Kind == ContentPartAudio || part.Kind == ContentPartVideo || part.Kind == ContentPartAttachment {
+				if size < 0 {
+					return fmt.Errorf("invalid attachment size")
+				}
+				if err := checkMediaBudget("attachmentSingleBytes", size, limits.AttachmentSingleBytes); err != nil {
+					return err
+				}
+			}
 			switch part.Kind {
 			case ContentPartImage:
 				imageCount++
@@ -75,6 +83,9 @@ func ValidateInputMedia(limits inputlimits.Limits, input GenerateInput) error {
 				if err := checkMediaBudget("pdfSingleBytes", size, limits.PDFSingleBytes); err != nil {
 					return err
 				}
+			case ContentPartAttachment:
+				nativeCount++
+				nativeBytes += size
 			case ContentPartAudio, ContentPartVideo:
 				nativeCount++
 				nativeBytes += size
@@ -86,6 +97,8 @@ func ValidateInputMedia(limits inputlimits.Limits, input GenerateInput) error {
 		name          string
 		actual, limit int64
 	}{
+		{"attachmentCount", imageCount + nativeCount, int64(limits.AttachmentCount)},
+		{"attachmentBytes", imageBytes + nativeBytes, limits.AttachmentBytes},
 		{"imageCount", imageCount, int64(limits.ImageCount)},
 		{"imageBytes", imageBytes, limits.ImageBytes},
 		{"nativeCount", nativeCount, int64(limits.NativeCount)},

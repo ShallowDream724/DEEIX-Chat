@@ -78,6 +78,7 @@ import {
   parseProtocolsJSON,
   resolveModelIconURL,
   resolveModelIdentity,
+  usesChat01Protocol,
 } from "@/entities/model";
 import type {
   AdminLLMModelDisplayGroupDTO,
@@ -453,6 +454,9 @@ export function ModelSheet({ open, mode, target, models, vendors, displayGroups,
         ...current,
         kinds: Array.from(new Set([...current.kinds, "video_gen", "video_extension"])),
       }));
+    }
+    if (mode === "create" && selected?.suggestedProtocol === "chat01_chat_completions") {
+      setForm((current) => current.vendor === UNKNOWN_VENDOR ? { ...current, vendor: "chat01" } : current);
     }
     setBindRows((current) => {
       const currentTargetRow = current.find((row) => row.id === rowID);
@@ -841,6 +845,7 @@ export function ModelSheet({ open, mode, target, models, vendors, displayGroups,
                     />
                   </div>
                   <ModelModalitiesField
+                    attachmentInput={usesChat01Protocol(routeProtocols)}
                     override={inputModalitiesOverride}
                     resolution={catalogResolution.result}
                     disabled={pending}

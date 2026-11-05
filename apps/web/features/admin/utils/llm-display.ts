@@ -17,6 +17,7 @@ export const COMPATIBLE_OPTIONS = [
   { label: "Google", value: "google" },
   { label: "xAI", value: "xai" },
   { label: "OpenRouter", value: "openrouter" },
+  { label: "Chat01", value: "chat01" },
   { label: "Custom", value: "custom" },
 ] as const;
 
@@ -47,6 +48,7 @@ export const PROTOCOL_OPTIONS: ReadonlyArray<ProtocolOption> = [
   { value: "openrouter_chat_completions", label: "Chat Completions (OpenRouter)", kinds: ["chat"] },
   { value: "openrouter_responses", label: "Responses (OpenRouter)", kinds: ["chat"] },
   { value: "openrouter_images", label: "Images (OpenRouter)", kinds: ["image_gen", "image_edit"] },
+  { value: "chat01_chat_completions", label: "Chat Completions (Chat01)", kinds: ["chat"] },
 ] as const;
 
 const PROTOCOL_LABELS: Record<string, string> = {

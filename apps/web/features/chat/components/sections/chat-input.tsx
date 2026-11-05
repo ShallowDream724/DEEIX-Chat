@@ -43,6 +43,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { ChatKnowledgeBases } from "@/features/chat/components/sections/chat-knowledge-bases";
 import { ChatMCP } from "@/features/chat/components/sections/chat-mcp";
 import { ChatUIComponents } from "@/features/chat/components/sections/chat-ui-components";
+import { usesChat01Protocol } from "@/entities/model";
 import { ChatModelConfig } from "@/features/chat/components/sections/chat-model-config";
 import { ChatModelPicker } from "@/features/chat/components/sections/chat-model-picker";
 import { ChatModelControls } from "@/features/chat/components/sections/chat-model-controls";
@@ -505,8 +506,9 @@ function ChatInputComponent({
   }, [mediaControls, onOptionsChange, taskDefaultOptions]);
   const mediaParametersLabel = isMediaMode ? tComposer(`mediaMode.parameters.${submitTask}`) : "";
   const { placements: controlPlacements, setPlacements: setControlPlacements } = useChatModelControlPlacements();
+  const localToolsDisabled = usesChat01Protocol(selectedProtocols);
   const nativeToolOptions = React.useMemo(
-    () => (isMediaMode || !selectedModel
+    () => (localToolsDisabled || isMediaMode || !selectedModel
       ? []
       : nativeToolVisualOptionsFromConfigs(
         selectedModel.nativeTools,
@@ -514,7 +516,7 @@ function ChatInputComponent({
         modelOptionPolicy?.nativeTools ?? [],
         selectedProtocols,
       )),
-    [isMediaMode, modelOptionPolicy?.nativeTools, selectedModel, selectedProtocols],
+    [isMediaMode, localToolsDisabled, modelOptionPolicy?.nativeTools, selectedModel, selectedProtocols],
   );
   const isNativeToolEnabled = React.useCallback(
     (tool: NativeToolVisualOption) => hasProviderTool(options, tool.variants),
@@ -523,8 +525,8 @@ function ChatInputComponent({
   const handleNativeToolChange = React.useCallback((tool: NativeToolVisualOption, enabled: boolean) => {
     onOptionsChange((current) => setProviderToolEnabled(current, tool.variants, enabled));
   }, [onOptionsChange]);
-  const showMCPToolsButton = availableTools.length > 0 && !isMediaMode;
-  const showHTMLVisualPromptButton = !isMediaMode;
+  const showMCPToolsButton = availableTools.length > 0 && !isMediaMode && !localToolsDisabled;
+  const showHTMLVisualPromptButton = !isMediaMode && !localToolsDisabled;
   const hasComposerAttachments = attachments.length > 0 || uploadingAttachments.length > 0;
   const showSelectedSkills = selectedSkills.length > 0 && !isMediaMode;
   const {
@@ -889,9 +891,10 @@ function ChatInputComponent({
                 {attachments.map((item) => {
                   const badge = resolveFileProcessingBadge(item, (key, values) => tFileStatus(key, values));
                   const FileIcon = resolveFileIcon(item);
-                  const nativeReady = !temporaryMode && item.fileCategory !== "image"
+                  const nativeReady = item.fileCategory !== "image"
                     && !(item.detectedMime || item.mimeType).startsWith("image/")
-                    && nativeEligibleFileIDs?.has(item.fileID);
+                    && ((!temporaryMode && nativeEligibleFileIDs?.has(item.fileID))
+                      || (temporaryMode && localToolsDisabled && selectedModel?.inputModalities.includes("attachment")));
                   const failed = !nativeReady && (badge.tone === "danger" || badge.tone === "warning");
                   const backgroundProcessing = !nativeReady && !failed && isFileProcessing(item);
                   const meta = formatAttachmentMeta(item.fileName, item.sizeBytes);
@@ -1233,7 +1236,7 @@ function ChatInputComponent({
                 />
               ) : null}
 
-              {!isMediaMode ? (
+              {!isMediaMode && !localToolsDisabled ? (
                 <ChatUIComponents
                   components={uiComponents}
                   selectedIDs={selectedUIComponentIDs}

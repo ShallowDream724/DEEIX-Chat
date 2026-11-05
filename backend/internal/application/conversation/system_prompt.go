@@ -145,6 +145,10 @@ func resolveMessageSystemPromptInjection(cfg config.Config, route *channel.Resol
 	if !cfg.UIComponentsEnabled {
 		options.UIComponents = nil
 	}
+	if !promptPolicyForRoute(route).UIComponents {
+		options.UIComponents = nil
+		options.HTMLVisual = false
+	}
 	content := buildResolvedMessageSystemPrompt(cfg.DefaultSystemPrompt, route.ModelSystemPrompt, projectPrompt, options)
 	if content == "" {
 		return systemPromptInjection{}

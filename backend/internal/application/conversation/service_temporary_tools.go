@@ -55,6 +55,7 @@ func (s *Service) runTemporaryGeneration(ctx context.Context, input temporaryGen
 
 	runGenerate := func(currentInput llm.GenerateInput) (*llm.GenerateOutput, error) {
 		currentInput = enforceTemporaryGenerateInput(currentInput)
+		currentInput = enforceRouteGeneratePolicy(route.Protocol, currentInput)
 		if err := validateGenerationInputMedia(routeConfig, currentInput); err != nil {
 			return nil, err
 		}
@@ -74,9 +75,19 @@ func (s *Service) runTemporaryGeneration(ctx context.Context, input temporaryGen
 		}
 
 		var callText strings.Builder
+		observedServerTools := make(map[string]string)
+		transportInput, releaseTransport, transportErr := s.prepareAttachmentTransport(ctx, route.Protocol, request.UserID, currentInput)
+		if transportErr != nil {
+			return nil, transportErr
+		}
+		defer releaseTransport()
+		currentInput = transportInput
 		var observedUsage llm.Usage
 		llmCallCount++
 		output, err := s.llmClient.GenerateStream(ctx, routeConfig, currentInput, func(event llm.GenerateStreamEvent) error {
+			if event.ServerToolCall != nil {
+				syncStreamingServerToolTrace(traceRecorder, *event.ServerToolCall, request.ClientRunID, observedServerTools)
+			}
 			if event.Usage != (llm.Usage{}) {
 				observedUsage = addLLMUsage(observedUsage, diffLLMUsage(event.Usage, observedUsage))
 				if emitErr := emitLLMUsageEvent(request.OnEvent, addLLMUsage(totalUsage, observedUsage)); emitErr != nil {
@@ -110,6 +121,9 @@ func (s *Service) runTemporaryGeneration(ctx context.Context, input temporaryGen
 		}
 		if output.Text == "" {
 			output.Text = callText.String()
+		}
+		if err == nil {
+			finalizeStreamingOutputTrace(traceRecorder, output, request.ClientRunID, observedServerTools)
 		}
 		output.Usage = addLLMUsage(observedUsage, diffLLMUsage(output.Usage, observedUsage))
 		totalUsage = addLLMUsage(totalUsage, output.Usage)
@@ -163,7 +177,7 @@ func (s *Service) runTemporaryGeneration(ctx context.Context, input temporaryGen
 		}
 		return err
 	}
-	for len(output.ToolCalls) > 0 && llmCallCount < maxLLMCalls && remainingToolCalls > 0 {
+	for promptPolicyForRoute(route).LocalTools && len(output.ToolCalls) > 0 && llmCallCount < maxLLMCalls && remainingToolCalls > 0 {
 		pending := output.ToolCalls
 		if len(pending) > remainingToolCalls {
 			pending = pending[:remainingToolCalls]
@@ -224,7 +238,7 @@ func (s *Service) runTemporaryGeneration(ctx context.Context, input temporaryGen
 		}
 	}
 
-	if len(output.ToolCalls) > 0 && remainingToolCalls <= 0 && llmCallCount < maxLLMCalls {
+	if promptPolicyForRoute(route).LocalTools && len(output.ToolCalls) > 0 && remainingToolCalls <= 0 && llmCallCount < maxLLMCalls {
 		finalInput := initialInput
 		finalInput.Messages = buildFinalToolSynthesisMessages(messages, "The maximum number of tool calls for this run has been reached. Stop calling tools and produce the final answer based on the tool results already available.")
 		finalInput.Tools = nil

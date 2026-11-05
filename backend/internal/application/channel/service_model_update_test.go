@@ -897,8 +897,8 @@ func (r *modelUpdateRepo) WithinTransaction(ctx context.Context, fn func(reposit
 	return err
 }
 
-func (r *modelUpdateRepo) CreateUpstream(context.Context, *domainchannel.Upstream) error {
-	return nil
+func (r *modelUpdateRepo) CreateUpstream(context.Context, repository.CreateChannelUpstreamInput) (*repository.CreateChannelUpstreamResult, error) {
+	return &repository.CreateChannelUpstreamResult{}, nil
 }
 
 func (r *modelUpdateRepo) UpdateUpstream(context.Context, uint, repository.UpdateChannelUpstreamInput) error {

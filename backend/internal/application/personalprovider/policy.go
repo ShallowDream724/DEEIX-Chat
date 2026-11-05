@@ -29,6 +29,7 @@ var allowedProtocols = []string{
 	llm.AdapterXAIResponses,
 	llm.AdapterOpenRouterChat,
 	llm.AdapterOpenRouterResponses,
+	llm.AdapterChat01ChatCompletions,
 }
 
 // modelProtocols 是单个模型可选的调用协议：对话协议之外，还有服务厂商的图片与视频协议，顺序同后台。
@@ -50,6 +51,7 @@ var modelProtocols = []string{
 	llm.AdapterOpenRouterChat,
 	llm.AdapterOpenRouterResponses,
 	llm.AdapterOpenRouterImages,
+	llm.AdapterChat01ChatCompletions,
 }
 
 // ModelProtocols 返回单个模型可选的协议列表（副本）。
