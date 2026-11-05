@@ -7,6 +7,11 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[2]
 CAPTURES = ROOT / ".cache/chat01-probes/20261104"
 CASES = [
+    ("../20261105/stress-a/17_repeated_code", "多步代码修复｜故障复现、修复、测试与打包"),
+    ("../20261105/stress-b/18_office_pdf_compare", "DOCX＋PPTX＋PDF｜多次执行与代码截片"),
+    ("../20261105/stress-a/19_api_native_components", "原生组件｜地图、按钮、表格缺少数据"),
+    ("../20261105/stress-b/20_literal_markers", "协议字面量｜行内代码与嵌套代码块"),
+    ("../20261105/stress-a/21_audio_jsonl", "音频＋损坏数据｜残留 sandbox 下载链接"),
     ("03_mixed_image_search_code", "生图＋思考＋代码＋文件｜4 段 Answer"),
     ("02_search_code_files", "搜索＋命令＋文件｜正文保留代码示例"),
     ("05_search_map_cards", "地图组件｜缺少位置数据"),
@@ -16,6 +21,8 @@ CASES = [
 items = []
 for slug, name in CASES:
     folder = CAPTURES / slug
+    if not (folder / "content.txt").is_file():
+        continue
     raw = (folder / "content.txt").read_text(encoding="utf-8")
     frames = []
     for line in (folder / "events.jsonl").read_text(encoding="utf-8").splitlines():
