@@ -1,27 +1,8 @@
-import {
-  FileArchive,
-  FileAudio2,
-  FileCode2,
-  FileImage,
-  FileSpreadsheet,
-  FileText,
-  FileType2,
-  FileVideo2,
-} from "lucide-react";
-
+import { resolveFileFilterIcon, type FileFilterKey } from "@/entities/file";
 import type { FileFilterOption, FileSortOption } from "@/features/files/types/files";
 
-export const FILE_FILTER_OPTIONS: FileFilterOption[] = [
-  { value: "all", icon: FileArchive },
-  { value: "image", icon: FileImage },
-  { value: "audio", icon: FileAudio2 },
-  { value: "video", icon: FileVideo2 },
-  { value: "document", icon: FileText },
-  { value: "spreadsheet", icon: FileSpreadsheet },
-  { value: "presentation", icon: FileType2 },
-  { value: "pdf", icon: FileText },
-  { value: "code", icon: FileCode2 },
-];
+const FILE_FILTER_KEYS: FileFilterKey[] = ["all", "image", "audio", "video", "document", "spreadsheet", "presentation", "pdf", "code"];
+export const FILE_FILTER_OPTIONS: FileFilterOption[] = FILE_FILTER_KEYS.map((value) => ({ value, icon: resolveFileFilterIcon(value) }));
 
 export const FILE_SORT_OPTIONS: FileSortOption[] = [
   { value: "size" },

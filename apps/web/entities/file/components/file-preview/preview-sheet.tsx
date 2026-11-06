@@ -2,13 +2,13 @@
 
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { Maximize2, Minimize2, Minus, Plus } from "lucide-react";
+import { Maximize2, Minimize2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { useLocalizedErrorMessage } from "@/i18n/use-localized-error";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { useFileScale } from "@/entities/file/components/file-preview/file-scale";
+import { FileScaleSelect, useFileScale, useFileScaleGestures } from "@/entities/file/components/file-preview/file-scale";
 import { PreviewLoading } from "@/entities/file/components/file-preview/preview-loading";
 
 type PreviewSheetProps = {
@@ -16,6 +16,7 @@ type PreviewSheetProps = {
   toolbarContainer?: HTMLElement | null;
   showLoading?: boolean;
   onLoadingChange?: (loading: boolean) => void;
+  allowFullscreen?: boolean;
 };
 
 type WorkbookState = {
@@ -24,10 +25,10 @@ type WorkbookState = {
 };
 
 const SHEET_ZOOM = {
-  min: 0.5,
-  max: 2,
+  min: 0.25,
+  max: 4,
   step: 0.1,
-  initial: 0.8,
+  initial: 1,
 };
 
 function detectDelimiter(text: string): "," | "\t" {
@@ -86,7 +87,7 @@ function parseDelimitedRows(text: string): string[][] {
   return rows;
 }
 
-export function PreviewSheet({ source, toolbarContainer, showLoading = true, onLoadingChange }: PreviewSheetProps) {
+export function PreviewSheet({ source, toolbarContainer, showLoading = true, onLoadingChange, allowFullscreen = true }: PreviewSheetProps) {
   const t = useTranslations("files.previewErrors");
   const tPreview = useTranslations("files.preview");
   const resolveErrorMessage = useLocalizedErrorMessage();
@@ -97,17 +98,12 @@ export function PreviewSheet({ source, toolbarContainer, showLoading = true, onL
   const [errorMessage, setErrorMessage] = React.useState(t("sheetLoadFailed"));
   const [workbook, setWorkbook] = React.useState<WorkbookState>({ sheetNames: [], sheets: {} });
   const [activeSheet, setActiveSheet] = React.useState("");
-  const {
-    scale: zoom,
-    zoomOut,
-    zoomIn,
-    canZoomOut,
-    canZoomIn,
-  } = useFileScale(SHEET_ZOOM, { scrollRef: scrollRegionRef });
+  const [fitWidth, setFitWidth] = React.useState(true);
+  const [availableWidth, setAvailableWidth] = React.useState(0);
+  const { scale: zoom, setScale, rememberPosition } = useFileScale(SHEET_ZOOM, { scrollRef: scrollRegionRef, layoutKey: `${fitWidth}:${availableWidth}` });
   const [isFullscreen, setIsFullscreen] = React.useState(false);
   const [contentWidth, setContentWidth] = React.useState(0);
   const [contentHeight, setContentHeight] = React.useState(0);
-  const [availableWidth, setAvailableWidth] = React.useState(0);
 
   React.useEffect(() => {
     onLoadingChange?.(status === "loading");
@@ -169,6 +165,7 @@ export function PreviewSheet({ source, toolbarContainer, showLoading = true, onL
     }
 
     const updateWidth = () => {
+      rememberPosition();
       setAvailableWidth(Math.max(node.clientWidth - 8, 0));
     };
 
@@ -177,7 +174,7 @@ export function PreviewSheet({ source, toolbarContainer, showLoading = true, onL
     const observer = new ResizeObserver(updateWidth);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [status]);
+  }, [rememberPosition, status]);
 
   React.useEffect(() => {
     if (status !== "ready") {
@@ -213,9 +210,10 @@ export function PreviewSheet({ source, toolbarContainer, showLoading = true, onL
     if (!contentWidth || !availableWidth) {
       return 1;
     }
-    return Math.min(1, availableWidth / contentWidth);
+    return availableWidth / contentWidth;
   }, [availableWidth, contentWidth]);
-  const effectiveScale = fitScale * zoom;
+  const effectiveScale = fitWidth ? fitScale : zoom;
+  useFileScaleGestures({ scrollRef: scrollRegionRef, scale: effectiveScale, onScale: (value) => { setFitWidth(false); setScale(value); }, enabled: status === "ready", resetKey: source });
 
   const toggleFullscreen = React.useCallback(async () => {
     const element = previewRef.current;
@@ -233,30 +231,10 @@ export function PreviewSheet({ source, toolbarContainer, showLoading = true, onL
 
   const toolbar = (
     <div className="flex items-center gap-1.5">
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="size-7 rounded-full"
-        aria-label={tPreview("zoomOut")}
-        onClick={zoomOut}
-        disabled={status !== "ready" || !canZoomOut}
-      >
-        <Minus className="size-3.5" />
-      </Button>
-      <span className="min-w-11 text-center text-[11px] text-muted-foreground">{Math.round(zoom * 100)}%</span>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="size-7 rounded-full"
-        aria-label={tPreview("zoomIn")}
-        onClick={zoomIn}
-        disabled={status !== "ready" || !canZoomIn}
-      >
-        <Plus className="size-3.5" />
-      </Button>
-      <Button
+      <FileScaleSelect value={fitWidth ? null : zoom} fitScale={fitScale} disabled={status !== "ready"} onChange={(value) => {
+        rememberPosition(); setFitWidth(value === null); if (value !== null) setScale(value);
+      }} />
+      {allowFullscreen ? <Button
         type="button"
         variant="ghost"
         size="icon"
@@ -266,12 +244,12 @@ export function PreviewSheet({ source, toolbarContainer, showLoading = true, onL
         disabled={status !== "ready"}
       >
         {isFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-      </Button>
+      </Button> : null}
     </div>
   );
 
   return (
-    <div ref={previewRef} className="flex h-full min-h-0 flex-col bg-background">
+    <div ref={previewRef} className="flex h-full min-h-0 flex-col bg-transparent">
       {toolbarContainer ? createPortal(toolbar, toolbarContainer) : (
         <div className="flex shrink-0 items-center justify-end gap-1.5 px-1 py-2">{toolbar}</div>
       )}
@@ -285,9 +263,10 @@ export function PreviewSheet({ source, toolbarContainer, showLoading = true, onL
 
         {status === "ready" ? (
           <>
-            <div ref={scrollRegionRef} className="min-h-0 flex-1 overflow-auto">
-                <div className="mx-auto flex min-w-full w-max justify-center px-1 pb-2">
+            <div ref={scrollRegionRef} data-file-preview-scroll="" className="min-h-0 flex-1 overflow-auto">
+                <div className="mx-auto flex min-w-full w-max justify-center px-1 pb-2 pt-[var(--file-preview-toolbar-inset,0px)]">
                   <div
+                    data-file-scale-anchor=""
                     className="relative shrink-0"
                     style={{
                       width: contentWidth > 0 ? `${contentWidth * effectiveScale}px` : undefined,
@@ -331,7 +310,7 @@ export function PreviewSheet({ source, toolbarContainer, showLoading = true, onL
                 </div>
             </div>
 
-            {workbook.sheetNames.length > 0 ? (
+            {workbook.sheetNames.length > 1 ? (
               <div className="mt-2 shrink-0 overflow-x-auto whitespace-nowrap">
                 <div className="flex w-max items-center gap-1 px-1 pb-1">
                   {workbook.sheetNames.map((sheetName) => (

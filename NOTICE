@@ -6,3 +6,8 @@ See the LICENSE file for the full license text.
 
 Project website: https://deeix.com
 Source repository: https://github.com/DEEIX-AI/DEEIX-Chat
+
+File type icons are derived from Remix Icon v4.6.0 (Remix Design),
+licensed under the Apache License, Version 2.0 (see LICENSE).
+Source: https://github.com/Remix-Design/RemixIcon/tree/v4.6.0/icons/Document
+The original SVG paths are adapted to this project's React icon interface.

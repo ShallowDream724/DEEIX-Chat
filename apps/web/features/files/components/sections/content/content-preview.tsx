@@ -137,6 +137,7 @@ export function ContentPreview({ file, deferEmptyState, preview, extract, conten
           <PreviewText
             kind={preview.kind}
             content={preview.textContent ?? ""}
+            fileName={file.fileName}
             className="min-h-full"
           />
         </div>

@@ -1,14 +1,6 @@
-import {
-  FileArchive,
-  FileAudio2,
-  FileCode2,
-  FileImage,
-  FileSpreadsheet,
-  FileText,
-  FileType2,
-  FileVideo2,
-  type LucideIcon,
-} from "lucide-react";
+import { Files, type LucideIcon } from "lucide-react";
+import { isCodeFilename } from "./file-code-language";
+import { FILE_TYPE_ICONS } from "./file-type-icons";
 
 export type FileFilterKey =
   | "all"
@@ -40,37 +32,25 @@ type FileDisplaySource = {
 };
 
 const MARKDOWN_EXTENSIONS = new Set(["md", "mdx", "markdown"]);
-const CODE_EXTENSIONS = new Set([
-  "c",
-  "cc",
-  "cpp",
-  "css",
-  "go",
-  "h",
-  "html",
-  "java",
-  "js",
-  "json",
-  "jsx",
-  "mjs",
-  "py",
-  "rb",
-  "rs",
-  "sh",
-  "sql",
-  "svg",
-  "toml",
-  "ts",
-  "tsx",
-  "xml",
-  "yaml",
-  "yml",
-]);
 const PLAIN_TEXT_EXTENSIONS = new Set(["txt", "log", "csv"]);
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif"]);
 const DOCUMENT_EXTENSIONS = new Set(["doc", "docx", "rtf", "odt", "pages"]);
 const SPREADSHEET_EXTENSIONS = new Set(["xls", "xlsx", "csv", "ods", "numbers"]);
 const PRESENTATION_EXTENSIONS = new Set(["ppt", "pptx", "odp", "key"]);
+const ARCHIVE_EXTENSIONS = new Set(["zip", "7z", "rar", "tar", "gz", "tgz", "bz2", "tbz", "tbz2", "xz", "txz", "zst", "zstd", "tzst", "lz4", "cab"]);
+const AUDIO_EXTENSIONS = new Set(["mp3", "wav", "flac", "ogg", "opus", "m4a", "aac", "aiff", "aif", "wma", "mid", "midi"]);
+const VIDEO_EXTENSIONS = new Set(["mp4", "mov", "webm", "avi", "mkv", "mpeg", "mpg", "m4v", "wmv", "flv", "3gp"]);
+const FILE_FILTER_ICONS: Record<FileFilterKey, LucideIcon> = {
+  all: Files,
+  image: FILE_TYPE_ICONS.image,
+  document: FILE_TYPE_ICONS.text,
+  spreadsheet: FILE_TYPE_ICONS.spreadsheet,
+  presentation: FILE_TYPE_ICONS.presentation,
+  code: FILE_TYPE_ICONS.code,
+  pdf: FILE_TYPE_ICONS.pdf,
+  audio: FILE_TYPE_ICONS.audio,
+  video: FILE_TYPE_ICONS.video,
+};
 
 function isDocxMimeType(mimeType: string): boolean {
   return mimeType.includes("officedocument.wordprocessingml.document");
@@ -221,7 +201,7 @@ export function resolveFileFilter(file: FileDisplaySource): FileFilterKey {
   }
   if (
     MARKDOWN_EXTENSIONS.has(extension) ||
-    CODE_EXTENSIONS.has(extension) ||
+    isCodeFilename(file.fileName) ||
     mimeType.startsWith("text/") ||
     mimeType.includes("json") ||
     mimeType.includes("javascript") ||
@@ -239,27 +219,26 @@ export function resolveFileFilter(file: FileDisplaySource): FileFilterKey {
   return "document";
 }
 
+export function resolveFileFilterIcon(filter: FileFilterKey): LucideIcon {
+  return FILE_FILTER_ICONS[filter];
+}
+
 export function resolveFileIcon(file: FileDisplaySource): LucideIcon {
-  switch (resolveFileFilter(file)) {
-    case "image":
-      return FileImage;
-    case "spreadsheet":
-      return FileSpreadsheet;
-    case "presentation":
-      return FileType2;
-    case "pdf":
-      return FileText;
-    case "audio":
-      return FileAudio2;
-    case "video":
-      return FileVideo2;
-    case "code":
-      return FileCode2;
-    case "document":
-      return FileText;
-    default:
-      return FileArchive;
-  }
+  const extension = resolveFileExtension(file.fileName);
+  const mimeType = file.mimeType.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (extension === "gif" || mimeType === "image/gif") return FILE_TYPE_ICONS.gif;
+  if (MARKDOWN_EXTENSIONS.has(extension) || mimeType.includes("markdown")) return FILE_TYPE_ICONS.markdown;
+  if (ARCHIVE_EXTENSIONS.has(extension) || /(?:zip|gzip|x-rar|vnd\.rar|x-tar|x-7z|x-bzip|x-xz|zstd)/.test(mimeType)) return FILE_TYPE_ICONS.archive;
+  if (AUDIO_EXTENSIONS.has(extension)) return FILE_TYPE_ICONS.audio;
+  if (VIDEO_EXTENSIONS.has(extension)) return FILE_TYPE_ICONS.video;
+  if (extension === "doc" || extension === "docx" || mimeType.includes("msword") || isDocxMimeType(mimeType)) return FILE_TYPE_ICONS.word;
+  if (extension === "csv" || extension === "tsv" || mimeType.includes("csv") || mimeType === "text/tab-separated-values") return FILE_TYPE_ICONS.data;
+  const filter = resolveFileFilter(file);
+  if (filter !== "code" && filter !== "document") return resolveFileFilterIcon(filter);
+  if (isCodeFilename(file.fileName)) return FILE_TYPE_ICONS.code;
+  if (PLAIN_TEXT_EXTENSIONS.has(extension) || mimeType === "text/plain") return FILE_TYPE_ICONS.text;
+  if (filter === "document") return DOCUMENT_EXTENSIONS.has(extension) || mimeType.startsWith("text/") ? FILE_TYPE_ICONS.text : FILE_TYPE_ICONS.file;
+  return resolveFileFilterIcon(filter);
 }
 
 export function resolveFilePreviewKind(file: FileDisplaySource, contentType: string): FilePreviewKind {
@@ -298,7 +277,7 @@ export function resolveFilePreviewKind(file: FileDisplaySource, contentType: str
     return "markdown";
   }
   if (
-    CODE_EXTENSIONS.has(extension) ||
+    isCodeFilename(file.fileName) ||
     mimeType.includes("json") ||
     mimeType.includes("javascript") ||
     mimeType.includes("typescript") ||

@@ -2,12 +2,12 @@
 
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { Maximize2, Minimize2, Minus, Plus } from "lucide-react";
+import { Maximize2, Minimize2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { useLocalizedErrorMessage } from "@/i18n/use-localized-error";
 import { Button } from "@/components/ui/button";
-import { useFileScale } from "@/entities/file/components/file-preview/file-scale";
+import { FileScaleSelect, useFileScale, useFileScaleGestures } from "@/entities/file/components/file-preview/file-scale";
 import { PreviewLoading } from "@/entities/file/components/file-preview/preview-loading";
 
 type PreviewDocxProps = {
@@ -15,13 +15,14 @@ type PreviewDocxProps = {
   toolbarContainer?: HTMLElement | null;
   showLoading?: boolean;
   onLoadingChange?: (loading: boolean) => void;
+  allowFullscreen?: boolean;
 };
 
 const DOCX_ZOOM = {
-  min: 0.5,
-  max: 2,
+  min: 0.25,
+  max: 4,
   step: 0.1,
-  initial: 0.8,
+  initial: 1,
 };
 
 function measureDocxContent(node: HTMLDivElement): { width: number; height: number } {
@@ -50,7 +51,7 @@ function measureDocxContent(node: HTMLDivElement): { width: number; height: numb
   };
 }
 
-export function PreviewDocx({ source, toolbarContainer, showLoading = true, onLoadingChange }: PreviewDocxProps) {
+export function PreviewDocx({ source, toolbarContainer, showLoading = true, onLoadingChange, allowFullscreen = true }: PreviewDocxProps) {
   const t = useTranslations("files.previewErrors");
   const tPreview = useTranslations("files.preview");
   const resolveErrorMessage = useLocalizedErrorMessage();
@@ -59,17 +60,12 @@ export function PreviewDocx({ source, toolbarContainer, showLoading = true, onLo
   const scrollRegionRef = React.useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = React.useState<"loading" | "ready" | "error">("loading");
   const [errorMessage, setErrorMessage] = React.useState(t("wordLoadFailed"));
-  const {
-    scale: zoom,
-    zoomOut,
-    zoomIn,
-    canZoomOut,
-    canZoomIn,
-  } = useFileScale(DOCX_ZOOM, { scrollRef: scrollRegionRef });
+  const [fitWidth, setFitWidth] = React.useState(true);
+  const [availableWidth, setAvailableWidth] = React.useState(0);
+  const { scale: zoom, setScale, rememberPosition } = useFileScale(DOCX_ZOOM, { scrollRef: scrollRegionRef, layoutKey: `${fitWidth}:${availableWidth}` });
   const [isFullscreen, setIsFullscreen] = React.useState(false);
   const [contentWidth, setContentWidth] = React.useState(0);
   const [contentHeight, setContentHeight] = React.useState(0);
-  const [availableWidth, setAvailableWidth] = React.useState(0);
 
   React.useEffect(() => {
     onLoadingChange?.(status === "loading");
@@ -98,7 +94,8 @@ export function PreviewDocx({ source, toolbarContainer, showLoading = true, onLo
     }
 
     const updateWidth = () => {
-      setAvailableWidth(Math.max(node.clientWidth - 8, 0));
+      rememberPosition();
+      setAvailableWidth(Math.max(node.clientWidth - 32, 0));
     };
 
     updateWidth();
@@ -106,7 +103,7 @@ export function PreviewDocx({ source, toolbarContainer, showLoading = true, onLo
     const observer = new ResizeObserver(updateWidth);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [status]);
+  }, [rememberPosition, status]);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -122,6 +119,7 @@ export function PreviewDocx({ source, toolbarContainer, showLoading = true, onLo
           fetch(source, { signal: abortController.signal }),
         ]);
         const buffer = await response.arrayBuffer();
+        if (cancelled) return;
         const renderAsync = docxModule.renderAsync ?? docxModule.default?.renderAsync;
         if (!renderAsync) {
           throw new Error(t("wordViewerLoadFailed"));
@@ -206,10 +204,11 @@ export function PreviewDocx({ source, toolbarContainer, showLoading = true, onLo
     if (!contentWidth || !availableWidth) {
       return 1;
     }
-    return Math.min(1, availableWidth / contentWidth);
+    return availableWidth / contentWidth;
   }, [availableWidth, contentWidth]);
 
-  const effectiveScale = fitScale * zoom;
+  const effectiveScale = fitWidth ? fitScale : zoom;
+  useFileScaleGestures({ scrollRef: scrollRegionRef, scale: effectiveScale, onScale: (value) => { setFitWidth(false); setScale(value); }, enabled: status === "ready", resetKey: source });
 
   const toggleFullscreen = React.useCallback(async () => {
     const element = previewRef.current;
@@ -227,30 +226,12 @@ export function PreviewDocx({ source, toolbarContainer, showLoading = true, onLo
 
   const toolbar = (
     <div className="flex items-center gap-1.5">
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="size-7 rounded-full"
-        aria-label={tPreview("zoomOut")}
-        onClick={zoomOut}
-        disabled={status !== "ready" || !canZoomOut}
-      >
-        <Minus className="size-3.5" />
-      </Button>
-      <span className="min-w-11 text-center text-[11px] text-muted-foreground">{Math.round(zoom * 100)}%</span>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="size-7 rounded-full"
-        aria-label={tPreview("zoomIn")}
-        onClick={zoomIn}
-        disabled={status !== "ready" || !canZoomIn}
-      >
-        <Plus className="size-3.5" />
-      </Button>
-      <Button
+      <FileScaleSelect value={fitWidth ? null : zoom} fitScale={fitScale} disabled={status !== "ready"} onChange={(value) => {
+        rememberPosition();
+        setFitWidth(value === null);
+        if (value !== null) setScale(value);
+      }} />
+      {allowFullscreen ? <Button
         type="button"
         variant="ghost"
         size="icon"
@@ -260,12 +241,12 @@ export function PreviewDocx({ source, toolbarContainer, showLoading = true, onLo
         disabled={status !== "ready"}
       >
         {isFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-      </Button>
+      </Button> : null}
     </div>
   );
 
   return (
-    <div ref={previewRef} className="flex h-full min-h-0 flex-col bg-background">
+    <div ref={previewRef} className="flex h-full min-h-0 flex-col bg-transparent">
       {toolbarContainer ? createPortal(toolbar, toolbarContainer) : (
         <div className="flex shrink-0 items-center justify-end gap-1.5 px-1 py-2">{toolbar}</div>
       )}
@@ -278,9 +259,10 @@ export function PreviewDocx({ source, toolbarContainer, showLoading = true, onLo
         ) : null}
 
         {status !== "error" ? (
-          <div ref={scrollRegionRef} className={`min-h-0 h-full flex-1 overflow-auto ${status === "loading" ? "invisible" : ""}`}>
-            <div className="mx-auto flex min-w-full w-max justify-center px-4 pb-4">
+          <div ref={scrollRegionRef} data-file-preview-scroll="" className={`min-h-0 h-full flex-1 overflow-auto ${status === "loading" ? "invisible" : ""}`}>
+            <div className="mx-auto flex min-w-full w-max justify-center px-4 pb-4 pt-[var(--file-preview-toolbar-inset,0px)]">
               <div
+                data-file-scale-anchor=""
                 className="relative shrink-0"
                 style={{
                   width: contentWidth > 0 ? `${contentWidth * effectiveScale}px` : undefined,
@@ -308,13 +290,9 @@ export function PreviewDocx({ source, toolbarContainer, showLoading = true, onLo
 
       <style jsx global>{`
         .docx-preview-root {
-          color: var(--foreground);
+          color: #000;
           width: auto;
           margin: 0;
-        }
-
-        .docx-preview-root .docx {
-          color: inherit;
         }
 
         .docx-preview-root .docx-wrapper {
@@ -324,14 +302,14 @@ export function PreviewDocx({ source, toolbarContainer, showLoading = true, onLo
           margin: 0;
         }
 
-        .docx-preview-root .docx-wrapper > section.docx {
-          margin: 0 auto 16px;
-          box-shadow: none;
+        .docx-preview-root section.docx {
+          margin: 0 auto 24px;
+          box-shadow: 0 1px 3px rgb(0 0 0 / 8%);
           border: 1px solid var(--border);
-          background: var(--background);
+          background-color: #fff;
         }
 
-        .docx-preview-root .docx-wrapper > section.docx:last-child {
+        .docx-preview-root section.docx:last-child {
           margin-bottom: 0;
         }
       `}</style>

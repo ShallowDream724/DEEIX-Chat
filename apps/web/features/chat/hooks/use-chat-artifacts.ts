@@ -9,6 +9,7 @@ import {
   type OpenCodeArtifactInput,
 } from "@/features/chat/model/chat-artifacts";
 import type { ChatAreaMessage } from "@/features/chat/types/messages";
+import type { ChatFilePreviewRequest } from "@/features/chat/context/chat-file-preview-context";
 
 type UseChatArtifactsParams = {
   scopeKey: string | null;
@@ -128,6 +129,8 @@ export function useChatArtifacts({ scopeKey, transient = false, messages }: UseC
   // time: opening a code artifact (or one auto-opening while it streams)
   // replaces the block, and opening a block closes the artifact.
   const [activeBlock, setActiveBlock] = React.useState<{ messageKey: string; blockKey: string } | null>(null);
+  const [activeFile, setActiveFile] = React.useState<ChatFilePreviewRequest | null>(null);
+  const [fileExpanded, setFileExpanded] = React.useState(false);
   const dismissedArtifactRef = React.useRef<ChatArtifact | null>(null);
   const previousScopeRef = React.useRef({ key: scopeKey, transient });
   const artifactRatio = customArtifactRatio ?? resolveDefaultRatio(inlineLayout);
@@ -140,6 +143,13 @@ export function useChatArtifacts({ scopeKey, transient = false, messages }: UseC
         : null,
     [activeArtifactID, artifacts, lastActiveArtifact],
   );
+
+  // Files belong to the current conversation, including unsent/temporary drafts.
+  // Artifact streaming reconciliation below must not keep a file from another scope open.
+  React.useEffect(() => {
+    setActiveFile(null);
+    setFileExpanded(false);
+  }, [scopeKey, transient]);
 
   React.useEffect(() => {
     const previousScope = previousScopeRef.current;
@@ -183,7 +193,7 @@ export function useChatArtifacts({ scopeKey, transient = false, messages }: UseC
   }, [activeArtifact, activeArtifactID, artifacts]);
 
   React.useEffect(() => {
-    if (!isInline || !latestArtifact?.streaming || dismissedArtifactID === latestArtifact.id) {
+    if (activeFile || !isInline || !latestArtifact?.streaming || dismissedArtifactID === latestArtifact.id) {
       return;
     }
     if (dismissedArtifactRef.current && isSameLogicalArtifact(latestArtifact, dismissedArtifactRef.current)) {
@@ -192,7 +202,7 @@ export function useChatArtifacts({ scopeKey, transient = false, messages }: UseC
     if (activeArtifactID !== latestArtifact.id) {
       setActiveArtifactID(latestArtifact.id);
     }
-  }, [activeArtifactID, dismissedArtifactID, isInline, latestArtifact]);
+  }, [activeArtifactID, activeFile, dismissedArtifactID, isInline, latestArtifact]);
 
   const openArtifact = React.useCallback((message: ChatAreaMessage, input: OpenCodeArtifactInput) => {
     const messageArtifacts = extractArtifactsFromContent(message);
@@ -203,6 +213,8 @@ export function useChatArtifacts({ scopeKey, transient = false, messages }: UseC
 
     if (!selected) return;
 
+    setActiveFile(null);
+    setFileExpanded(false);
     dismissedArtifactRef.current = null;
     setDismissedArtifactID(null);
     setActiveArtifactID(selected.id);
@@ -226,6 +238,8 @@ export function useChatArtifacts({ scopeKey, transient = false, messages }: UseC
       if (activeArtifactID) {
         closeArtifact();
       }
+      setActiveFile(null);
+      setFileExpanded(false);
       setActiveBlock({ messageKey: message.key, blockKey });
     },
     [activeArtifactID, closeArtifact],
@@ -236,8 +250,26 @@ export function useChatArtifacts({ scopeKey, transient = false, messages }: UseC
   }, []);
 
   const selectArtifact = React.useCallback((artifactID: string) => {
+    setActiveFile(null);
+    setFileExpanded(false);
     setActiveArtifactID(artifactID);
   }, []);
+
+  const openFile = React.useCallback((request: ChatFilePreviewRequest) => {
+    closeArtifact();
+    setActiveBlock(null);
+    // Keep the same target mounted when its card is clicked again.
+    setActiveFile((current) => current?.file.fileID === request.file.fileID
+      && current.loadContent === request.loadContent
+      && current.allowDownload === request.allowDownload ? current : request);
+  }, [closeArtifact]);
+
+  const closeFile = React.useCallback(() => {
+    setActiveFile(null);
+    setFileExpanded(false);
+  }, []);
+
+  const toggleFileExpanded = React.useCallback(() => setFileExpanded((value) => !value), []);
 
   const setArtifactRatio = React.useCallback((ratio: number) => {
     setCustomArtifactRatio(clampArtifactRatio(ratio));
@@ -250,6 +282,11 @@ export function useChatArtifacts({ scopeKey, transient = false, messages }: UseC
   return {
     activeArtifact,
     activeBlock: activeArtifact ? null : activeBlock,
+    activeFile,
+    fileExpanded,
+    openFile,
+    closeFile,
+    toggleFileExpanded,
     closeBlock,
     openBlock,
     artifactRatio,

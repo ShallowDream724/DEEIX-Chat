@@ -1,6 +1,6 @@
 "use client";
 
-import { FileAudio2, Maximize2, Minimize2, Minus, Pause, Play, Plus } from "lucide-react";
+import { FileAudio2, Maximize2, Minimize2, Pause, Play } from "lucide-react";
 import Image from "next/image";
 import { useTranslations } from "next-intl";
 import * as React from "react";
@@ -8,7 +8,7 @@ import { createPortal } from "react-dom";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { useFileScale } from "@/entities/file/components/file-preview/file-scale";
+import { FileScaleSelect, useFileScale, useFileScaleGestures } from "@/entities/file/components/file-preview/file-scale";
 
 type PreviewMediaProps = {
   kind: "image" | "audio" | "video";
@@ -17,14 +17,15 @@ type PreviewMediaProps = {
   contentType?: string;
   toolbarContainer?: HTMLElement | null;
   inline?: boolean;
+  allowFullscreen?: boolean;
 };
 
 const IMAGE_PREVIEW = {
   zoom: {
-    min: 0.5,
-    max: 2,
+    min: 0.25,
+    max: 4,
     step: 0.1,
-    initial: 0.8,
+    initial: 1,
   },
   fallbackSize: {
     width: 1200,
@@ -77,6 +78,7 @@ export function PreviewMedia({
   contentType,
   toolbarContainer,
   inline = false,
+  allowFullscreen = true,
 }: PreviewMediaProps) {
   const t = useTranslations("files.previewErrors");
   const tPreview = useTranslations("files.preview");
@@ -97,18 +99,16 @@ export function PreviewMedia({
   const [videoControlsVisible, setVideoControlsVisible] = React.useState(true);
   const [duration, setDuration] = React.useState(0);
   const [currentTime, setCurrentTime] = React.useState(0);
+  const [imageFitWidth, setImageFitWidth] = React.useState(true);
+  const [imageViewport, setImageViewport] = React.useState<{ width: number; height: number }>({ width: 0, height: 0 });
   const {
     scale: imageZoom,
     setScale: setImageZoom,
-    zoomOut: zoomImageOut,
-    zoomIn: zoomImageIn,
-    canZoomOut: canZoomImageOut,
-    canZoomIn: canZoomImageIn,
-  } = useFileScale(IMAGE_PREVIEW.zoom, { scrollRef: imageScrollRegionRef });
+    rememberPosition,
+  } = useFileScale(IMAGE_PREVIEW.zoom, { scrollRef: imageScrollRegionRef, layoutKey: `${imageFitWidth}:${imageViewport.width}:${imageViewport.height}` });
   const [imageIsFullscreen, setImageIsFullscreen] = React.useState(false);
   const [videoIsFullscreen, setVideoIsFullscreen] = React.useState(false);
   const [imageSize, setImageSize] = React.useState<{ width: number; height: number }>(IMAGE_PREVIEW.fallbackSize);
-  const [imageViewport, setImageViewport] = React.useState<{ width: number; height: number }>({ width: 0, height: 0 });
   const isSVG = kind === "image" && (contentType?.split(";")[0]?.trim().toLowerCase() === "image/svg+xml");
   const progress = duration > 0 ? Math.min(currentTime / duration, 1) : 0;
   const audioTitle = React.useMemo(() => resolveMediaTitle(alt, t("untitledAudio")), [alt, t]);
@@ -172,6 +172,8 @@ export function PreviewMedia({
     };
 
     probe.src = source;
+    imageCenterKeyRef.current = "";
+    setImageFitWidth(true);
     setImageZoom(IMAGE_PREVIEW.zoom.initial);
 
     return () => {
@@ -193,6 +195,7 @@ export function PreviewMedia({
     }
 
     const updateViewport = () => {
+      rememberPosition();
       setImageViewport({
         width: Math.max(node.clientWidth, 0),
         height: Math.max(node.clientHeight, 0),
@@ -204,7 +207,7 @@ export function PreviewMedia({
     const observer = new ResizeObserver(updateViewport);
     observer.observe(node);
     return () => observer.disconnect();
-  }, [kind]);
+  }, [kind, rememberPosition]);
 
   React.useEffect(() => {
     if (kind === "image") {
@@ -397,12 +400,11 @@ export function PreviewMedia({
     }
 
     const availableWidth = Math.max(imageViewport.width - 32, 0);
-    const availableHeight = Math.max(imageViewport.height - 48, 0);
-
-    return Math.min(1, availableWidth / imageSize.width, availableHeight / imageSize.height);
+    return availableWidth / imageSize.width;
   }, [imageSize.height, imageSize.width, imageViewport.height, imageViewport.width, kind]);
 
-  const imageEffectiveScale = imageFitScale * imageZoom;
+  const imageEffectiveScale = imageFitWidth ? imageFitScale : imageZoom;
+  useFileScaleGestures({ scrollRef: imageScrollRegionRef, scale: imageEffectiveScale, onScale: (value) => { setImageFitWidth(false); setImageZoom(value); }, enabled: kind === "image", resetKey: source });
   const scaledImageWidth = imageSize.width * imageEffectiveScale;
   const scaledImageHeight = imageSize.height * imageEffectiveScale;
 
@@ -416,7 +418,8 @@ export function PreviewMedia({
       return;
     }
 
-    const centerKey = `${source}:${imageViewport.width}:${imageViewport.height}`;
+    if (!imageViewport.width || !imageViewport.height) return;
+    const centerKey = source;
     if (imageCenterKeyRef.current === centerKey) {
       return;
     }
@@ -462,30 +465,12 @@ export function PreviewMedia({
 
   const imageToolbar = (
     <div className="flex items-center gap-1.5">
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="size-7 rounded-full"
-        aria-label={tPreview("zoomOut")}
-        onClick={zoomImageOut}
-        disabled={!canZoomImageOut}
-      >
-        <Minus className="size-3.5" />
-      </Button>
-      <span className="min-w-11 text-center text-[11px] text-muted-foreground">{Math.round(imageZoom * 100)}%</span>
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon"
-        className="size-7 rounded-full"
-        aria-label={tPreview("zoomIn")}
-        onClick={zoomImageIn}
-        disabled={!canZoomImageIn}
-      >
-        <Plus className="size-3.5" />
-      </Button>
-      <Button
+      <FileScaleSelect value={imageFitWidth ? null : imageZoom} fitScale={imageFitScale} onChange={(value) => {
+        rememberPosition();
+        setImageFitWidth(value === null);
+        if (value !== null) setImageZoom(value);
+      }} />
+      {allowFullscreen ? <Button
         type="button"
         variant="ghost"
         size="icon"
@@ -494,24 +479,25 @@ export function PreviewMedia({
         onClick={() => void toggleImageFullscreen()}
       >
         {imageIsFullscreen ? <Minimize2 className="size-3.5" /> : <Maximize2 className="size-3.5" />}
-      </Button>
+      </Button> : null}
     </div>
   );
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col">
       {kind === "image" ? (
-        <div ref={imagePreviewRef} className="flex min-h-0 flex-1 flex-col bg-background">
+        <div ref={imagePreviewRef} className="flex min-h-0 flex-1 flex-col bg-transparent">
           {toolbarContainer ? createPortal(imageToolbar, toolbarContainer) : (
             <div className="flex shrink-0 items-center justify-end gap-1.5 px-1 py-2">{imageToolbar}</div>
           )}
 
-          <div ref={imageScrollRegionRef} className="min-h-0 flex-1 overflow-auto">
+          <div ref={imageScrollRegionRef} data-file-preview-scroll="" className="min-h-0 flex-1 overflow-auto">
             <div
-              className="flex min-h-full min-w-full w-max items-center justify-center px-4 py-6"
+              className="flex min-h-full min-w-full w-max items-center justify-center px-4 pb-6 pt-[calc(var(--file-preview-toolbar-inset,0px)+1.5rem)]"
               style={{ minHeight: imageViewport.height > 0 ? `${imageViewport.height}px` : undefined }}
             >
               <div
+                data-file-scale-anchor=""
                 className="relative shrink-0"
                 style={{
                   width: `${scaledImageWidth}px`,
@@ -526,29 +512,9 @@ export function PreviewMedia({
                     height: `${imageSize.height}px`,
                   }}
                 >
-                  {isSVG ? (
-                    <object
-                      data={source}
-                      type="image/svg+xml"
-                      aria-label={alt || tPreview("svgPreview")}
-                      className="block rounded-md"
-                      style={{ width: `${imageSize.width}px`, height: `${imageSize.height}px` }}
-                    >
-                      <Image
-                        src={source}
-                        alt={alt || tPreview("svgPreview")}
-                        className="block rounded-md object-contain"
-                        width={imageSize.width}
-                        height={imageSize.height}
-                        sizes="100vw"
-                        unoptimized
-                        style={{ width: `${imageSize.width}px`, height: `${imageSize.height}px` }}
-                      />
-                    </object>
-                  ) : (
                     <Image
                       src={source}
-                      alt={alt || tPreview("imagePreview")}
+                      alt={alt || tPreview(isSVG ? "svgPreview" : "imagePreview")}
                       className="block rounded-md object-contain"
                       width={imageSize.width}
                       height={imageSize.height}
@@ -556,7 +522,6 @@ export function PreviewMedia({
                       unoptimized
                       style={{ width: `${imageSize.width}px`, height: `${imageSize.height}px` }}
                     />
-                  )}
                 </div>
               </div>
             </div>
@@ -611,7 +576,7 @@ export function PreviewMedia({
                         ],
                   )}
                   onClick={() => void togglePlay()}
-                  onDoubleClick={() => void toggleVideoFullscreen()}
+                  onDoubleClick={allowFullscreen ? () => void toggleVideoFullscreen() : undefined}
                   onLoadedMetadata={handleMediaLoadedMetadata}
                   onTimeUpdate={handleMediaTimeUpdate}
                   onPlay={handleMediaPlay}
@@ -692,7 +657,7 @@ export function PreviewMedia({
                         />
                       </div>
                       <span className="shrink-0 tabular-nums">{formatTime(duration)}</span>
-                      <Button
+                      {allowFullscreen ? <Button
                         type="button"
                         variant="ghost"
                         size="icon"
@@ -704,7 +669,7 @@ export function PreviewMedia({
                         onClick={() => void toggleVideoFullscreen()}
                       >
                         {videoIsFullscreen ? <Minimize2 className="size-3.5" strokeWidth={1.7} /> : <Maximize2 className="size-3.5" strokeWidth={1.7} />}
-                      </Button>
+                      </Button> : null}
                     </div>
                   </div>
                 </div>

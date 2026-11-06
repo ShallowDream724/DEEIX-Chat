@@ -7,6 +7,7 @@ import { useLocalizedErrorMessage } from "@/i18n/use-localized-error";
 import { fetchFileContent, type FileContentResult } from "@/shared/api/file";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import { isReadableTextContent, resolveFilePreviewKind } from "@/entities/file/lib/file-display";
+import { readPreviewText } from "@/entities/file/components/file-preview/preview-content-data";
 
 export type PreviewDialogFile = {
   fileID: string;
@@ -15,12 +16,13 @@ export type PreviewDialogFile = {
   sizeBytes: number;
 };
 
-type PreviewState =
+export type FilePreviewState =
   | { status: "idle" }
   | { status: "loading" }
   | { status: "error"; message: string }
   | {
       status: "ready";
+      fileID: string;
       kind: ReturnType<typeof resolveFilePreviewKind>;
       objectURL: string;
       textContent: string | null;
@@ -35,49 +37,42 @@ export type FileContentLoader = (
 export function useFilePreviewDialog(file: PreviewDialogFile | null, loadContent?: FileContentLoader) {
   const t = useTranslations("files.previewDialog");
   const resolveErrorMessage = useLocalizedErrorMessage();
-  const objectURLRef = React.useRef<string | null>(null);
-  const [state, setState] = React.useState<PreviewState>({ status: "idle" });
-
-  const revoke = React.useCallback(() => {
-    if (!objectURLRef.current) {
-      return;
-    }
-    URL.revokeObjectURL(objectURLRef.current);
-    objectURLRef.current = null;
-  }, []);
+  const [state, setState] = React.useState<FilePreviewState>({ status: "idle" });
+  const latest = React.useRef({ file, loadContent, resolveErrorMessage, t });
+  latest.current = { file, loadContent, resolveErrorMessage, t };
+  const fileID = file?.fileID;
 
   React.useEffect(() => {
-    if (!file) {
-      revoke();
+    const { file: requestedFile, loadContent: loader } = latest.current;
+    if (!requestedFile) {
       setState({ status: "idle" });
       return undefined;
     }
 
     let cancelled = false;
+    let objectURL: string | null = null;
     const controller = new AbortController();
-    revoke();
     setState({ status: "loading" });
 
     void (async () => {
       try {
-        const result = loadContent
-          ? await loadContent(file, controller.signal)
+        const result = loader
+          ? await loader(requestedFile, controller.signal)
           : await (async () => {
               const token = await resolveAccessToken();
               if (!token) {
-                throw new Error(t("sessionExpired"));
+                  throw new Error(latest.current.t("sessionExpired"));
               }
-              return fetchFileContent(token, file.fileID, controller.signal);
+              return fetchFileContent(token, requestedFile.fileID, controller.signal);
             })();
-        let kind = resolveFilePreviewKind(file, result.contentType);
-        const objectURL = URL.createObjectURL(result.blob);
-        objectURLRef.current = objectURL;
+        if (cancelled || controller.signal.aborted) return;
+        let kind = resolveFilePreviewKind(requestedFile, result.contentType);
 
         let textContent: string | null = null;
         if (kind === "markdown" || kind === "code" || kind === "text" || kind === "unsupported") {
-          const raw = await result.blob.text();
-          if (isReadableTextContent(raw)) {
-            textContent = raw;
+          const text = await readPreviewText(result.blob, isReadableTextContent, controller.signal);
+          if (text !== null) {
+            textContent = text;
             if (kind === "unsupported") {
               kind = "text";
             }
@@ -87,28 +82,27 @@ export function useFilePreviewDialog(file: PreviewDialogFile | null, loadContent
         }
 
         if (cancelled || controller.signal.aborted) {
-          URL.revokeObjectURL(objectURL);
           return;
         }
-
-        setState({ status: "ready", kind, objectURL, textContent, contentType: result.contentType });
+        objectURL = URL.createObjectURL(result.blob);
+        setState({ status: "ready", fileID: requestedFile.fileID, kind, objectURL, textContent, contentType: result.contentType });
       } catch (error) {
         if (cancelled || controller.signal.aborted) {
           return;
         }
-        setState({ status: "error", message: resolveErrorMessage(error, t("loadFailed")) });
+        setState({ status: "error", message: latest.current.resolveErrorMessage(error, latest.current.t("loadFailed")) });
       }
     })();
 
     return () => {
       cancelled = true;
       controller.abort();
-      revoke();
+      if (objectURL) URL.revokeObjectURL(objectURL);
     };
-  }, [file, loadContent, resolveErrorMessage, revoke, t]);
+  }, [fileID]);
 
   const download = React.useCallback(() => {
-    if (state.status !== "ready" || !file) {
+    if (state.status !== "ready" || !file || state.fileID !== file.fileID) {
       return;
     }
     const anchor = document.createElement("a");
@@ -119,5 +113,6 @@ export function useFilePreviewDialog(file: PreviewDialogFile | null, loadContent
     anchor.remove();
   }, [file, state]);
 
-  return { state, download };
+  const currentState: FilePreviewState = state.status === "ready" && state.fileID !== fileID ? { status: "loading" } : state;
+  return { state: currentState, download };
 }

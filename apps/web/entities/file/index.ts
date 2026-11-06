@@ -2,6 +2,8 @@
 // Unused re-exports are tree-shaken (package.json "sideEffects"), so UI and logic share one entry.
 export { DeleteFilesOption } from "@/entities/file/components/delete-files-option";
 export { LazyFilePreviewDialog } from "@/entities/file/components/file-preview/lazy-file-preview-dialog";
+export { LazyFilePreviewPanel } from "@/entities/file/components/file-preview/lazy-file-preview-panel";
+export type { FilePreviewPanelProps } from "@/entities/file/components/file-preview/preview-panel";
 export { PreviewDocument } from "@/entities/file/components/file-preview/preview-document";
 export { PreviewDocx } from "@/entities/file/components/file-preview/preview-docx";
 export { PreviewLoading } from "@/entities/file/components/file-preview/preview-loading";
@@ -30,6 +32,7 @@ export {
   isReadableTextContent,
   resolveFileExtension,
   resolveFileFilter,
+  resolveFileFilterIcon,
   resolveFileIcon,
   resolveFilePreviewKind,
 } from "@/entities/file/lib/file-display";

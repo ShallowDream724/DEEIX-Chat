@@ -16,6 +16,7 @@ import {
   AttachmentTrigger,
 } from "@/components/ui/attachment";
 import type { MessageAttachment } from "@/features/chat/types/messages";
+import { useChatFilePreview } from "@/features/chat/context/chat-file-preview-context";
 import {
   type FileContentLoader,
   LazyFilePreviewDialog,
@@ -133,15 +134,20 @@ export function MessageAttachmentRow({
 }) {
   const [activeAtt, setActiveAtt] = React.useState<MessageAttachment | null>(null);
   const [dialogOpen, setDialogOpen] = React.useState(false);
+  const openFilePreview = useChatFilePreview();
 
   const handleClick = React.useCallback((att: MessageAttachment) => {
     if (onOpenAttachment) {
       onOpenAttachment(att);
       return;
     }
+    if (openFilePreview) {
+      openFilePreview({ file: att, loadContent, allowDownload });
+      return;
+    }
     setActiveAtt(att);
     setDialogOpen(true);
-  }, [onOpenAttachment]);
+  }, [onOpenAttachment, openFilePreview, loadContent, allowDownload]);
 
   const handleOpenChange = React.useCallback((v: boolean) => {
     setDialogOpen(v);

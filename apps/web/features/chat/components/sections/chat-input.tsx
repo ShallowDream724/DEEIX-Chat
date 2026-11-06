@@ -71,6 +71,7 @@ import {
   useChatSpeechInput,
 } from "@/features/chat/hooks/use-chat-speech-input";
 import { useChatPreviewSync } from "@/features/chat/hooks/use-chat-preview-sync";
+import { localAttachmentContentLoader, useChatFilePreview } from "@/features/chat/context/chat-file-preview-context";
 import { isMediaSubmitTask, resolveChatSubmitDecision } from "@/features/chat/model/chat-task";
 import type {
   ChatModelOption,
@@ -315,6 +316,18 @@ function ChatInputComponent({
   const [markdownPreview, setMarkdownPreview] = React.useState(false);
   const stablePreviewAttachment = useDialogSnapshot(previewAttachment);
   const previewLocalFile = stablePreviewAttachment?.localFile;
+  const openFilePreview = useChatFilePreview();
+  const previewLoader = React.useMemo(() => previewLocalFile ? localAttachmentContentLoader(previewLocalFile) : undefined, [previewLocalFile]);
+  const openAttachmentPreview = React.useCallback((attachment: PendingAttachment) => {
+    if (openFilePreview) {
+      openFilePreview({
+        file: attachment,
+        loadContent: attachment.localFile ? localAttachmentContentLoader(attachment.localFile) : undefined,
+      });
+    } else {
+      setPreviewAttachment(attachment);
+    }
+  }, [openFilePreview]);
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const inputGroupRef = React.useRef<HTMLDivElement | null>(null);
   const inputGroupMeasureRef = React.useRef<HTMLDivElement | null>(null);
@@ -906,7 +919,7 @@ function ChatInputComponent({
                   const statusDetail = failed || backgroundProcessing ? badge.detail : undefined;
                   const trigger = (
                     <AttachmentTrigger
-                      onClick={() => setPreviewAttachment(item)}
+                      onClick={() => openAttachmentPreview(item)}
                       aria-label={tComposer("previewAttachment", { name: item.fileName })}
                     />
                   );
@@ -1021,19 +1034,7 @@ function ChatInputComponent({
                   file={stablePreviewAttachment}
                   open={previewAttachment !== null}
                   onOpenChange={closePreviewDialog}
-                  loadContent={previewLocalFile
-                    ? async (_file, signal) => {
-                        if (signal.aborted) {
-                          throw new DOMException("The operation was aborted", "AbortError");
-                        }
-                        return {
-                          blob: previewLocalFile,
-                          contentType: previewLocalFile.type || "application/octet-stream",
-                          disposition: null,
-                          contentLength: previewLocalFile.size,
-                        };
-                      }
-                    : undefined}
+                  loadContent={previewLoader}
                 />
               ) : null}
             </div>

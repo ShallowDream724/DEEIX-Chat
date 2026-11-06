@@ -18,12 +18,14 @@ import {
 import { ConversationShareDialog, sharePatchFromDTO, useSidebarConversationField } from "@/entities/conversation";
 import { ChatArea, ChatAreaLoadError, ChatAreaSkeleton } from "@/features/chat/components/sections/chat-area";
 import { ChatArtifactWorkspace } from "@/features/chat/components/sections/chat-artifact";
+import { ChatFilePreview } from "@/features/chat/components/sections/chat-file-preview";
 import { ChatUIBlockPanel } from "@/features/chat/components/sections/chat-ui-block-panel";
 import { ChatEmptyState } from "@/features/chat/components/sections/chat-empty";
 import { ChatInput } from "@/features/chat/components/sections/chat-input";
 import { ChatScreenshotPreviewDialog } from "@/features/chat/components/sections/chat-screenshot-preview-dialog";
 import { TemporaryChatModeControl } from "@/features/chat/components/sections/chat-temporary-mode-control";
 import { useChatSession } from "@/features/chat/context/chat-session-context";
+import { ChatFilePreviewContext } from "@/features/chat/context/chat-file-preview-context";
 import { useChatArtifactResize } from "@/features/chat/hooks/use-chat-artifact-resize";
 import { useChatArtifacts } from "@/features/chat/hooks/use-chat-artifacts";
 import { useChatAttachments } from "@/features/chat/hooks/use-chat-attachments";
@@ -794,17 +796,6 @@ export function AppChatArea() {
     && (nativeReadinessPending || !nativeEligibleFileIDs.has(item.fileID)));
   const sendTemporary = temporaryRuntime.send;
   const startNewTemporary = temporaryRuntime.startNew;
-  const startNewFromInputLimit = React.useCallback(() => {
-    if (temporaryMode) {
-      startNewTemporary();
-      return;
-    }
-    carryDraftToNewConversation();
-    const projectID = currentConversation?.projectID ?? routeProjectID ?? "";
-    requestNewConversation({ projectID });
-    router.push(projectID ? `/chat?project_id=${encodeURIComponent(projectID)}` : "/chat");
-  }, [carryDraftToNewConversation, currentConversation?.projectID, requestNewConversation, routeProjectID,
-    router, startNewTemporary, temporaryMode]);
   const handleSendComposer = React.useCallback(() => {
     if (inputIssues.length > 0) {
       onInputLimit(inputIssues);
@@ -819,7 +810,7 @@ export function AppChatArea() {
     [conversationID, temporaryMode, uiBlockState.store],
   );
   const artifactWorkspace = useChatArtifacts({
-    scopeKey: conversationID,
+    scopeKey: conversationID ?? `draft:${newConversationRevision}`,
     transient: temporaryMode,
     messages: displayMessages,
   });
@@ -834,10 +825,38 @@ export function AppChatArea() {
       onClose={artifactWorkspace.closeBlock}
     />
   ) : null;
-  const hasInlineArtifact = Boolean((artifactWorkspace.activeArtifact || activeBlock) && artifactWorkspace.isInlineViewport);
+  const activeFile = artifactWorkspace.activeFile;
+  const filePanel = activeFile ? (
+    <ChatFilePreview
+      file={activeFile.file}
+      loadContent={activeFile.loadContent}
+      allowDownload={activeFile.allowDownload}
+      onClose={artifactWorkspace.closeFile}
+      expanded={artifactWorkspace.fileExpanded}
+      onToggleExpanded={artifactWorkspace.isInlineViewport ? artifactWorkspace.toggleFileExpanded : undefined}
+    />
+  ) : null;
+  const previewOverlay = Boolean(activeFile && (artifactWorkspace.fileExpanded || !artifactWorkspace.isInlineViewport));
+  const hasInlineArtifact = Boolean((artifactWorkspace.activeArtifact || activeBlock || activeFile)
+    && artifactWorkspace.isInlineViewport && !previewOverlay);
   const workspaceGridColumns = hasInlineArtifact
     ? `minmax(0, ${1 - artifactWorkspace.artifactRatio}fr) minmax(0, ${artifactWorkspace.artifactRatio}fr)`
     : "minmax(0, 1fr) minmax(0, 0fr)";
+  const { closeFile, closeBlock, closeArtifact } = artifactWorkspace;
+  const startNewFromInputLimit = React.useCallback(() => {
+    closeFile();
+    closeBlock();
+    closeArtifact();
+    if (temporaryMode) {
+      startNewTemporary();
+      return;
+    }
+    carryDraftToNewConversation();
+    const projectID = currentConversation?.projectID ?? routeProjectID ?? "";
+    requestNewConversation({ projectID });
+    router.push(projectID ? `/chat?project_id=${encodeURIComponent(projectID)}` : "/chat");
+  }, [closeFile, closeBlock, closeArtifact, carryDraftToNewConversation, currentConversation?.projectID, requestNewConversation, routeProjectID,
+    router, startNewTemporary, temporaryMode]);
 
   const selectedModelDefaultOptions = modelOptionPolicyDisabled
     ? EMPTY_CONVERSATION_OPTIONS
@@ -963,6 +982,7 @@ export function AppChatArea() {
   return (
     <UIBlockRegistryProvider components={uiComponents}>
     <UIBlockActionsProvider actions={uiBlockActions}>
+    <ChatFilePreviewContext.Provider value={artifactWorkspace.openFile}>
     <InputLimitDialog
       reasons={inputLimitReasons}
       onClose={closeInputLimit}
@@ -976,6 +996,18 @@ export function AppChatArea() {
       onDragLeave={onFileDragLeave}
       onDrop={onFileDrop}
     >
+      <div
+        ref={workspaceRef}
+        className={cn(
+          "relative grid min-h-0 flex-1 overflow-hidden",
+          artifactResizing
+            ? "transition-none"
+            : "transition-[grid-template-columns] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]",
+          hasInlineArtifact && "md:overflow-visible",
+        )}
+        style={{ gridTemplateColumns: workspaceGridColumns }}
+      >
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" inert={previewOverlay || undefined}>
       {!conversationID ? (
         <TemporaryChatModeControl
           active={temporaryMode}
@@ -1001,18 +1033,7 @@ export function AppChatArea() {
           </ChatEmptyState>
         </div>
       ) : (
-        <div
-          ref={workspaceRef}
-          className={cn(
-            "relative grid min-h-0 flex-1 overflow-hidden",
-            artifactResizing
-              ? "transition-none"
-              : "transition-[grid-template-columns] duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]",
-            hasInlineArtifact && "md:overflow-visible",
-          )}
-          style={{ gridTemplateColumns: workspaceGridColumns }}
-        >
-          <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               {isConversationLoading ? (
                 <ChatAreaSkeleton contentWidthClassName={chatContentWidthClassName} />
@@ -1102,10 +1123,12 @@ export function AppChatArea() {
               </div>
             ) : null}
           </div>
-
+      )}
+      </div>
           <ChatArtifactWorkspace
             artifact={artifactWorkspace.activeArtifact}
-            blockPanel={blockPanel}
+            blockPanel={filePanel ?? blockPanel}
+            expanded={Boolean(activeFile && artifactWorkspace.fileExpanded)}
             artifacts={artifactWorkspace.artifacts}
             isInlineViewport={artifactWorkspace.isInlineViewport}
             onArtifactChange={artifactWorkspace.selectArtifact}
@@ -1114,7 +1137,6 @@ export function AppChatArea() {
             onResizeStart={onArtifactResizeStart}
           />
         </div>
-      )}
 
       <ChatScreenshotPreviewDialog
         open={screenshotPreviewOpen}
@@ -1176,6 +1198,7 @@ export function AppChatArea() {
         </>
       ) : null}
     </div>
+    </ChatFilePreviewContext.Provider>
     </UIBlockActionsProvider>
     </UIBlockRegistryProvider>
   );

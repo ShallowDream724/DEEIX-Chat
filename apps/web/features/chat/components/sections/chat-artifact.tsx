@@ -41,6 +41,8 @@ type ChatArtifactWorkspaceProps = {
   artifact: ChatArtifact | null;
   // An interactive block shown in the panel instead of a code artifact.
   blockPanel?: React.ReactNode;
+  // Files and interactive blocks share the existing single workspace slot.
+  expanded?: boolean;
   artifacts: ChatArtifact[];
   isInlineViewport: boolean;
   onArtifactChange: (artifactID: string) => void;
@@ -327,6 +329,7 @@ export function ChatArtifactWorkspace({
   blockPanel = null,
   artifacts,
   isInlineViewport,
+  expanded = false,
   onArtifactChange,
   onClose,
   onResizeReset,
@@ -334,13 +337,18 @@ export function ChatArtifactWorkspace({
 }: ChatArtifactWorkspaceProps) {
   const t = useTranslations("chat.artifacts");
   const open = Boolean(artifact || blockPanel);
-  const isDesktopOpen = open && isInlineViewport;
+  const isDesktopOpen = open && isInlineViewport && !expanded;
+  const overlay = !isInlineViewport || expanded;
   const desktopBleedWidth = `calc(100% + ${DESKTOP_SHELL_GUTTER_PX}px)`;
 
   return (
-    <>
       <motion.div
-        className="hidden min-h-0 overflow-hidden md:block"
+        className={cn(
+          "min-h-0 min-w-0 overflow-hidden",
+          overlay ? "absolute inset-0 z-30" : "relative",
+          !open && "pointer-events-none",
+        )}
+        data-chat-preview-workspace=""
         initial={false}
         animate={{
           marginBottom: isDesktopOpen ? -DESKTOP_SHELL_GUTTER_PX : 0,
@@ -356,15 +364,15 @@ export function ChatArtifactWorkspace({
         <AnimatePresence initial={false}>
           {open ? (
             <motion.div
-              key="artifact-panel-desktop"
-              className="relative h-full min-h-0 overflow-hidden"
+              key="preview-panel"
+              className="relative h-full min-h-0 overflow-hidden bg-background"
               initial={{ opacity: 0, x: 32 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 32 }}
               transition={workspaceTransition}
               style={{ width: "100%", willChange: "transform, opacity" }}
             >
-              <button
+              {isDesktopOpen ? <button
                 type="button"
                 className="group absolute -left-2 inset-y-0 z-20 hidden w-4 cursor-col-resize touch-none items-center justify-center bg-transparent outline-none md:flex"
                 aria-label={t("resize")}
@@ -373,7 +381,7 @@ export function ChatArtifactWorkspace({
                 onPointerDown={onResizeStart}
               >
                 <span className="h-9 w-1 translate-x-2 rounded-full bg-foreground/20 opacity-0 transition-[background-color,opacity] group-hover:bg-foreground/32 group-hover:opacity-100 group-focus-visible:bg-foreground/32 group-focus-visible:opacity-100" />
-              </button>
+              </button> : null}
               {blockPanel ?? (artifact ? (
                 <ChatArtifactPanel
                   artifact={artifact}
@@ -387,30 +395,5 @@ export function ChatArtifactWorkspace({
           ) : null}
         </AnimatePresence>
       </motion.div>
-
-      <AnimatePresence initial={false}>
-        {open ? (
-          <motion.div
-            key="artifact-panel-mobile"
-            className="absolute inset-0 z-30 min-h-0 overflow-hidden md:hidden"
-            initial={{ opacity: 0, x: 32 }}
-            animate={{ opacity: 1, x: 0 }}
-            exit={{ opacity: 0, x: 32 }}
-            transition={workspaceTransition}
-            style={{ willChange: "transform, opacity" }}
-          >
-            {blockPanel ?? (artifact ? (
-              <ChatArtifactPanel
-                artifact={artifact}
-                artifacts={artifacts}
-                className="h-full"
-                onArtifactChange={onArtifactChange}
-                onClose={onClose}
-              />
-            ) : null)}
-          </motion.div>
-        ) : null}
-      </AnimatePresence>
-    </>
   );
 }
