@@ -1,4 +1,18 @@
 {
+  "imagePricing": {
+    "modelUsage": "图像用量",
+    "toolUsage": "图像工具用量",
+    "enabled": "区分文本与图像用量",
+    "unit": "美元 / 百万 Token",
+    "summary": "文本与图像",
+    "textInput": "文本输入",
+    "imageInput": "图像输入",
+    "cachedTextInput": "文本缓存(读)",
+    "cachedImageInput": "图像缓存(读)",
+    "imageOutput": "图像输出",
+    "textOutput": "文本输出",
+    "invalid": "请填写五项非负价格"
+  },
   "title": "计费",
   "pricing": "模型定价",
   "usageLogs": "调用日志",
@@ -178,6 +192,7 @@
     "jsonMode": "JSON",
     "jsonHint": "JSON 合法时会立即同步到表单状态，保存仍使用当前模型定价接口。",
     "jsonErrors": {
+      "image": "图像价格必须包含五项非负价格。",
       "invalid": "JSON 格式无效。",
       "root": "模型定价 JSON 必须是对象。",
       "model": "不能通过 JSON 修改平台模型名。",
@@ -388,6 +403,7 @@
     "durationVideoOnly": "{model}.pricingMode=duration 需要视频模型能力",
     "invalidNumber": "{model}.{field} 必须是大于等于 0 的数字",
     "invalidTieredPricing": "{model}.{field} 需要包含非空 tiers 数组",
+    "invalidImagePricing": "{model} 的图像价格必须包含五项非负价格。",
     "invalidTieredPricingJSON": "{model}.tieredPricingJSON 不是合法 JSON",
     "invalidSchedulePricing": "{model} 的 schedulePricing 无效或存在重叠时段。"
   }

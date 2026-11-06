@@ -520,6 +520,8 @@ func (s *Service) StreamMediaVideo(ctx context.Context, input MediaVideoInput) (
 		UsageSpeed:          usage.Speed,
 		UsageServiceTier:    usage.ServiceTier,
 		RawUsageJSON:        usage.RawUsageJSON,
+		ImageUsage:          usage.ImageUsage,
+		ImageToolUsage:      usage.ImageToolUsage,
 		CacheWrite5mTokens:  usage.CacheWrite5mTokens,
 		CacheWrite1hTokens:  usage.CacheWrite1hTokens,
 		StartedAt:           startedAt,

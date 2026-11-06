@@ -156,6 +156,12 @@ func (s *Service) ensureUsageBudgetCoversEstimate(
 		return nil
 	}
 	nativeToolEstimate := s.billingSvc.AuthorizeNativeTools(authorization, authorizedNativeToolKeys(route.Protocol, options, route.ModelCapabilitiesJSON))
+	if model, selected := selectedNativeImageModel(route.Protocol, options, route.ModelCapabilitiesJSON); selected {
+		_, err := s.billingSvc.AuthorizeImageTool(authorization, model)
+		if err != nil {
+			return err
+		}
+	}
 	if err := s.billingSvc.EnsureNativeToolReservation(ctx, authorization, nativeToolEstimate); err != nil {
 		return err
 	}
@@ -180,6 +186,18 @@ func (s *Service) ensureUsageBudgetCoversEstimate(
 		return err
 	}
 	return s.billingSvc.EnsureUsageAuthorizationBudget(ctx, authorization, requiredNanousd+nativeToolEstimate)
+}
+
+func selectedNativeImageModel(protocol string, options map[string]any, capabilities string) (string, bool) {
+	if modelOptionPolicyProtocolKey(protocol) != "openai_responses" {
+		return "", false
+	}
+	for _, tool := range resolveNativeProviderTools("openai_responses", options["tools"], capabilities) {
+		if tool.usageKeys["image_generation"] == "openai.image_generation" {
+			return strings.TrimSpace(modelOptionStringValue(tool.payload["model"])), true
+		}
+	}
+	return "", false
 }
 
 // messageRequestMaxOutputTokens 读取请求明确限定的最大输出 token 数，未限定返回 0。
@@ -439,6 +457,8 @@ func (s *Service) buildSendMessageUsageLedger(ctx context.Context, input SendMes
 		ServerSideToolUsage: result.ServerSideToolUsage,
 		MCPToolUsage:        sendMessageMCPToolUsageInputs(result),
 		RawUsageJSON:        result.RawUsageJSON,
+		ImageUsage:          result.ImageUsage,
+		ImageToolUsage:      result.ImageToolUsage,
 		BillingAt:           result.StartedAt,
 	})
 }

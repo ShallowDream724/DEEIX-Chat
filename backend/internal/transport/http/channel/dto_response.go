@@ -787,6 +787,7 @@ type PublicModelPricingResponse struct {
 	OutputUSDPerMTokens     float64                          `json:"outputUSDPerMTokens"`
 	CallUSDPerCall          float64                          `json:"callUSDPerCall"`
 	DurationUSDPerSecond    float64                          `json:"durationUSDPerSecond"`
+	ImagePricingJSON        string                           `json:"imagePricingJSON"`
 	Tiers                   []PublicModelPricingTierResponse `json:"tiers"`
 	// 时段倍率按服务器本地时区定义；客户端用 scheduleUTCOffsetMinutes 判断当前命中的时段。
 	SchedulePeriods          []PublicSchedulePeriodResponse `json:"schedulePeriods"`
@@ -1189,6 +1190,7 @@ func toPublicModelPricingResponse(v *appbilling.PublicModelPricing) *PublicModel
 		OutputUSDPerMTokens:     v.OutputUSDPerMTokens,
 		CallUSDPerCall:          v.CallUSDPerCall,
 		DurationUSDPerSecond:    v.DurationUSDPerSecond,
+		ImagePricingJSON:        v.ImagePricingJSON,
 		Tiers:                   tiers,
 
 		SchedulePeriods:          periods,

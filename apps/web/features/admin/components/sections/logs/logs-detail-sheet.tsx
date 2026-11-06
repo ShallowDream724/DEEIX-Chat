@@ -282,7 +282,7 @@ export function LogDetailSheet({
                 <DetailRow label={t("fields.protocol")} value={detail.item.providerProtocol} />
               </DetailBlock>
               <DetailBlock title={t("blocks.usageBilling")}>
-                <DetailRow label={t("fields.billing")} value={`${formatTooltipUsageCost(detail.item.billedUSD, billingDisplay)} ${detail.item.isFreeModel ? `(${usageLabels.freeModelNoBilling})` : ""}`} />
+                <DetailRow label={t("fields.billing")} value={`${formatTooltipUsageCost(detail.item.billedUSD, billingDisplay)} ${detail.item.isFreeModel && detail.item.billedNanousd <= 0 ? `(${usageLabels.freeModelNoBilling})` : ""}`} />
                 <DetailRow label={t("fields.balanceAfter")} value={formatUsageBalance(detail.item.balanceAfterUSD, billingDisplay)} />
                 <DetailRow label={t("fields.totalTokens")} value={formatCount(usageTotalTokens(detail.item), locale)} mono />
                 <DetailRow label={usageLabels.input} value={formatCount(detail.item.inputTokens, locale)} mono />

@@ -142,7 +142,7 @@ func (c *Client) generateOpenAIImageGenerationsStream(
 	input portllm.GenerateInput,
 	onEvent func(portllm.GenerateStreamEvent) error,
 ) (*portllm.GenerateOutput, error) {
-	if !portllm.SupportsImageGenerationStream(route.Protocol, route.UpstreamModel) {
+	if !portllm.SupportsImageGenerationStream(route.Protocol, route.UpstreamModel) || openAIImageRequiresBufferedOutput(input.Options) {
 		return nil, fmt.Errorf("%w: %s", portllm.ErrUnsupportedStream, portllm.AdapterOpenAIImageGenerations)
 	}
 	requestURL := buildOpenAIRequestURL(route.BaseURL, portllm.EndpointImageGenerations)
@@ -219,7 +219,7 @@ func (c *Client) postOpenAIImageJSONStream(
 		}
 		if output.Usage != (portllm.Usage{}) && onEvent != nil {
 			if err := onEvent(portllm.GenerateStreamEvent{Usage: output.Usage}); err != nil {
-				return nil, err
+				return output, err
 			}
 		}
 		return output, nil
@@ -235,7 +235,7 @@ func (c *Client) postOpenAIImageJSONStream(
 	idleReader := newIdleTimeoutReader(resp.Body, idleTimeout)
 	streamBody := newUpstreamBodyRecorder(idleReader)
 	if err = consumeOpenAIImageStream(streamBody, outputFormat, result, onEvent); err != nil {
-		return nil, attachUpstreamDebug(err, upstreamDebugSnapshot(req, debugPayload, resp, streamErrorBody(streamBody, err)))
+		return result, attachUpstreamDebug(err, upstreamDebugSnapshot(req, debugPayload, resp, streamErrorBody(streamBody, err)))
 	}
 	return result, nil
 }
@@ -294,7 +294,7 @@ func (c *Client) generateOpenAIImageEditsStream(
 	input portllm.GenerateInput,
 	onEvent func(portllm.GenerateStreamEvent) error,
 ) (*portllm.GenerateOutput, error) {
-	if !portllm.SupportsImageGenerationStream(route.Protocol, route.UpstreamModel) {
+	if !portllm.SupportsImageGenerationStream(route.Protocol, route.UpstreamModel) || openAIImageRequiresBufferedOutput(input.Options) {
 		return nil, fmt.Errorf("%w: %s", portllm.ErrUnsupportedStream, portllm.AdapterOpenAIImageEdits)
 	}
 	requestURL := buildOpenAIRequestURL(route.BaseURL, portllm.EndpointImageEdits)
@@ -355,7 +355,7 @@ func (c *Client) generateOpenAIImageEditsStream(
 		}
 		if output.Usage != (portllm.Usage{}) && onEvent != nil {
 			if err := onEvent(portllm.GenerateStreamEvent{Usage: output.Usage}); err != nil {
-				return nil, err
+				return output, err
 			}
 		}
 		return output, nil
@@ -371,13 +371,16 @@ func (c *Client) generateOpenAIImageEditsStream(
 	idleReader := newIdleTimeoutReader(resp.Body, idleTimeout)
 	streamBody := newUpstreamBodyRecorder(idleReader)
 	if err = consumeOpenAIImageStream(streamBody, outputFormat, result, onEvent); err != nil {
-		return nil, attachUpstreamDebug(err, upstreamDebugSnapshot(req, debugBody, resp, streamErrorBody(streamBody, err)))
+		return result, attachUpstreamDebug(err, upstreamDebugSnapshot(req, debugBody, resp, streamErrorBody(streamBody, err)))
 	}
 	return result, nil
 }
 
 // buildOpenAIImageGenerationRequestBody 只允许图片端点支持的请求字段进入上游。
 func buildOpenAIImageGenerationRequestBody(model string, input portllm.GenerateInput) (map[string]any, error) {
+	if err := validateOpenAIImage26Params(model, input); err != nil {
+		return nil, err
+	}
 	prompt := buildOpenAIImageGenerationPrompt(input.Messages)
 	if strings.TrimSpace(prompt) == "" {
 		return nil, fmt.Errorf("image generation prompt required")
@@ -396,7 +399,7 @@ func buildOpenAIImageGenerationStreamRequestBody(model string, input portllm.Gen
 	if err != nil {
 		return nil, err
 	}
-	if !portllm.SupportsImageGenerationStream(portllm.AdapterOpenAIImageGenerations, model) {
+	if !portllm.SupportsImageGenerationStream(portllm.AdapterOpenAIImageGenerations, model) || openAIImageRequiresBufferedOutput(input.Options) {
 		return nil, fmt.Errorf("%w: %s", portllm.ErrUnsupportedStream, portllm.AdapterOpenAIImageGenerations)
 	}
 	payload["stream"] = true
@@ -406,6 +409,9 @@ func buildOpenAIImageGenerationStreamRequestBody(model string, input portllm.Gen
 
 // buildOpenAIImageEditMultipartRequest 构造 OpenAI Images Edits 官方 multipart 请求体。
 func buildOpenAIImageEditMultipartRequest(model string, input portllm.GenerateInput, stream bool) ([]byte, string, []byte, error) {
+	if err := validateOpenAIImage26Params(model, input); err != nil {
+		return nil, "", nil, err
+	}
 	prompt := buildOpenAIImageGenerationPrompt(input.Messages)
 	if strings.TrimSpace(prompt) == "" {
 		return nil, "", nil, fmt.Errorf("image edit prompt required")
@@ -414,7 +420,7 @@ func buildOpenAIImageEditMultipartRequest(model string, input portllm.GenerateIn
 	if len(images) == 0 {
 		return nil, "", nil, fmt.Errorf("image edit input image required")
 	}
-	if stream && !portllm.SupportsImageGenerationStream(portllm.AdapterOpenAIImageEdits, model) {
+	if stream && (!portllm.SupportsImageGenerationStream(portllm.AdapterOpenAIImageEdits, model) || openAIImageRequiresBufferedOutput(input.Options)) {
 		return nil, "", nil, fmt.Errorf("%w: %s", portllm.ErrUnsupportedStream, portllm.AdapterOpenAIImageEdits)
 	}
 
@@ -468,7 +474,7 @@ func applyOpenAIImageEditParams(fields map[string]string, model string, options 
 	if openAIImageGenerationModelSupportsResponseFormat(model) {
 		fields["response_format"] = defaultImageResponseFormat(options)
 	}
-	for _, key := range []string{"quality", "size", "user"} {
+	for _, key := range []string{"quality", "size", "user", "safety_identifier"} {
 		if value := modelParamString(options, key); value != "" {
 			fields[key] = value
 		}
@@ -477,13 +483,18 @@ func applyOpenAIImageEditParams(fields map[string]string, model string, options 
 		fields["n"] = fmt.Sprintf("%d", value)
 	}
 	if openAIImageEditModelSupportsGPTImageParams(model) {
-		for _, key := range []string{"background", "input_fidelity", "output_format"} {
+		for _, key := range []string{"background", "input_fidelity", "output_format", "moderation"} {
 			if value := modelParamString(options, key); value != "" {
 				fields[key] = value
 			}
 		}
-		if value := modelParamInt(options, "output_compression"); value > 0 {
+		if value, ok := openAIImageOutputCompression(options); ok {
 			fields["output_compression"] = fmt.Sprintf("%d", value)
+		}
+	}
+	if openAIImageModelSupports26Params(model) {
+		for key, value := range openAIImage26Params(options) {
+			fields[key] = fmt.Sprint(value)
 		}
 	}
 }
@@ -540,7 +551,7 @@ func applyOpenAIImageGenerationParams(payload map[string]any, model string, opti
 	if openAIImageGenerationModelSupportsResponseFormat(model) {
 		payload["response_format"] = defaultImageResponseFormat(options)
 	}
-	for _, key := range []string{"quality", "size", "user"} {
+	for _, key := range []string{"quality", "size", "user", "safety_identifier"} {
 		if value := modelParamString(options, key); value != "" {
 			payload[key] = value
 		}
@@ -554,8 +565,13 @@ func applyOpenAIImageGenerationParams(payload map[string]any, model string, opti
 				payload[key] = value
 			}
 		}
-		if value := modelParamInt(options, "output_compression"); value > 0 {
+		if value, ok := openAIImageOutputCompression(options); ok {
 			payload["output_compression"] = value
+		}
+	}
+	if openAIImageModelSupports26Params(model) {
+		for key, value := range openAIImage26Params(options) {
+			payload[key] = value
 		}
 	}
 	if openAIImageGenerationModelSupportsStyle(model) {
@@ -570,6 +586,78 @@ func defaultImageResponseFormat(options map[string]any) string {
 		return value
 	}
 	return "b64_json"
+}
+
+// GIF has no upstream incremental representation. Returning ErrUnsupportedStream
+// before sending lets the caller use the existing buffered generation fallback.
+func openAIImageRequiresBufferedOutput(options map[string]any) bool {
+	return strings.EqualFold(modelParamString(options, "output_format"), "gif")
+}
+
+func openAIImageModelSupports26Params(model string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	for _, name := range []string{"gpt-image-2.6-sunburst", "gpt-image-2.6-flare"} {
+		if normalized == name || strings.HasPrefix(normalized, name+"-") {
+			return true
+		}
+	}
+	return false
+}
+
+func openAIImage26Params(options map[string]any) map[string]any {
+	fields := make(map[string]any, 3)
+	if value := modelParamString(options, "complexity"); value != "" {
+		fields["complexity"] = value
+	}
+	if openAIImageRequiresBufferedOutput(options) {
+		for _, key := range []string{"frame_count", "frame_duration_ms"} {
+			if value, ok := modelParamIntValue(options, key); ok {
+				fields[key] = value
+			}
+		}
+	}
+	return fields
+}
+
+func validateOpenAIImage26Params(model string, input portllm.GenerateInput) error {
+	if !openAIImageModelSupports26Params(model) {
+		if openAIImageRequiresBufferedOutput(input.Options) {
+			return fmt.Errorf("GIF output requires GPT Image 2.6 Sunburst or Flare")
+		}
+		return nil
+	}
+	if value := modelParamString(input.Options, "complexity"); value != "" && value != "low" && value != "medium" && value != "high" {
+		return fmt.Errorf("image complexity must be low, medium, or high")
+	}
+	if !openAIImageRequiresBufferedOutput(input.Options) {
+		return nil
+	}
+	if input.ImageEditMask != nil && len(input.ImageEditMask.Data) > 0 {
+		return fmt.Errorf("GIF output does not support image edit masks")
+	}
+	for _, param := range []struct {
+		key string
+		min int
+		max int
+	}{{"frame_count", 2, 16}, {"frame_duration_ms", 20, 2000}} {
+		if raw, exists := input.Options[param.key]; !exists || raw == nil {
+			continue
+		}
+		value, ok := modelParamFloat(input.Options, param.key)
+		if !ok || !(value >= float64(param.min) && value <= float64(param.max)) || value != float64(int(value)) {
+			return fmt.Errorf("%s must be an integer between %d and %d", param.key, param.min, param.max)
+		}
+	}
+	return nil
+}
+
+func openAIImageOutputCompression(options map[string]any) (int, bool) {
+	format := strings.ToLower(modelParamString(options, "output_format"))
+	if format != "jpeg" && format != "webp" {
+		return 0, false
+	}
+	value, ok := modelParamIntValue(options, "output_compression")
+	return value, ok && value >= 0 && value <= 100
 }
 
 // applyOpenAIImageGenerationStreamParams 只处理流式图片端点支持的增量参数。
@@ -896,6 +984,8 @@ func openAIImageMIMEType(outputFormat string) string {
 		return "image/jpeg"
 	case "webp":
 		return "image/webp"
+	case "gif":
+		return "image/gif"
 	default:
 		return "image/png"
 	}

@@ -1,6 +1,6 @@
 "use client";
 
-import { Clock, Layers, Pencil } from "lucide-react";
+import { Clock, ImageIcon, Layers, Pencil } from "lucide-react";
 import { useTranslations } from "next-intl";
 import type * as React from "react";
 
@@ -26,6 +26,7 @@ import {
   formatUSD,
   normalizePricingMode,
 } from "@/features/admin/model/billing-settings";
+import { parseImagePricing, type ImagePricing } from "@/features/admin/model/image-pricing";
 
 export function PeriodBillingTable({
   plans,
@@ -286,6 +287,10 @@ function TieredPricingSummary({ pricing }: { pricing: AdminModelPricingDTO }) {
 export function PricingColumns({ pricing, cellClassName }: { pricing: AdminModelPricingDTO | null; cellClassName?: string }) {
   const mode = pricing ? normalizePricingMode(pricing.pricingMode) : null;
   const numeric = cn("whitespace-nowrap text-right text-xs", cellClassName);
+  const imagePricing = pricing && mode === "token" ? parseImagePricing(pricing.imagePricingJSON) : null;
+  if (imagePricing) {
+    return <TableCell colSpan={PRICE_COLUMN_COUNT} className={numeric}><ImagePricingSummary pricing={imagePricing} /></TableCell>;
+  }
   if (pricing && mode === "tiered") {
     return (
       <TableCell colSpan={PRICE_COLUMN_COUNT} className={numeric}>
@@ -311,5 +316,26 @@ export function PricingColumns({ pricing, cellClassName }: { pricing: AdminModel
         <PriceValue value={pricing.cacheWriteUSDPerMTokens} />
       </TableCell>
     </>
+  );
+}
+
+function ImagePricingSummary({ pricing }: { pricing: ImagePricing }) {
+  const t = useTranslations("adminBilling.imagePricing");
+  const fields = [
+    ["textInputUSDPerMTokens", "textInput"],
+    ["imageInputUSDPerMTokens", "imageInput"],
+    ["cachedTextInputUSDPerMTokens", "cachedTextInput"],
+    ["cachedImageInputUSDPerMTokens", "cachedImageInput"],
+    ["imageOutputUSDPerMTokens", "imageOutput"],
+    ["textOutputUSDPerMTokens", "textOutput"],
+  ] as const;
+  return (
+    <DetailCard align="end" title={t("unit")} trigger={<span className="inline-flex cursor-default items-center gap-1 text-muted-foreground"><ImageIcon className="size-3" strokeWidth={1.8} />{t("summary")}</span>}>
+      <table className={DETAIL_TABLE}>
+        <tbody>
+          {fields.map(([field, label]) => <tr key={field}><td className="pr-4 text-muted-foreground">{t(label)}</td><td className="text-right tabular-nums">{formatUSD(pricing[field] ?? 0)}</td></tr>)}
+        </tbody>
+      </table>
+    </DetailCard>
   );
 }

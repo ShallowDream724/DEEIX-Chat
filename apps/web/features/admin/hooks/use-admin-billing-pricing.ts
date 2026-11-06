@@ -22,6 +22,7 @@ import {
 import { resolveAdminErrorMessage } from "@/features/admin/utils/admin-error";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import { stringifySchedulePricing, type SchedulePeriodPayload } from "@/entities/billing";
+import { imagePricingFromForm, stringifyImagePricing } from "@/features/admin/model/image-pricing";
 
 type UseAdminBillingPricingOptions = {
   pricingItems: AdminModelPricingDTO[];
@@ -54,6 +55,10 @@ export function useAdminBillingPricing({ pricingItems, setPricingItems }: UseAdm
 
   /** Resolves `true` once the pricing is persisted so the caller can close its editor. */
   async function savePricing(form: PricingFormState, schedulePeriods: SchedulePeriodPayload[]): Promise<boolean> {
+    if (form.pricingMode === "token" && imagePricingFromForm(form.imagePricing) === undefined) {
+      toast.error(t("imagePricing.invalid"));
+      return false;
+    }
     setSaving(true);
     try {
       const token = await resolveAccessToken();
@@ -74,6 +79,7 @@ export function useAdminBillingPricing({ pricingItems, setPricingItems }: UseAdm
         durationUSDPerSecond: form.pricingMode === "duration" ? parsePrice(form.duration) : 0,
         tieredPricingJSON: form.pricingMode === "tiered" ? stringifyTieredPricing(form.tieredTiers) : undefined,
         schedulePricingJSON: stringifySchedulePricing(schedulePeriods),
+        imagePricingJSON: form.pricingMode === "token" ? stringifyImagePricing(form.imagePricing) : "",
         isFree: form.isFree,
       };
       const data = await upsertAdminModelPricing(token, payload);
@@ -109,6 +115,7 @@ export function useAdminBillingPricing({ pricingItems, setPricingItems }: UseAdm
         invalidTieredPricing: (model, field) => t("importErrors.invalidTieredPricing", { model, field }),
         invalidTieredPricingJSON: (model) => t("importErrors.invalidTieredPricingJSON", { model }),
         invalidSchedulePricing: (model) => t("importErrors.invalidSchedulePricing", { model }),
+        invalidImagePricing: (model) => t("importErrors.invalidImagePricing", { model }),
       });
       if (parsed.unknownModelNames.length > 0) {
         toast.error(t("toast.importUnknownModels"), {
@@ -173,6 +180,7 @@ export function useAdminBillingPricing({ pricingItems, setPricingItems }: UseAdm
         durationUSDPerSecond: pricingMode === "duration" ? row.pricing?.durationUSDPerSecond ?? 0 : 0,
         tieredPricingJSON: pricingMode === "tiered" ? row.pricing?.tieredPricingJSON || stringifyTieredPricing(createFormState(row).tieredTiers) : undefined,
         schedulePricingJSON: row.pricing?.schedulePricingJSON || undefined,
+        imagePricingJSON: row.pricing?.imagePricingJSON || "",
         isFree: checked,
       };
       setPricingItems((current) => mergeModelPricingItem(current, createOptimisticModelPricing(row, payload)));

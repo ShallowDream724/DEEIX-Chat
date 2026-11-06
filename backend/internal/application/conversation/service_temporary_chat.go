@@ -358,6 +358,8 @@ func (s *Service) StreamTemporaryChat(
 		UsageServiceTier:    usage.ServiceTier,
 		UsageSource:         usageSource,
 		RawUsageJSON:        usage.RawUsageJSON,
+		ImageUsage:          usage.ImageUsage,
+		ImageToolUsage:      usage.ImageToolUsage,
 		CacheWrite5mTokens:  usage.CacheWrite5mTokens,
 		CacheWrite1hTokens:  usage.CacheWrite1hTokens,
 		ServerSideToolUsage: output.ServerSideToolUsage,

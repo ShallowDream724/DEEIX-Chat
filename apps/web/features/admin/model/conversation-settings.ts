@@ -91,6 +91,9 @@ export const DEFAULT_MODEL_OPTION_ALLOWED_PATHS = `{
   ],
   "openai_image_generations": [
     "background",
+    "complexity",
+    "frame_count",
+    "frame_duration_ms",
     "moderation",
     "n",
     "output_compression",
@@ -104,7 +107,11 @@ export const DEFAULT_MODEL_OPTION_ALLOWED_PATHS = `{
   ],
   "openai_image_edits": [
     "background",
+    "complexity",
+    "frame_count",
+    "frame_duration_ms",
     "input_fidelity",
+    "moderation",
     "n",
     "output_compression",
     "output_format",

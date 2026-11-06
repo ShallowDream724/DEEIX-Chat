@@ -29,6 +29,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/mcp"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/imageusage"
 	"go.uber.org/zap"
 )
 
@@ -264,6 +265,8 @@ type SendMessageResult struct {
 	UsageServiceTier    string
 	UsageSource         string
 	RawUsageJSON        string
+	ImageUsage          imageusage.Usage
+	ImageToolUsage      imageusage.Usage
 	CacheWrite5mTokens  int64
 	CacheWrite1hTokens  int64
 	ServerSideToolUsage map[string]int64

@@ -27,6 +27,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { NESTED_VISUAL_OPTION_PATHS, NUMBER_OPTION_KEYS, OPTION_SELECT_VALUES } from "@/features/chat/model/chat-option-controls";
+import { IMAGE_OPTION_NUMBER_RANGES, isImageOptionVisible } from "@/features/chat/model/image-option-controls";
 import {
   getOptionAtPath,
   hasOptionAtPath,
@@ -119,6 +120,9 @@ const OPTION_LABEL_KEYS = new Set<string>([
   "enable_cache",
   "enable_thinking",
   "frequency_penalty",
+  "complexity",
+  "frame_count",
+  "frame_duration_ms",
   "generationConfig.candidateCount",
   "generationConfig.frequencyPenalty",
   "generationConfig.imageConfig.aspectRatio",
@@ -778,8 +782,9 @@ export function ChatModelConfig({
     [nativeToolVisualOptions],
   );
   const configuredOptions = React.useMemo(
-    () => visualOptionsFromControls(optionControls, optionsObject, effectiveDefaultOptions),
-    [effectiveDefaultOptions, optionControls, optionsObject],
+    () => visualOptionsFromControls(optionControls, optionsObject, effectiveDefaultOptions)
+      .filter((item) => isImageOptionVisible(item.key, optionsObject, selectedProtocols, effectiveDefaultOptions)),
+    [effectiveDefaultOptions, optionControls, optionsObject, selectedProtocols],
   );
   const configuredOptionKeys = React.useMemo(
     () => new Set(configuredOptions.map((item) => item.key)),
@@ -787,8 +792,8 @@ export function ChatModelConfig({
   );
   const editableOptions = React.useMemo(
     () => visualOptionsFromOptions(optionsObject, modelOptionPolicy, selectedProtocols, nativeToolDefinitions)
-      .filter((item) => !configuredOptionKeys.has(item.key)),
-    [configuredOptionKeys, modelOptionPolicy, nativeToolDefinitions, optionsObject, selectedProtocols],
+      .filter((item) => !configuredOptionKeys.has(item.key) && isImageOptionVisible(item.key, optionsObject, selectedProtocols, effectiveDefaultOptions)),
+    [configuredOptionKeys, effectiveDefaultOptions, modelOptionPolicy, nativeToolDefinitions, optionsObject, selectedProtocols],
   );
   const nativeToolGroup = React.useMemo(() => {
     if (nativeToolVisualOptions.length === 0) {
@@ -1215,8 +1220,14 @@ export function ChatModelConfig({
                   ) : (
                     <Input
                       value={editableValue === null ? "" : String(editableValue)}
+                      type={kind === "number" ? "number" : undefined}
+                      min={kind === "number" ? IMAGE_OPTION_NUMBER_RANGES[key]?.min : undefined}
+                      max={kind === "number" ? IMAGE_OPTION_NUMBER_RANGES[key]?.max : undefined}
+                      step={kind === "number" ? IMAGE_OPTION_NUMBER_RANGES[key]?.step ?? "any" : undefined}
                       inputMode={kind === "number" ? "decimal" : undefined}
-                      placeholder={placeholder ?? (kind === "number" ? (NUMBER_OPTION_PLACEHOLDERS[key] ?? "0.7") : key)}
+                      placeholder={placeholder ?? (kind === "number"
+                        ? (NUMBER_OPTION_PLACEHOLDERS[key] ?? (IMAGE_OPTION_NUMBER_RANGES[key]?.default?.toString()) ?? "0.7")
+                        : key)}
                       onChange={(event) => {
                         const nextValue = event.target.value;
                         if (kind === "number") {

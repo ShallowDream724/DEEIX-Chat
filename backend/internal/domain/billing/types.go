@@ -304,13 +304,24 @@ type UsageAuthorization struct {
 	NativeToolKeys           map[string]bool
 	NativeToolBillingEnabled bool
 	NativeToolPricingSource  string
+	ModelImagePricing        *ImagePricingSnapshot
+}
+
+// ImagePricingSnapshot fixes the administrator's image policy before a request.
+type ImagePricingSnapshot struct {
+	PlatformModelName   string
+	ImagePricingJSON    string
+	SchedulePricingJSON string
+	IsFree              bool
 }
 
 // NativeToolPrice is frozen when the run is authorized, before any provider request.
 type NativeToolPrice struct {
-	Provider       string
-	ServiceName    string
-	NanousdPerCall int64
+	Provider         string
+	ServiceName      string
+	NanousdPerCall   int64
+	ImagePricingJSON string
+	ImageModel       string
 }
 
 // ModelPricing 表示平台模型名对应的统一计费单价。
@@ -330,8 +341,10 @@ type ModelPricing struct {
 	TieredPricingJSON           string
 	// SchedulePricingJSON 是时段倍率配置（峰谷计费），与计费模式正交；空或 {} 表示不启用。
 	SchedulePricingJSON string
-	CreatedAt           time.Time
-	UpdatedAt           time.Time
+	// ImagePricingJSON optionally replaces aggregate token rates with modality-specific image rates.
+	ImagePricingJSON string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 // UsageLedger 表示用量账本。

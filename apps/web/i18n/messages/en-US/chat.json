@@ -938,6 +938,9 @@
     }
   },
   "optionLabels": {
+    "complexity": "Planning effort",
+    "frame_count": "Frame count",
+    "frame_duration_ms": "Frame duration (ms)",
     "budget_tokens": "Thinking budget",
     "cache_timeout": "Cache duration",
     "candidate_count": "Candidate count",
@@ -1026,6 +1029,9 @@
     "web_search": "Web search"
   },
   "optionDescriptions": {
+    "complexity": "Controls image planning effort independently of image quality.",
+    "frame_count": "Number of animation frames, from 2 to 16.",
+    "frame_duration_ms": "Duration of each frame, from 20 to 2000 ms in 10 ms steps.",
     "background": "Controls the generated image background. Transparent output requires model and format support.",
     "budget_tokens": "Limits the token budget available for thinking or reasoning.",
     "cache_timeout": "Controls how long prompt cache entries can be reused.",

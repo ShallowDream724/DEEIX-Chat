@@ -12,6 +12,7 @@ import type {
 } from "@/features/admin/api/billing-types";
 import { resolveAdminErrorMessage } from "@/features/admin/utils/admin-error";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
+import { imagePricingFromForm, imagePricingToForm, parseImagePricing, stringifyImagePricing, type ImagePricingForm } from "@/features/admin/model/image-pricing";
 
 export function formatNativeToolPriceInput(priceNanousd: number): string {
   if (!Number.isFinite(priceNanousd) || priceNanousd <= 0) {
@@ -42,6 +43,7 @@ function nativeToolPricingSignature(items: NativeToolPricingDTO[]): string {
     unit: item.unit,
     priceLabel: item.priceLabel,
     billable: item.billable,
+    imagePricingJSON: item.imagePricingJSON,
   })).sort((left, right) => left.toolKey.localeCompare(right.toolKey)));
 }
 
@@ -51,7 +53,8 @@ function normalizeNativeToolPricingForSave(items: NativeToolPricingDTO[]): Admin
     priceNanousd: item.priceNanousd,
     unit: "call",
     priceLabel: "",
-    billable: item.priceNanousd > 0,
+    billable: Boolean(parseImagePricing(item.imagePricingJSON)) || item.priceNanousd > 0,
+    imagePricingJSON: item.imagePricingJSON || "",
   }));
 }
 
@@ -69,6 +72,7 @@ export function useAdminBillingNativeTools({ billingConfig, setBillingConfig }: 
   const [nativeToolPricing, setNativeToolPricing] = React.useState<NativeToolPricingDTO[]>([]);
   const [savedNativeToolPricing, setSavedNativeToolPricing] = React.useState<NativeToolPricingDTO[]>([]);
   const [nativeToolPriceDrafts, setNativeToolPriceDrafts] = React.useState<Record<string, string>>({});
+  const [nativeToolImagePricingDrafts, setNativeToolImagePricingDrafts] = React.useState<Record<string, ImagePricingForm | null>>({});
   const [nativeToolBillingSaving, setNativeToolBillingSaving] = React.useState(false);
   const billingNativeToolBillingEnabled = billingConfig?.nativeToolBillingEnabled;
   const billingNativeToolPricing = billingConfig?.nativeToolPricing;
@@ -84,13 +88,24 @@ export function useAdminBillingNativeTools({ billingConfig, setBillingConfig }: 
     setNativeToolPricing(nextPricing);
     setSavedNativeToolPricing(nextPricing);
     setNativeToolPriceDrafts(nativeToolPriceDraftsFrom(nextPricing));
+    setNativeToolImagePricingDrafts(Object.fromEntries(nextPricing.map((item) => [item.toolKey, imagePricingToForm(parseImagePricing(item.imagePricingJSON))])));
   }, [billingNativeToolBillingEnabled, billingNativeToolPricing]);
 
   const nativeToolBillingChanged = nativeToolBillingEnabled !== savedNativeToolBillingEnabled;
   const nativeToolPricingChanged = React.useMemo(
-    () => nativeToolPricingSignature(nativeToolPricing) !== nativeToolPricingSignature(savedNativeToolPricing),
-    [nativeToolPricing, savedNativeToolPricing],
+    () => nativeToolPricingSignature(nativeToolPricing) !== nativeToolPricingSignature(savedNativeToolPricing) || Object.values(nativeToolImagePricingDrafts).some((draft) => imagePricingFromForm(draft) === undefined),
+    [nativeToolPricing, savedNativeToolPricing, nativeToolImagePricingDrafts],
   );
+  const nativeToolImagePricingInvalid = Object.values(nativeToolImagePricingDrafts).some((draft) => imagePricingFromForm(draft) === undefined);
+
+  function updateNativeToolImagePricingDraft(toolKey: string, draft: ImagePricingForm | null) {
+    setNativeToolImagePricingDrafts((current) => ({ ...current, [toolKey]: draft }));
+    if (imagePricingFromForm(draft) === undefined) return;
+    const imagePricingJSON = stringifyImagePricing(draft);
+    setNativeToolPricing((current) => current.map((item) => item.toolKey === toolKey ? {
+      ...item, imagePricingJSON, billable: Boolean(imagePricingJSON) || item.priceNanousd > 0,
+    } : item));
+  }
 
   function updateNativeToolPriceDraft(toolKey: string, nextDraft: string) {
     const nextNanousd = nativeToolPriceInputToNanousd(nextDraft);
@@ -103,12 +118,16 @@ export function useAdminBillingNativeTools({ billingConfig, setBillingConfig }: 
     }
     setNativeToolPricing((current) => current.map((item) => (
       item.toolKey === toolKey
-        ? { ...item, priceNanousd: nextNanousd, unit: "call", priceLabel: "", billable: nextNanousd > 0 }
+        ? { ...item, priceNanousd: nextNanousd, unit: "call", priceLabel: "", billable: Boolean(parseImagePricing(item.imagePricingJSON)) || nextNanousd > 0 }
         : item
     )));
   }
 
   async function saveNativeToolBilling() {
+    if (nativeToolImagePricingInvalid) {
+      toast.error(t("imagePricing.invalid"));
+      return;
+    }
     setNativeToolBillingSaving(true);
     try {
       const token = await resolveAccessToken();
@@ -129,6 +148,7 @@ export function useAdminBillingNativeTools({ billingConfig, setBillingConfig }: 
       setNativeToolPricing(savedPricing);
       setSavedNativeToolPricing(savedPricing);
       setNativeToolPriceDrafts(nativeToolPriceDraftsFrom(savedPricing));
+      setNativeToolImagePricingDrafts(Object.fromEntries(savedPricing.map((item) => [item.toolKey, imagePricingToForm(parseImagePricing(item.imagePricingJSON))])));
       setBillingConfig((current) => current ? {
         ...current,
         nativeToolBillingEnabled: savedValue,
@@ -148,10 +168,13 @@ export function useAdminBillingNativeTools({ billingConfig, setBillingConfig }: 
     setNativeToolBillingEnabled,
     nativeToolPricing,
     nativeToolPriceDrafts,
+    nativeToolImagePricingDrafts,
+    nativeToolImagePricingInvalid,
     nativeToolBillingSaving,
     nativeToolBillingChanged,
     nativeToolPricingChanged,
     updateNativeToolPriceDraft,
+    updateNativeToolImagePricingDraft,
     saveNativeToolBilling,
   };
 }

@@ -45,6 +45,7 @@ import { ChatMCP } from "@/features/chat/components/sections/chat-mcp";
 import { ChatUIComponents } from "@/features/chat/components/sections/chat-ui-components";
 import { usesChat01Protocol } from "@/entities/model";
 import { ChatModelConfig } from "@/features/chat/components/sections/chat-model-config";
+import { imageOptionControls, imageOptionDefaults, isImageOptionVisible } from "@/features/chat/model/image-option-controls";
 import { ChatModelPicker } from "@/features/chat/components/sections/chat-model-picker";
 import { ChatModelControls } from "@/features/chat/components/sections/chat-model-controls";
 import { useChatModelControlPlacements } from "@/features/chat/hooks/use-chat-model-control-placements";
@@ -477,10 +478,13 @@ function ChatInputComponent({
   const [advancedOptionsOpen, setAdvancedOptionsOpen] = React.useState(false);
   // Media tasks have no server-side controls; their option controls are shown as composer controls
   // and write straight into the request options.
-  const taskDefaultOptions = taskOptionConfig?.defaultOptions ?? defaultOptions;
   const taskOptionControls = React.useMemo(
-    () => taskOptionConfig?.optionControls ?? selectedModel?.optionControls ?? [],
-    [selectedModel?.optionControls, taskOptionConfig?.optionControls],
+    () => taskOptionConfig?.optionControls ?? imageOptionControls(selectedModel?.optionControls ?? [], selectedProtocols, selectedModelName),
+    [selectedModel?.optionControls, selectedModelName, selectedProtocols, taskOptionConfig?.optionControls],
+  );
+  const taskDefaultOptions = React.useMemo(
+    () => taskOptionConfig?.defaultOptions ?? imageOptionDefaults(defaultOptions, taskOptionControls),
+    [defaultOptions, taskOptionConfig?.defaultOptions, taskOptionControls],
   );
   const mediaControls = React.useMemo(() => {
     if (!isMediaMode || modelOptionPolicyDisabled) return [];
@@ -492,8 +496,13 @@ function ChatInputComponent({
     ).filter((control) =>
       !modelOptionPolicy || selectedProtocols.length === 0 || selectedProtocols.some((protocol) =>
         !isModelOptionPathFiltered({ policy: modelOptionPolicy, protocol, path: control.path })));
-    return modelControlsFromOptionControls([...taskOptionControls, ...inferred], taskDefaultOptions);
-  }, [isMediaMode, modelConfigOptions, modelOptionPolicy, modelOptionPolicyDisabled, selectedProtocols, taskDefaultOptions, taskOptionConfig, taskOptionControls]);
+    const imageMode = submitTask === "image_generation" || submitTask === "image_edit";
+    return modelControlsFromOptionControls([...taskOptionControls, ...inferred], taskDefaultOptions)
+      .filter((control) => isImageOptionVisible(control.id, modelConfigOptions, selectedProtocols, taskDefaultOptions))
+      .map((control) => imageMode && ["output_format", "quality"].includes(control.id)
+        ? { ...control, placement: "toolbar" as const }
+        : control);
+  }, [isMediaMode, modelConfigOptions, modelOptionPolicy, modelOptionPolicyDisabled, selectedProtocols, submitTask, taskDefaultOptions, taskOptionConfig, taskOptionControls]);
   const mediaControlSelections = React.useMemo(
     () => optionControlSelections(mediaControls, modelConfigOptions),
     [mediaControls, modelConfigOptions],

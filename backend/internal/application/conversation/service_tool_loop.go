@@ -6,6 +6,7 @@ import (
 
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/imageusage"
 )
 
 func syncUpstreamOutputThinking(traceRecorder *messageTraceRecorder, output *llm.GenerateOutput) string {
@@ -358,6 +359,8 @@ func addLLMUsage(left llm.Usage, right llm.Usage) llm.Usage {
 		Speed:              mergeLLMUsageSpeed(left.Speed, right.Speed),
 		ServiceTier:        mergeLLMUsageServiceTier(left.ServiceTier, right.ServiceTier),
 		RawUsageJSON:       llm.MergeRawUsageJSON(left.RawUsageJSON, right.RawUsageJSON),
+		ImageUsage:         imageusage.Add(left.ImageUsage, right.ImageUsage),
+		ImageToolUsage:     imageusage.Add(left.ImageToolUsage, right.ImageToolUsage),
 	}
 }
 
@@ -373,6 +376,8 @@ func diffLLMUsage(current llm.Usage, previous llm.Usage) llm.Usage {
 		Speed:              strings.TrimSpace(current.Speed),
 		ServiceTier:        strings.TrimSpace(current.ServiceTier),
 		RawUsageJSON:       diffLLMUsageRawJSON(current.RawUsageJSON, previous.RawUsageJSON),
+		ImageUsage:         imageusage.Delta(current.ImageUsage, previous.ImageUsage),
+		ImageToolUsage:     imageusage.Delta(current.ImageToolUsage, previous.ImageToolUsage),
 	}
 }
 

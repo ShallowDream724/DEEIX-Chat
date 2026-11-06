@@ -404,8 +404,14 @@ func (s *Service) StreamMediaImage(ctx context.Context, input MediaImageInput) (
 		generateInput.ImageEditMask = maskPart
 	}
 	var output *llm.GenerateOutput
+	var observedUsage llm.Usage
 	if mediaImageStreamEnabled(routeConfig.Protocol, routeConfig.UpstreamModel, route.ModelCapabilitiesJSON) {
+		receivedStreamEvent := false
 		output, err = s.llmClient.GenerateStream(ctx, routeConfig, generateInput, func(event llm.GenerateStreamEvent) error {
+			receivedStreamEvent = true
+			if event.Usage != (llm.Usage{}) {
+				observedUsage = event.Usage
+			}
 			if event.Usage != (llm.Usage{}) && input.OnEvent != nil {
 				if streamErr := input.OnEvent("usage", map[string]any{
 					"input_tokens":       event.Usage.InputTokens,
@@ -422,10 +428,19 @@ func (s *Service) StreamMediaImage(ctx context.Context, input MediaImageInput) (
 			}
 			return nil
 		})
+		// Unsupported streaming is an adapter capability decision made before
+		// sending upstream. Never retry a stream that already emitted an event.
+		if errors.Is(err, llm.ErrUnsupportedStream) && !receivedStreamEvent && ctx.Err() == nil {
+			output, err = s.llmClient.Generate(ctx, routeConfig, generateInput)
+		}
 	} else {
 		output, err = s.llmClient.Generate(ctx, routeConfig, generateInput)
 	}
 	if err != nil {
+		usage := mediaOutputUsage(output)
+		if usage == (llm.Usage{}) {
+			usage = observedUsage
+		}
 		if s.isCanceledMediaGeneration(ctx, runID, err) {
 			retErr = ErrMessageGenerationCanceled
 			result, cancelErr := s.completeCanceledMediaGeneration(canceledMediaGenerationInput{
@@ -437,11 +452,15 @@ func (s *Service) StreamMediaImage(ctx context.Context, input MediaImageInput) (
 				Route:            *route,
 				EffectiveOptions: filteredOptions,
 				GenerateInput:    generateInput,
+				Usage:            usage,
 				StartedAt:        startedAt,
 				Billable:         true,
 			})
 			if cancelErr != nil {
 				retErr = cancelErr
+				if usage != (llm.Usage{}) {
+					return buildBillableFailure(cancelErr, usage), cancelErr
+				}
 				return nil, cancelErr
 			}
 			applyMediaRunUsage(run, result)
@@ -450,6 +469,9 @@ func (s *Service) StreamMediaImage(ctx context.Context, input MediaImageInput) (
 		s.routeResolver.MarkRouteFailure(ctx, route, err)
 		retErr = wrapUpstreamRequestError(err)
 		_ = s.repo.UpdateMessageState(ctx, assistantMessage.ID, "error", classifyRunErrorCode(retErr), textutil.TruncateTrimmed(messageErrorSummary(retErr), 255))
+		if usage != (llm.Usage{}) {
+			return buildBillableFailure(retErr, usage), retErr
+		}
 		return nil, retErr
 	}
 	s.routeResolver.MarkRouteSuccess(ctx, route)
@@ -600,6 +622,8 @@ func (s *Service) StreamMediaImage(ctx context.Context, input MediaImageInput) (
 		UsageSpeed:          usage.Speed,
 		UsageServiceTier:    usage.ServiceTier,
 		RawUsageJSON:        usage.RawUsageJSON,
+		ImageUsage:          usage.ImageUsage,
+		ImageToolUsage:      usage.ImageToolUsage,
 		CacheWrite5mTokens:  usage.CacheWrite5mTokens,
 		CacheWrite1hTokens:  usage.CacheWrite1hTokens,
 		LatencyMS:           latencyMS,

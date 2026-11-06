@@ -587,6 +587,8 @@ func buildInterruptedSendMessageResult(input persistInterruptedMessageGeneration
 		UsageServiceTier:    input.Usage.ServiceTier,
 		UsageSource:         interruptedUsageSource(input, metrics),
 		RawUsageJSON:        input.Usage.RawUsageJSON,
+		ImageUsage:          input.Usage.ImageUsage,
+		ImageToolUsage:      input.Usage.ImageToolUsage,
 		CacheWrite5mTokens:  input.Usage.CacheWrite5mTokens,
 		CacheWrite1hTokens:  input.Usage.CacheWrite1hTokens,
 		ServerSideToolUsage: input.ServerSideToolUsage,

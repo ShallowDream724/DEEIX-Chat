@@ -49,6 +49,8 @@ import {
   type BillingDisplayCurrency,
   type BillingDisplayLabels,
   type BillingDisplayOptions,
+  type ImageBillingBreakdown,
+  type ImageBillingLabels,
   billingRateMultiplierNote,
   billingScheduleNote,
   cacheWriteBillingLabel,
@@ -619,6 +621,7 @@ type BillingTieredTableRow = {
 };
 
 type BillingMetaLabels = {
+  image: ImageBillingLabels;
   display: BillingDisplayLabels;
   input: string;
   output: string;
@@ -636,8 +639,10 @@ type BillingMetaLabels = {
 
 function useBillingMetaLabels(): BillingMetaLabels {
   const t = useTranslations("chat.meta.billing");
+  const tImage = useTranslations("adminBilling.imagePricing");
   return React.useMemo(
     () => ({
+      image: { model: tImage("modelUsage"), tool: tImage("toolUsage"), textInput: tImage("textInput"), textOutput: tImage("textOutput"), imageInput: tImage("imageInput"), imageOutput: tImage("imageOutput"), cachedTextInput: tImage("cachedTextInput"), cachedImageInput: tImage("cachedImageInput") },
       display: {
         cacheWrite: t("cacheWrite"),
         cacheWrite5m: t("cacheWrite5m"),
@@ -664,7 +669,7 @@ function useBillingMetaLabels(): BillingMetaLabels {
       secondUnit: t("secondUnit"),
       tieredRange: (from, upTo) => upTo ? t("tieredRangeBounded", { from, upTo }) : t("tieredRangeOpen", { from }),
     }),
-    [t],
+    [t, tImage],
   );
 }
 
@@ -712,6 +717,7 @@ function formatTotalLine(amount: string, labels: BillingMetaLabels): BillingTool
 }
 
 type BillingServiceItemEntry = {
+  tokenPriced: boolean;
   label: string;
   callCount: number;
   rateNanousd: number;
@@ -724,28 +730,42 @@ function billingServiceItemEntries(snapshot: BillingSnapshot): BillingServiceIte
   const entries: BillingServiceItemEntry[] = [];
   for (const item of items) {
     if (!item || typeof item !== "object") continue;
+    if (snapshot.imageBilling?.tool && item.service_code === "native_tool.openai.image_generation") continue;
     const billed = typeof item.billed_nanousd === "number" && Number.isFinite(item.billed_nanousd) ? item.billed_nanousd : 0;
     if (billed <= 0) continue;
     const label = (item.service_name ?? "").trim() || (item.service_code ?? "").trim();
     if (!label) continue;
     const callCount = typeof item.call_count === "number" && Number.isFinite(item.call_count) && item.call_count > 0 ? item.call_count : 1;
-    const rate = typeof item.call_nanousd_per_call === "number" && Number.isFinite(item.call_nanousd_per_call) && item.call_nanousd_per_call > 0 ? item.call_nanousd_per_call : Math.round(billed / callCount);
-    entries.push({ label, callCount, rateNanousd: rate, billedNanousd: billed });
+    const tokenPriced = item.pricing_mode === "token";
+    const rate = tokenPriced ? 0 : typeof item.call_nanousd_per_call === "number" && Number.isFinite(item.call_nanousd_per_call) && item.call_nanousd_per_call > 0 ? item.call_nanousd_per_call : Math.round(billed / callCount);
+    entries.push({ label, callCount, rateNanousd: rate, billedNanousd: billed, tokenPriced });
   }
   return entries;
 }
 
 function billingServiceItemLines(entries: BillingServiceItemEntry[], labels: BillingMetaLabels, billingDisplay: BillingDisplayOptions): BillingTooltipLine[] {
-  return entries.map((entry) => formatCountLine(entry.label, entry.callCount, labels.callUnit, entry.rateNanousd, entry.billedNanousd, billingDisplay));
+  return entries.map((entry) => entry.tokenPriced ? { type: "row", left: entry.label, right: formatTooltipBillingCost(nanousdToUSD(entry.billedNanousd), billingDisplay) } : formatCountLine(entry.label, entry.callCount, labels.callUnit, entry.rateNanousd, entry.billedNanousd, billingDisplay));
 }
 
 function billingServiceItemTableRows(entries: BillingServiceItemEntry[], labels: BillingMetaLabels, billingDisplay: BillingDisplayOptions): BillingTieredTableRow[] {
   return entries.map((entry) => ({
     item: entry.label,
-    tokens: `${entry.callCount.toLocaleString("en-US")} ${labels.callUnit}`,
-    unitPrice: `${formatTooltipUnitPrice(nanousdToUSD(entry.rateNanousd), billingDisplay)} / ${labels.callUnit}`,
+    tokens: entry.tokenPriced ? "—" : `${entry.callCount.toLocaleString("en-US")} ${labels.callUnit}`,
+    unitPrice: entry.tokenPriced ? "—" : `${formatTooltipUnitPrice(nanousdToUSD(entry.rateNanousd), billingDisplay)} / ${labels.callUnit}`,
     amount: formatTooltipBillingCost(nanousdToUSD(entry.billedNanousd), billingDisplay),
   }));
+}
+
+function imageBillingTable(breakdown: ImageBillingBreakdown, title: string, labels: BillingMetaLabels, display: BillingDisplayOptions): BillingTooltipLine {
+  return {
+    type: "tiered-table", rangeLabel: title,
+    rows: breakdown.rows.map((row) => ({
+      item: labels.image[row.label], tokens: row.tokens === undefined ? "—" : formatTokenQuantity(row.tokens),
+      unitPrice: row.unitUSDPerM === undefined ? "—" : `${formatTooltipUnitPrice(row.unitUSDPerM, display)} / 1M`,
+      amount: row.billedNanousd === undefined ? "—" : formatTooltipBillingCost(nanousdToUSD(row.billedNanousd), display),
+    })),
+    totalAmount: breakdown.billedNanousd === undefined ? "—" : formatTooltipBillingCost(nanousdToUSD(breakdown.billedNanousd), display),
+  };
 }
 
 function billingTooltipLines(item: ChatMetaMessage, labels: BillingMetaLabels, billingDisplay: BillingDisplayOptions): BillingTooltipLine[] {
@@ -764,6 +784,10 @@ function billingTooltipLines(item: ChatMetaMessage, labels: BillingMetaLabels, b
   const totalLine = freeOfCharge
     ? formatTotalLine(`${formatTooltipBillingCost(0, billingDisplay)} (${labels.freeModelNoBilling})`, labels)
     : formatTotalLine(formatTooltipBillingCost(nanousdToUSD(cost.billedNanousd), billingDisplay), labels);
+  const imageModel = snapshot.imageBilling?.model;
+  const imageTool = snapshot.imageBilling?.tool;
+  if (imageTool) serviceSection.push(imageBillingTable(imageTool, labels.image.tool, labels, billingDisplay));
+  if (imageModel) return [imageBillingTable(imageModel, labels.image.model, labels, billingDisplay), ...serviceSection, { type: "divider" }, totalLine];
 
   if (pricingMode === "call") {
     const rate = readBillingNumber(snapshot, "call_nanousd_per_call");
@@ -820,6 +844,7 @@ function billingTooltipLines(item: ChatMetaMessage, labels: BillingMetaLabels, b
         rows: tieredRows,
         totalAmount: freeOfCharge ? `${formatTooltipBillingCost(0, billingDisplay)} (${labels.freeModelNoBilling})` : formatTooltipBillingCost(nanousdToUSD(cost.billedNanousd), billingDisplay),
       });
+      if (imageTool) lines.push(imageBillingTable(imageTool, labels.image.tool, labels, billingDisplay));
       return lines;
     }
   }

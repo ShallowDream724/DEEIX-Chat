@@ -14,6 +14,7 @@ import {
 } from "@/features/chat/model/conversation-options";
 import type { ModelOptionControl } from "@/features/chat/types/chat-runtime";
 import type { ConversationOptions } from "@/shared/api/conversation-types";
+import { IMAGE_OPTION_NUMBER_RANGES } from "./image-option-controls";
 
 // Media tasks (image, video) have no server-side model controls: their parameters are the
 // administrator's optionControls, written straight into the request options. These helpers present
@@ -25,6 +26,8 @@ export const NUMBER_OPTION_KEYS = new Set([
   "candidate_count",
   "duration",
   "frequency_penalty",
+  "frame_count",
+  "frame_duration_ms",
   "generationConfig.candidateCount",
   "generationConfig.frequencyPenalty",
   "generationConfig.logprobs",
@@ -63,6 +66,7 @@ export const OPTION_SELECT_VALUES: Record<string, string[]> = {
   "generationConfig.imageConfig.aspectRatio": ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"],
   "generationConfig.imageConfig.imageSize": ["1K", "2K", "4K"],
   background: ["auto", "opaque", "transparent"],
+  complexity: ["low", "medium", "high"],
   "generationConfig.thinkingConfig.thinkingLevel": ["low", "medium", "high"],
   "imageConfig.aspectRatio": ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"],
   "imageConfig.imageSize": ["1K", "2K", "4K"],
@@ -169,7 +173,8 @@ export function modelControlsFromOptionControls(
       return [];
     }
     seen.add(id);
-    const defaultValue = getOptionAtPath(defaultOptions, path);
+    const range = IMAGE_OPTION_NUMBER_RANGES[id];
+    const defaultValue = getOptionAtPath(defaultOptions, path) ?? range?.default;
     const defaultText = typeof defaultValue === "boolean"
       ? (defaultValue ? MODEL_CONTROL_TOGGLE_ON : MODEL_CONTROL_TOGGLE_OFF)
       : typeof defaultValue === "string" || typeof defaultValue === "number" ? String(defaultValue).trim() : "";
@@ -185,10 +190,10 @@ export function modelControlsFromOptionControls(
       default: (type === "number" ? isNumericText(defaultText) : options.includes(defaultText)) ? defaultText : null,
       locked: source.locked === true,
       options: options.map((value) => ({ value, label: "", description: "" })),
-      min: null,
-      max: null,
-      step: null,
-      integer: false,
+      min: range?.min ?? null,
+      max: range?.max ?? null,
+      step: range?.step ?? null,
+      integer: Boolean(range),
       protocols: [],
     }];
   });

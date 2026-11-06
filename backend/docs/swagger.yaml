@@ -6193,6 +6193,8 @@ definitions:
         type: number
       id:
         type: integer
+      imagePricingJSON:
+        type: string
       inputNanousdPerMTokens:
         type: integer
       inputUSDPerMTokens:
@@ -6229,6 +6231,7 @@ definitions:
     - durationNanousdPerSecond
     - durationUSDPerSecond
     - id
+    - imagePricingJSON
     - inputNanousdPerMTokens
     - inputUSDPerMTokens
     - isFree
@@ -6856,6 +6859,9 @@ definitions:
     properties:
       billable:
         type: boolean
+      imagePricingJSON:
+        maxLength: 20000
+        type: string
       priceLabel:
         type: string
       priceNanousd:
@@ -6870,6 +6876,8 @@ definitions:
       billable:
         type: boolean
       description:
+        type: string
+      imagePricingJSON:
         type: string
       label:
         type: string
@@ -6888,6 +6896,7 @@ definitions:
     required:
     - billable
     - description
+    - imagePricingJSON
     - label
     - priceLabel
     - priceNanousd
@@ -8156,6 +8165,8 @@ definitions:
         type: string
       durationUSDPerSecond:
         type: number
+      imagePricingJSON:
+        type: string
       inputUSDPerMTokens:
         type: number
       isFree:
@@ -8183,6 +8194,7 @@ definitions:
     - callUSDPerCall
     - currency
     - durationUSDPerSecond
+    - imagePricingJSON
     - inputUSDPerMTokens
     - isFree
     - mode
@@ -10860,6 +10872,9 @@ definitions:
       durationUSDPerSecond:
         minimum: 0
         type: number
+      imagePricingJSON:
+        maxLength: 20000
+        type: string
       inputUSDPerMTokens:
         minimum: 0
         type: number

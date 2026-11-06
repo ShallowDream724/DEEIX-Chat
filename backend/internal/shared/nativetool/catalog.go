@@ -3,6 +3,7 @@ package nativetool
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/imagepricing"
 	"strings"
 )
 
@@ -37,23 +38,25 @@ type Definition struct {
 
 // PricingDefinition 描述当前内置的原生工具默认计费项目。
 type PricingDefinition struct {
-	Provider     string
-	ToolKey      string
-	Label        string
-	Description  string
-	Type         string
-	PriceNanousd int64
-	Unit         string
-	PriceLabel   string
-	Billable     bool
+	ImagePricingJSON string
+	Provider         string
+	ToolKey          string
+	Label            string
+	Description      string
+	Type             string
+	PriceNanousd     int64
+	Unit             string
+	PriceLabel       string
+	Billable         bool
 }
 
 // PricingOverride 描述管理员可覆盖的原生工具计费项。
 type PricingOverride struct {
-	PriceNanousd int64  `json:"priceNanousd"`
-	Unit         string `json:"unit"`
-	PriceLabel   string `json:"priceLabel"`
-	Billable     bool   `json:"billable"`
+	ImagePricingJSON string `json:"imagePricingJSON,omitempty"`
+	PriceNanousd     int64  `json:"priceNanousd"`
+	Unit             string `json:"unit"`
+	PriceLabel       string `json:"priceLabel"`
+	Billable         bool   `json:"billable"`
 }
 
 // UsagePrice 描述可直接折算为按次计费的原生工具价格。
@@ -608,6 +611,7 @@ func PricingDefinitionsWithOverridesFromDefinitions(raw string, definitions []De
 			continue
 		}
 		items[index].PriceNanousd = override.PriceNanousd
+		items[index].ImagePricingJSON = override.ImagePricingJSON
 		items[index].Unit = override.Unit
 		items[index].PriceLabel = override.PriceLabel
 		items[index].Billable = override.Billable
@@ -809,10 +813,11 @@ func PricingOverridesFromDefinitions(items []PricingDefinition) map[string]Prici
 			continue
 		}
 		result[key] = PricingOverride{
-			PriceNanousd: item.PriceNanousd,
-			Unit:         strings.TrimSpace(item.Unit),
-			PriceLabel:   "",
-			Billable:     item.PriceNanousd > 0,
+			ImagePricingJSON: item.ImagePricingJSON,
+			PriceNanousd:     item.PriceNanousd,
+			Unit:             strings.TrimSpace(item.Unit),
+			PriceLabel:       "",
+			Billable:         item.PriceNanousd > 0,
 		}
 	}
 	return result
@@ -1051,12 +1056,21 @@ func normalizePricingOverrides(overrides map[string]PricingOverride, definitions
 		if override.PriceNanousd < 0 {
 			return nil, fmt.Errorf("native tool pricing %s priceNanousd must be >= 0", key)
 		}
+		imageJSON, imageErr := imagepricing.Normalize(override.ImagePricingJSON)
+		if imageErr != nil || (imageJSON != "{}" && key != "openai.image_generation") {
+			return nil, fmt.Errorf("native tool pricing %s has invalid image pricing", key)
+		}
+		if imageJSON != "{}" {
+			override.ImagePricingJSON = imageJSON
+		} else {
+			override.ImagePricingJSON = ""
+		}
 		override.Unit = strings.TrimSpace(defaultOverride.Unit)
 		if override.Unit == "" {
 			override.Unit = "call"
 		}
 		override.PriceLabel = ""
-		override.Billable = override.PriceNanousd > 0
+		override.Billable = override.PriceNanousd > 0 || override.ImagePricingJSON != ""
 		if len([]rune(override.Unit)) > 32 {
 			return nil, fmt.Errorf("native tool pricing %s unit length must be <= 32", key)
 		}
@@ -1069,7 +1083,7 @@ func normalizePricingOverrides(overrides map[string]PricingOverride, definitions
 }
 
 func pricingOverrideEqual(left PricingOverride, right PricingOverride) bool {
-	return left.PriceNanousd == right.PriceNanousd &&
+	return left.ImagePricingJSON == right.ImagePricingJSON && left.PriceNanousd == right.PriceNanousd &&
 		strings.TrimSpace(left.Unit) == strings.TrimSpace(right.Unit) &&
 		strings.TrimSpace(left.PriceLabel) == strings.TrimSpace(right.PriceLabel) &&
 		left.Billable == right.Billable

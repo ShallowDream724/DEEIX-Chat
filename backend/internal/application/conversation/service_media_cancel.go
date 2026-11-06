@@ -29,13 +29,14 @@ type canceledMediaGenerationInput struct {
 	Route               channel.ResolvedRoute
 	EffectiveOptions    map[string]any
 	GenerateInput       llm.GenerateInput
+	Usage               llm.Usage
 	StartedAt           time.Time
 	DurationSeconds     int64
 	Billable            bool
 	MetadataRefreshHint string
 }
 
-// failedMediaBillingResultInput 描述媒体上游成功后本地处理失败时需要保留的结果信息。
+// failedMediaBillingResultInput 描述媒体调用已产生用量后失败时需要保留的结果信息。
 type failedMediaBillingResultInput struct {
 	UserMessage      *model.Message
 	AssistantMessage *model.Message
@@ -48,7 +49,7 @@ type failedMediaBillingResultInput struct {
 	Billable         bool
 }
 
-// buildFailedMediaBillingResult 保留上游成功后发生本地处理错误时的真实用量上下文。
+// buildFailedMediaBillingResult 保留媒体调用或本地处理失败时的真实用量上下文。
 func buildFailedMediaBillingResult(input failedMediaBillingResultInput) *SendMessageResult {
 	if input.UserMessage == nil || input.AssistantMessage == nil {
 		return nil
@@ -93,6 +94,8 @@ func buildFailedMediaBillingResult(input failedMediaBillingResultInput) *SendMes
 		UsageSpeed:         input.Usage.Speed,
 		UsageServiceTier:   input.Usage.ServiceTier,
 		RawUsageJSON:       input.Usage.RawUsageJSON,
+		ImageUsage:         input.Usage.ImageUsage,
+		ImageToolUsage:     input.Usage.ImageToolUsage,
 		CacheWrite5mTokens: input.Usage.CacheWrite5mTokens,
 		CacheWrite1hTokens: input.Usage.CacheWrite1hTokens,
 		LatencyMS:          assistantMessage.LatencyMS,
@@ -111,7 +114,11 @@ func (s *Service) completeCanceledMediaGeneration(input canceledMediaGenerationI
 	if latencyMS < 0 {
 		latencyMS = 0
 	}
-	inputTokens := estimateGenerateInputTokens(input.GenerateInput)
+	usage := input.Usage
+	if usage == (llm.Usage{}) {
+		usage.InputTokens = estimateGenerateInputTokens(input.GenerateInput)
+	}
+	inputTokens := usage.InputTokens
 	errorCode := classifyRunErrorCode(ErrMessageGenerationCanceled)
 	errorMessage := textutil.TruncateTrimmed(ErrMessageGenerationCanceled.Error(), 255)
 
@@ -120,43 +127,55 @@ func (s *Service) completeCanceledMediaGeneration(input canceledMediaGenerationI
 			persistCtx,
 			input.AssistantMessage.ID,
 			repository.AssistantMessageCompletionUpdate{
-				ContentType:  input.AssistantMessage.ContentType,
-				Content:      "",
-				InputTokens:  inputTokens,
-				LatencyMS:    latencyMS,
-				Status:       "canceled",
-				ErrorCode:    errorCode,
-				ErrorMessage: errorMessage,
+				ContentType:      input.AssistantMessage.ContentType,
+				Content:          "",
+				InputTokens:      inputTokens,
+				CacheReadTokens:  usage.CacheReadTokens,
+				CacheWriteTokens: usage.CacheWriteTokens,
+				OutputTokens:     usage.OutputTokens,
+				ReasoningTokens:  usage.ReasoningTokens,
+				LatencyMS:        latencyMS,
+				Status:           "canceled",
+				ErrorCode:        errorCode,
+				ErrorMessage:     errorMessage,
 			},
 			nil,
 		); err != nil {
 			return nil, err
 		}
 		input.AssistantMessage.InputTokens = inputTokens
-		input.AssistantMessage.TokenUsage = inputTokens
+		input.AssistantMessage.CacheReadTokens = usage.CacheReadTokens
+		input.AssistantMessage.CacheWriteTokens = usage.CacheWriteTokens
 	} else {
 		if err := s.repo.CompleteAssistantMessageWithAttachments(
 			persistCtx,
 			input.UserMessage.ID,
-			repository.MessageUsageUpdate{InputTokens: inputTokens},
+			repository.MessageUsageUpdate{InputTokens: inputTokens, CacheReadTokens: usage.CacheReadTokens, CacheWriteTokens: usage.CacheWriteTokens},
 			input.AssistantMessage.ID,
 			repository.AssistantMessageCompletionUpdate{
-				ContentType:  input.AssistantMessage.ContentType,
-				Content:      "",
-				LatencyMS:    latencyMS,
-				Status:       "canceled",
-				ErrorCode:    errorCode,
-				ErrorMessage: errorMessage,
+				ContentType:     input.AssistantMessage.ContentType,
+				Content:         "",
+				OutputTokens:    usage.OutputTokens,
+				ReasoningTokens: usage.ReasoningTokens,
+				LatencyMS:       latencyMS,
+				Status:          "canceled",
+				ErrorCode:       errorCode,
+				ErrorMessage:    errorMessage,
 			},
 			nil,
 		); err != nil {
 			return nil, err
 		}
 		input.UserMessage.InputTokens = inputTokens
-		input.UserMessage.TokenUsage = inputTokens
+		input.UserMessage.CacheReadTokens = usage.CacheReadTokens
+		input.UserMessage.CacheWriteTokens = usage.CacheWriteTokens
+		input.UserMessage.TokenUsage = inputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
 	}
 
 	input.AssistantMessage.Content = ""
+	input.AssistantMessage.OutputTokens = usage.OutputTokens
+	input.AssistantMessage.ReasoningTokens = usage.ReasoningTokens
+	input.AssistantMessage.TokenUsage = input.AssistantMessage.InputTokens + input.AssistantMessage.CacheReadTokens + input.AssistantMessage.CacheWriteTokens + usage.OutputTokens + usage.ReasoningTokens
 	input.AssistantMessage.LatencyMS = latencyMS
 	input.AssistantMessage.Status = "canceled"
 	input.AssistantMessage.ErrorCode = errorCode
@@ -177,6 +196,13 @@ func (s *Service) completeCanceledMediaGeneration(input canceledMediaGenerationI
 		UpstreamModelName:   input.Route.UpstreamModel,
 		UpstreamProtocol:    input.Route.Protocol,
 		EffectiveOptions:    input.EffectiveOptions,
+		UsageSpeed:          usage.Speed,
+		UsageServiceTier:    usage.ServiceTier,
+		RawUsageJSON:        usage.RawUsageJSON,
+		ImageUsage:          usage.ImageUsage,
+		ImageToolUsage:      usage.ImageToolUsage,
+		CacheWrite5mTokens:  usage.CacheWrite5mTokens,
+		CacheWrite1hTokens:  usage.CacheWrite1hTokens,
 		LatencyMS:           latencyMS,
 		DurationSeconds:     input.DurationSeconds,
 		StartedAt:           input.StartedAt,

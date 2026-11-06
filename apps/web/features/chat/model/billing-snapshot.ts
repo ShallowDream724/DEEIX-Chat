@@ -7,6 +7,7 @@ import {
   readString,
   type UnknownRecord,
 } from "@/shared/lib/type-guards";
+import { readImageBillingSnapshot, type ImageBillingSnapshot } from "@/entities/billing";
 
 export type BillingServiceItemSnapshot = {
   service_code?: string;
@@ -19,6 +20,7 @@ export type BillingServiceItemSnapshot = {
 
 /** Backend ledger pricing snapshot (`pricing_snapshot_json`); field names match the backend. */
 export type BillingSnapshot = {
+  imageBilling?: ImageBillingSnapshot;
   pricing_mode?: "token" | "call" | "duration" | "tiered" | string;
   service_items?: BillingServiceItemSnapshot[];
   provider_protocol?: string;
@@ -115,6 +117,7 @@ function normalizeBillingServiceItem(record: UnknownRecord): BillingServiceItemS
 
 function normalizeBillingSnapshot(record: UnknownRecord): BillingSnapshot {
   const snapshot: BillingSnapshot = {};
+  snapshot.imageBilling = readImageBillingSnapshot(record);
   for (const key of BILLING_SNAPSHOT_STRING_KEYS) {
     const field = readString(record, key);
     if (field !== undefined) snapshot[key] = field;

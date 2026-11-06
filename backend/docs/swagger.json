@@ -27061,6 +27061,7 @@
                 "durationNanousdPerSecond",
                 "durationUSDPerSecond",
                 "id",
+                "imagePricingJSON",
                 "inputNanousdPerMTokens",
                 "inputUSDPerMTokens",
                 "isFree",
@@ -27114,6 +27115,9 @@
                 },
                 "id": {
                     "type": "integer"
+                },
+                "imagePricingJSON": {
+                    "type": "string"
                 },
                 "inputNanousdPerMTokens": {
                     "type": "integer"
@@ -28016,6 +28020,10 @@
                 "billable": {
                     "type": "boolean"
                 },
+                "imagePricingJSON": {
+                    "type": "string",
+                    "maxLength": 20000
+                },
                 "priceLabel": {
                     "type": "string"
                 },
@@ -28035,6 +28043,7 @@
             "required": [
                 "billable",
                 "description",
+                "imagePricingJSON",
                 "label",
                 "priceLabel",
                 "priceNanousd",
@@ -28048,6 +28057,9 @@
                     "type": "boolean"
                 },
                 "description": {
+                    "type": "string"
+                },
+                "imagePricingJSON": {
                     "type": "string"
                 },
                 "label": {
@@ -29850,6 +29862,7 @@
                 "callUSDPerCall",
                 "currency",
                 "durationUSDPerSecond",
+                "imagePricingJSON",
                 "inputUSDPerMTokens",
                 "isFree",
                 "mode",
@@ -29879,6 +29892,9 @@
                 },
                 "durationUSDPerSecond": {
                     "type": "number"
+                },
+                "imagePricingJSON": {
+                    "type": "string"
                 },
                 "inputUSDPerMTokens": {
                     "type": "number"
@@ -33668,6 +33684,10 @@
                 "durationUSDPerSecond": {
                     "type": "number",
                     "minimum": 0
+                },
+                "imagePricingJSON": {
+                    "type": "string",
+                    "maxLength": 20000
                 },
                 "inputUSDPerMTokens": {
                     "type": "number",

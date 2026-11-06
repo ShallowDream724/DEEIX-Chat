@@ -29,9 +29,11 @@ const ALL_MODELS_VALUE = "__all__";
 
 export function useUsageBillingLabels(): UsageBillingLabels {
   const t = useTranslations("adminLogs.usage.billing");
+  const tImage = useTranslations("adminBilling.imagePricing");
 
   return React.useMemo(
     () => ({
+      image: { model: tImage("modelUsage"), tool: tImage("toolUsage"), textInput: tImage("textInput"), textOutput: tImage("textOutput"), imageInput: tImage("imageInput"), imageOutput: tImage("imageOutput"), cachedTextInput: tImage("cachedTextInput"), cachedImageInput: tImage("cachedImageInput") },
       input: t("input"),
       output: t("output"),
       cacheRead: t("cacheRead"),
@@ -65,7 +67,7 @@ export function useUsageBillingLabels(): UsageBillingLabels {
         scheduleRateNote: (period: string, multiplier: string) => t("scheduleRateNote", { period, multiplier }),
       },
     }),
-    [t],
+    [t, tImage],
   );
 }
 
@@ -259,7 +261,7 @@ export function UsageLogCostCell({
     <Tooltip>
       <TooltipTrigger asChild>
         <span className={cn("inline-flex cursor-default items-center font-medium tabular-nums", item.isFreeModel ? "text-muted-foreground" : "text-foreground")}>
-          {item.isFreeModel ? labels.freeModelNoBilling : formatUsageCost(item.billedUSD, billingDisplay)}
+          {item.isFreeModel && item.billedNanousd <= 0 ? labels.freeModelNoBilling : formatUsageCost(item.billedUSD, billingDisplay)}
         </span>
       </TooltipTrigger>
       <TooltipContent side="top">

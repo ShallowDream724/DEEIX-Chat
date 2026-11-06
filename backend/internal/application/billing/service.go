@@ -19,6 +19,7 @@ import (
 	domainpersonalprovider "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/personalprovider"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/secretbox"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/imageusage"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/nativetool"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/pagination"
 )
@@ -136,6 +137,8 @@ const BilledReasonModerationBlockedUpstreamUsage = "moderation_blocked_upstream_
 
 // UsagePricingInput 定义账单计算入参。
 type UsagePricingInput struct {
+	ImageUsage         imageusage.Usage
+	ImageToolUsage     imageusage.Usage
 	Authorization      *domainbilling.UsageAuthorization
 	UserID             uint
 	ConversationID     uint
@@ -245,15 +248,16 @@ type ServiceUsageInput struct {
 
 // NativeToolPricingView 描述内置原生工具默认计费价格。
 type NativeToolPricingView struct {
-	Provider     string
-	ToolKey      string
-	Label        string
-	Description  string
-	Type         string
-	PriceNanousd int64
-	Unit         string
-	PriceLabel   string
-	Billable     bool
+	ImagePricingJSON string
+	Provider         string
+	ToolKey          string
+	Label            string
+	Description      string
+	Type             string
+	PriceNanousd     int64
+	Unit             string
+	PriceLabel       string
+	Billable         bool
 }
 
 // ModelPricingInput 定义模型单价保存入参。金额字段均为 nano USD。
@@ -271,6 +275,7 @@ type ModelPricingInput struct {
 	DurationNanousdPerSecond    int64
 	TieredPricingJSON           string
 	SchedulePricingJSON         string
+	ImagePricingJSON            string
 }
 
 // UsageListFilter 描述用户用量账本的筛选和排序条件。
@@ -485,15 +490,16 @@ func nativeToolPricingViews(items []nativetool.PricingDefinition) []NativeToolPr
 	results := make([]NativeToolPricingView, 0, len(items))
 	for _, item := range items {
 		results = append(results, NativeToolPricingView{
-			Provider:     item.Provider,
-			ToolKey:      item.ToolKey,
-			Label:        item.Label,
-			Description:  item.Description,
-			Type:         item.Type,
-			PriceNanousd: item.PriceNanousd,
-			Unit:         item.Unit,
-			PriceLabel:   item.PriceLabel,
-			Billable:     item.Billable,
+			ImagePricingJSON: item.ImagePricingJSON,
+			Provider:         item.Provider,
+			ToolKey:          item.ToolKey,
+			Label:            item.Label,
+			Description:      item.Description,
+			Type:             item.Type,
+			PriceNanousd:     item.PriceNanousd,
+			Unit:             item.Unit,
+			PriceLabel:       item.PriceLabel,
+			Billable:         item.Billable,
 		})
 	}
 	return results
@@ -1269,6 +1275,9 @@ func (s *Service) AuthorizeUsage(ctx context.Context, userID uint, platformModel
 	if err := s.freezeNativeToolPricing(ctx, authorization); err != nil {
 		return nil, err
 	}
+	if err := s.freezeModelImagePricing(ctx, authorization, platformModelName); err != nil {
+		return nil, err
+	}
 	if mode != "usage" && mode != "period" {
 		return authorization, nil
 	}
@@ -1346,7 +1355,7 @@ func (s *Service) freezeNativeToolPricing(ctx context.Context, authorization *do
 		if enabled && price.Billable && price.Unit == "call" {
 			amount = price.PriceNanousd
 		}
-		authorization.NativeToolPricing[price.ToolKey] = domainbilling.NativeToolPrice{Provider: strings.ToLower(price.Provider), ServiceName: price.Label, NanousdPerCall: amount}
+		authorization.NativeToolPricing[price.ToolKey] = domainbilling.NativeToolPrice{Provider: strings.ToLower(price.Provider), ServiceName: price.Label, NanousdPerCall: amount, ImagePricingJSON: price.ImagePricingJSON}
 	}
 	return nil
 }
@@ -1367,7 +1376,16 @@ func (s *Service) AuthorizeNativeTools(authorization *domainbilling.UsageAuthori
 	}
 	var estimate int64
 	for key := range authorization.NativeToolKeys {
-		estimate += authorization.NativeToolPricing[key].NanousdPerCall
+		amount := authorization.NativeToolPricing[key].NanousdPerCall
+		if price := authorization.NativeToolPricing[key]; key == "openai.image_generation" && authorization.NativeToolBillingEnabled && price.ImagePricingJSON != "" {
+			if config, err := parseImagePricing(price.ImagePricingJSON); err == nil && config != nil {
+				amount = imagePricingEstimate(*config, 0, 0, billingRateMultiplier{Numerator: 1, Denominator: 1})
+			}
+		}
+		if amount > math.MaxInt64-estimate {
+			return math.MaxInt64
+		}
+		estimate += amount
 	}
 	return estimate
 }
@@ -1484,6 +1502,11 @@ func (s *Service) EstimateUsageNanousd(ctx context.Context, userID uint, input U
 	rateMultiplier = composeRatePercent(rateMultiplier, groupRatePercent)
 	if schedule := resolveSchedulePeriodJSON(pricing.SchedulePricingJSON, time.Now()); schedule != nil {
 		rateMultiplier = composeRatePercent(rateMultiplier, schedule.RatePercent)
+	}
+	if config, imageErr := parseImagePricing(pricing.ImagePricingJSON); imageErr != nil {
+		return 0, ErrInvalidModelPricing
+	} else if config != nil {
+		return imagePricingEstimate(*config, input.InputTokens+input.CacheReadTokens, input.OutputTokens, rateMultiplier), nil
 	}
 
 	switch domainbilling.NormalizePricingMode(pricing.PricingMode) {
@@ -1856,6 +1879,26 @@ func (s *Service) BuildUsageLedger(ctx context.Context, input UsagePricingInput)
 	if err != nil && !errors.Is(err, repository.ErrNotFound) {
 		return nil, err
 	}
+	if frozen := input.Authorization; frozen != nil && frozen.ModelImagePricing != nil {
+		if frozen.ModelImagePricing.PlatformModelName != platformModelName {
+			return nil, ErrModelPricingRequired
+		}
+		imagePolicyActive := strings.TrimSpace(frozen.ModelImagePricing.ImagePricingJSON) != "" && strings.TrimSpace(frozen.ModelImagePricing.ImagePricingJSON) != "{}"
+		if pricing == nil && imagePolicyActive {
+			pricing = &domainbilling.ModelPricing{Currency: "USD", PricingMode: domainbilling.PricingModeToken}
+		} else if pricing != nil {
+			copy := *pricing
+			pricing = &copy
+		}
+		if pricing != nil {
+			pricing.ImagePricingJSON = frozen.ModelImagePricing.ImagePricingJSON
+			if imagePolicyActive {
+				pricing.IsFree = frozen.ModelImagePricing.IsFree
+				pricing.PricingMode = domainbilling.PricingModeToken
+				pricing.SchedulePricingJSON = frozen.ModelImagePricing.SchedulePricingJSON
+			}
+		}
+	}
 	// 时段按账本时间命中，预留与结算在同一时刻语义下保持一致。
 	ledgerAt := input.BillingAt
 	if ledgerAt.IsZero() {
@@ -2034,6 +2077,29 @@ func (s *Service) BuildUsageLedger(ctx context.Context, input UsagePricingInput)
 			outputBilledNanousd = calcNanousdByToken(input.OutputTokens+input.ReasoningTokens, outputNanousdPerMTokens)
 		}
 	}
+	var imageCostBreakdown *imageTokenCost
+	if !input.ServiceOnly && mode != "self" && pricing != nil && !pricing.IsFree {
+		config, imageErr := parseImagePricing(pricing.ImagePricingJSON)
+		if imageErr != nil {
+			return nil, ErrModelPricingRequired
+		}
+		if config != nil {
+			if pricingMode != domainbilling.PricingModeToken {
+				return nil, ErrModelPricingRequired
+			}
+			cost, costErr := imageCost(input.ImageUsage, *config, rateMultiplier)
+			if costErr != nil {
+				return nil, costErr
+			}
+			imageCostBreakdown = &cost
+			inputBilledNanousd = cost.TextInput + cost.ImageInput
+			cacheReadBilledNanousd = cost.CachedTextInput + cost.CachedImageInput
+			cacheWriteBilledNanousd = 0
+			outputBilledNanousd = cost.ImageOutput + cost.TextOutput
+			// Aggregate token rates cannot describe a modality-specific price.
+			inputNanousdPerMTokens, cacheReadNanousdPerMTokens, cacheWriteNanousdPerMTokens, outputNanousdPerMTokens = 0, 0, 0, 0
+		}
+	}
 	serviceItems, serviceBilledNanousd, err := s.buildUsageServiceItems(ctx, input.ServiceItems, mode, input.UserID, subGroupID)
 	if err != nil {
 		return nil, err
@@ -2061,6 +2127,11 @@ func (s *Service) BuildUsageLedger(ctx context.Context, input UsagePricingInput)
 	if err != nil {
 		nativeToolPricingOverrides = map[string]nativetool.PricingOverride{}
 	}
+	if input.Authorization == nil && mode != "self" && nativeToolBillingEnabled && nativeToolPricingOverrides["openai.image_generation"].ImagePricingJSON != "" && (input.ImageToolUsage.Present || input.ServerSideToolUsage["openai.image_generation"] > 0) {
+		// Configured token pricing requires a frozen selected model and price;
+		// settlement must never reconstruct that identity after the request.
+		return nil, ErrModelPricingRequired
+	}
 	nativePricingSource := nativeToolPricingSourceForSnapshot(nativeToolPricingJSON, nativeToolDefinitions)
 	if input.Authorization != nil && input.Authorization.NativeToolPricing != nil {
 		nativePricingSource = input.Authorization.NativeToolPricingSource
@@ -2077,12 +2148,34 @@ func (s *Service) BuildUsageLedger(ctx context.Context, input UsagePricingInput)
 		serviceItems = append(serviceItems, nativeToolItems...)
 		serviceBilledNanousd += nativeToolBilledNanousd
 	}
+	imageToolItem, imageToolCost, err := s.buildImageToolServiceItem(input, mode)
+	if err != nil {
+		return nil, err
+	}
+	if imageToolItem != nil {
+		if imageToolItem.BilledNanousd > math.MaxInt64-serviceBilledNanousd || imageToolItem.BilledNanousd > math.MaxInt64-nativeToolBilledNanousd {
+			return nil, ErrModelPricingRequired
+		}
+		serviceItems = append(serviceItems, *imageToolItem)
+		serviceBilledNanousd += imageToolItem.BilledNanousd
+		nativeToolBilledNanousd += imageToolItem.BilledNanousd
+	}
 	mcpToolItems, mcpToolBilledNanousd := buildMCPToolServiceItems(input, mode)
 	if len(mcpToolItems) > 0 {
 		serviceItems = append(serviceItems, mcpToolItems...)
 		serviceBilledNanousd += mcpToolBilledNanousd
 	}
 	billedNanousd := inputBilledNanousd + cacheReadBilledNanousd + cacheWriteBilledNanousd + outputBilledNanousd + callBilledNanousd + durationBilledNanousd + serviceBilledNanousd
+	if imageCostBreakdown != nil || imageToolCost != nil {
+		var checked int64
+		for _, amount := range []int64{inputBilledNanousd, cacheReadBilledNanousd, cacheWriteBilledNanousd, outputBilledNanousd, callBilledNanousd, durationBilledNanousd, serviceBilledNanousd} {
+			if amount < 0 || amount > math.MaxInt64-checked {
+				return nil, ErrModelPricingRequired
+			}
+			checked += amount
+		}
+		billedNanousd = checked
+	}
 	cacheWriteNanousdPerMTokens = resolveSnapshotRateFromBilled(cacheWriteTokens, cacheWriteBilledNanousd, cacheWriteNanousdPerMTokens)
 	// 免费模型仅豁免模型本身费用；MCP 等服务项费用仍需结算。
 	// 结算层会对免费标记整单清零，因此只有整单为 0 才落免费标记。
@@ -2155,6 +2248,19 @@ func (s *Service) BuildUsageLedger(ctx context.Context, input UsagePricingInput)
 		"mcp_tool_billed_nanousd":                  mcpToolBilledNanousd,
 		"base_service_billed_nanousd":              serviceBilledNanousd,
 		"service_items":                            usageServiceItemSnapshots(serviceItems),
+	}
+	if input.ImageUsage.Present {
+		snapshot["image_usage"] = input.ImageUsage
+	}
+	if pricing != nil && imageCostBreakdown != nil {
+		snapshot["image_pricing_json"] = pricing.ImagePricingJSON
+		snapshot["image_token_cost"] = imageCostBreakdown
+	}
+	if input.ImageToolUsage.Present {
+		snapshot["image_tool_usage"] = input.ImageToolUsage
+	}
+	if imageToolCost != nil {
+		snapshot["image_tool_token_cost"] = imageToolCost
 	}
 	if strings.EqualFold(strings.TrimSpace(input.MediaType), "video") {
 		inputImageCount := input.InputImageCount
@@ -2319,6 +2425,7 @@ func toPublicModelPricing(item domainbilling.ModelPricing) PublicModelPricing {
 		OutputUSDPerMTokens:     nanousdToUSD(item.OutputNanousdPerMTokens),
 		CallUSDPerCall:          nanousdToUSD(item.CallNanousdPerCall),
 		DurationUSDPerSecond:    nanousdToUSD(item.DurationNanousdPerSecond),
+		ImagePricingJSON:        item.ImagePricingJSON,
 	}
 	if mode == domainbilling.PricingModeTiered {
 		tiers, err := parseTieredPricingTiers(item.TieredPricingJSON)
@@ -2432,6 +2539,10 @@ func (s *Service) UpsertModelPricing(ctx context.Context, input ModelPricingInpu
 	if err != nil {
 		return nil, ErrInvalidModelPricing
 	}
+	imagePricingJSON, err := normalizeImagePricingJSON(input.ImagePricingJSON)
+	if err != nil || (imagePricingJSON != "{}" && pricingMode != domainbilling.PricingModeToken) {
+		return nil, ErrInvalidModelPricing
+	}
 	item, err := s.repo.UpsertModelPricing(ctx, &domainbilling.ModelPricing{
 		PlatformModelName:           platformModelName,
 		Currency:                    "USD",
@@ -2446,6 +2557,7 @@ func (s *Service) UpsertModelPricing(ctx context.Context, input ModelPricingInpu
 		DurationNanousdPerSecond:    durationNanousdPerSecond,
 		TieredPricingJSON:           tieredPricingJSON,
 		SchedulePricingJSON:         schedulePricingJSON,
+		ImagePricingJSON:            imagePricingJSON,
 	})
 	if err != nil {
 		if errors.Is(err, repository.ErrInvalidInput) || errors.Is(err, repository.ErrModelNotFound) {
@@ -3587,6 +3699,9 @@ func buildNativeToolServiceItems(request nativeToolServiceItemsInput) ([]domainb
 	results := make([]domainbilling.UsageServiceItem, 0, len(counts))
 	var total int64
 	for toolName, count := range counts {
+		if toolName == "openai.image_generation" && input.Authorization != nil && input.Authorization.NativeToolKeys[toolName] && input.Authorization.NativeToolPricing[toolName].ImagePricingJSON != "" {
+			continue
+		}
 		price, ok := nativeToolDefaultCallPrice(input, toolName, request.PricingOverrides, request.Definitions)
 		if !ok || price.NanousdPerCall <= 0 || count <= 0 {
 			continue

@@ -938,6 +938,9 @@
     }
   },
   "optionLabels": {
+    "complexity": "构思强度",
+    "frame_count": "帧数",
+    "frame_duration_ms": "每帧时长（毫秒）",
     "budget_tokens": "思考预算",
     "cache_timeout": "缓存时长",
     "candidate_count": "候选数量",
@@ -1026,6 +1029,9 @@
     "web_search": "联网搜索"
   },
   "optionDescriptions": {
+    "complexity": "调整图像规划投入，不改变所选画质。",
+    "frame_count": "动画帧数，范围为 2–16。",
+    "frame_duration_ms": "每帧时长为 20–2000 毫秒，步长为 10 毫秒。",
     "background": "控制生成图片背景，透明背景需要模型和输出格式支持。",
     "budget_tokens": "限制模型可用于思考或推理的 token 预算。",
     "cache_timeout": "控制提示词缓存可复用的时间窗口。",

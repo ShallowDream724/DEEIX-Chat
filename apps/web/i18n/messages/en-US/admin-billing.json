@@ -1,4 +1,18 @@
 {
+  "imagePricing": {
+    "modelUsage": "Image usage",
+    "toolUsage": "Image tool usage",
+    "enabled": "Separate text and image usage",
+    "unit": "USD / million tokens",
+    "summary": "Text & image",
+    "textInput": "Text input",
+    "imageInput": "Image input",
+    "cachedTextInput": "Cached text input",
+    "cachedImageInput": "Cached image input",
+    "imageOutput": "Image output",
+    "textOutput": "Text output",
+    "invalid": "Enter all five non-negative prices"
+  },
   "title": "Billing",
   "pricing": "Model pricing",
   "usageLogs": "Usage logs",
@@ -178,6 +192,7 @@
     "jsonMode": "JSON",
     "jsonHint": "Valid JSON syncs to the form state immediately. Saving still uses the current model pricing API.",
     "jsonErrors": {
+      "image": "Image pricing must contain all five non-negative prices.",
       "invalid": "Invalid JSON.",
       "root": "Model pricing JSON must be an object.",
       "model": "Platform model name cannot be changed from JSON.",
@@ -388,6 +403,7 @@
     "durationVideoOnly": "{model}.pricingMode=duration requires a video model capability",
     "invalidNumber": "{model}.{field} must be a number greater than or equal to 0",
     "invalidTieredPricing": "{model}.{field} must contain a non-empty tiers array",
+    "invalidImagePricing": "{model} image pricing must contain all five non-negative prices.",
     "invalidTieredPricingJSON": "{model}.tieredPricingJSON is not valid JSON",
     "invalidSchedulePricing": "{model}.schedulePricing is invalid or has overlapping periods."
   }

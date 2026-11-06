@@ -291,6 +291,8 @@ func (s *Service) recordBasicServiceUsage(ctx context.Context, input basicServic
 		LatencyMS:          input.LatencyMS,
 		ServiceItems:       []appbilling.ServiceUsageInput{item},
 		RawUsageJSON:       input.Usage.RawUsageJSON,
+		ImageUsage:         input.Usage.ImageUsage,
+		ImageToolUsage:     input.Usage.ImageToolUsage,
 	}
 	var ledger *domainbilling.UsageLedger
 	err := retryUsageBillingOperation(billingCtx, func() error {

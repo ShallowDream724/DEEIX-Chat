@@ -1,5 +1,6 @@
 // Public entry of the billing entity; code outside entities/billing/ imports only this file.
 // Unused re-exports are tree-shaken (package.json "sideEffects"), so UI and logic share one entry.
+export { readImageBillingSnapshot, type ImageBillingSnapshot, type ImageBillingBreakdown, type ImageBillingLabels } from "@/entities/billing/model/image-billing-snapshot";
 export {
   type BillingDisplayCurrency,
   type BillingDisplayLabels,

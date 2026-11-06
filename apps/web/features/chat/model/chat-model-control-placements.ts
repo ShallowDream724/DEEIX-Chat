@@ -37,9 +37,16 @@ export function splitComposerControlItems<T extends ComposerControlItem>(
 ): { toolbar: T[]; menu: T[] } {
   const toolbar: T[] = [];
   const menu: T[] = [];
+  const pinnedIDs = new Set(items
+    .filter((item) => item.pinnable && placements[item.id] === "toolbar")
+    .slice(0, MAX_PINNED_MODEL_CONTROLS)
+    .map((item) => item.id));
   for (const item of items) {
-    const placement = item.pinnable ? placements[item.id] ?? item.defaultPlacement : "menu";
-    if (placement === "toolbar" && toolbar.length < MAX_PINNED_MODEL_CONTROLS) {
+    if (pinnedIDs.size >= MAX_PINNED_MODEL_CONTROLS) break;
+    if (item.pinnable && placements[item.id] === undefined && item.defaultPlacement === "toolbar") pinnedIDs.add(item.id);
+  }
+  for (const item of items) {
+    if (pinnedIDs.has(item.id)) {
       toolbar.push(item);
     } else {
       menu.push(item);
@@ -65,10 +72,9 @@ export function nextModelControlPlacements<T extends ComposerControlItem>(
   } else {
     next[item.id] = target;
   }
-  const pinnedCount = items.filter((candidate) =>
-    candidate.pinnable && (next[candidate.id] ?? candidate.defaultPlacement) === "toolbar"
-  ).length;
-  if (pinned && pinnedCount > MAX_PINNED_MODEL_CONTROLS) {
+  const explicitPinnedCount = items.filter((candidate) => candidate.pinnable && next[candidate.id] === "toolbar").length;
+  const toolbar = splitComposerControlItems(items, next).toolbar;
+  if (pinned && (explicitPinnedCount > MAX_PINNED_MODEL_CONTROLS || !toolbar.some((candidate) => candidate.id === item.id))) {
     return null;
   }
   // Placements of controls from other models are kept, but only the pinned ones count toward the

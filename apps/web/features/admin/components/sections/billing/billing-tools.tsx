@@ -24,6 +24,7 @@ import {
   SettingsSection,
 } from "@/shared/components/settings-layout";
 import { localizedNativeToolText } from "@/entities/model";
+import { BillingImagePricingEditor } from "./billing-image-pricing-editor";
 
 type BillingToolsSectionProps = {
   billingConfig: AdminBillingConfigDTO | null;
@@ -40,10 +41,13 @@ export function BillingToolsSection({ billingConfig, setBillingConfig, loading }
     setNativeToolBillingEnabled,
     nativeToolPricing,
     nativeToolPriceDrafts,
+    nativeToolImagePricingDrafts,
+    nativeToolImagePricingInvalid,
     nativeToolBillingSaving,
     nativeToolBillingChanged,
     nativeToolPricingChanged,
     updateNativeToolPriceDraft,
+    updateNativeToolImagePricingDraft,
     saveNativeToolBilling,
   } = useAdminBillingNativeTools({ billingConfig, setBillingConfig });
 
@@ -57,7 +61,7 @@ export function BillingToolsSection({ billingConfig, setBillingConfig, loading }
     <Button
       type="button"
       size="sm"
-      disabled={loading || nativeToolBillingSaving}
+      disabled={loading || nativeToolBillingSaving || nativeToolImagePricingInvalid}
       onClick={() => void saveNativeToolBilling()}
     >
       {nativeToolBillingSaving ? <SpinnerLabel>{tActions("saving")}</SpinnerLabel> : (
@@ -131,7 +135,7 @@ export function BillingToolsSection({ billingConfig, setBillingConfig, loading }
               const label = localizedNativeToolText(messages, "nativeToolLabels", row.toolKey) || row.label || row.type || row.toolKey;
               const description = localizedNativeToolText(messages, "nativeToolDescriptions", row.toolKey) || row.description || row.type || row.toolKey;
               return (
-                <TableRow key={`${row.provider}-${row.toolKey}`}>
+                <TableRow key={`${row.provider}-${row.toolKey}`} className="align-top">
                   <TableCell className="py-1.5 text-xs text-muted-foreground">{row.provider}</TableCell>
                   <TableCell className="py-1.5 text-xs text-foreground">
                     <div className="flex min-w-0 flex-col">
@@ -141,19 +145,31 @@ export function BillingToolsSection({ billingConfig, setBillingConfig, loading }
                   </TableCell>
                   <TableCell className="py-1.5 font-mono text-xs text-muted-foreground">{row.type || row.toolKey}</TableCell>
                   <TableCell className="py-1.5 text-right font-mono text-xs text-muted-foreground">
-                    <div className="flex items-center justify-end gap-1.5">
-                      <span className="text-muted-foreground">$</span>
-                      <Input
-                        value={nativeToolPriceDrafts[row.toolKey] ?? formatNativeToolPriceInput(row.priceNanousd)}
-                        inputMode="decimal"
-                        className="h-7 w-24 text-right font-mono text-xs"
-                        disabled={loading || nativeToolBillingSaving}
-                        aria-label={`${label} ${t("toolPricing.price")}`}
-                        onChange={(event) => updateNativeToolPriceDraft(row.toolKey, event.target.value)}
-                      />
-                      <span className="whitespace-nowrap text-muted-foreground">
-                        / {t("toolPricing.units.call")}
-                      </span>
+                    <div className={row.type === "image_generation" ? "ml-auto w-80 space-y-3" : "min-w-[200px]"}>
+                      {row.type !== "image_generation" || !nativeToolImagePricingDrafts[row.toolKey] ? (
+                        <div className="flex items-center justify-end gap-1.5">
+                          <span className="text-muted-foreground">$</span>
+                          <Input
+                            value={nativeToolPriceDrafts[row.toolKey] ?? formatNativeToolPriceInput(row.priceNanousd)}
+                            inputMode="decimal"
+                            className="h-7 w-24 text-right font-mono text-xs"
+                            disabled={loading || nativeToolBillingSaving}
+                            aria-label={`${label} ${t("toolPricing.price")}`}
+                            onChange={(event) => updateNativeToolPriceDraft(row.toolKey, event.target.value)}
+                          />
+                          <span className="whitespace-nowrap text-muted-foreground">
+                            / {t("toolPricing.units.call")}
+                          </span>
+                        </div>
+                      ) : null}
+                      {row.type === "image_generation" ? (
+                        <BillingImagePricingEditor
+                          alignToggle="end"
+                          value={nativeToolImagePricingDrafts[row.toolKey] ?? null}
+                          onChange={(value) => updateNativeToolImagePricingDraft(row.toolKey, value)}
+                          disabled={loading || nativeToolBillingSaving}
+                        />
+                      ) : null}
                     </div>
                   </TableCell>
                 </TableRow>

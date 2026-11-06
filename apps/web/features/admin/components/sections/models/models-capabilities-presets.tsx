@@ -211,6 +211,19 @@ const OPENAI_IMAGE_OPTION_CONTROLS = [
   },
 ];
 
+const IMAGE_26_OPTION_CONTROLS = [
+  ...OPENAI_IMAGE_OPTION_CONTROLS.map((control) => control.path === "quality"
+    ? { ...control, options: ["auto", "low", "medium", "high", "xhigh", "max"] }
+    : control.path === "output_format"
+      ? { ...control, options: ["png", "jpeg", "webp", "gif"] }
+      : control),
+  { path: "complexity", type: "select", label: "Planning Effort", options: ["low", "medium", "high"] },
+  { path: "frame_count", type: "number", label: "Frame Count" },
+  { path: "frame_duration_ms", type: "number", label: "Frame Duration (ms)" },
+  { path: "output_compression", type: "number", label: "Output Compression" },
+  { path: "moderation", type: "select", label: "Moderation", options: ["auto", "low"] },
+];
+
 // Values the Gemini image adapter accepts (backend gemini_images.go); gemini-2.5-flash-image ignores imageSize.
 const GOOGLE_IMAGE_ASPECT_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9", "1:4", "4:1", "1:8", "8:1"];
 const GOOGLE_IMAGE_SIZES = ["1K", "2K", "4K"];
@@ -336,6 +349,16 @@ const MODEL_CAPABILITY_PRESETS: CapabilityPreset[] = [
       ],
     },
   },
+  ...(["openai_image_generations", "openai_image_edits"] as const).map((protocol) => ({
+    id: `gpt_image_26_${protocol}`,
+    label: `GPT Image 2.6 · ${protocol === "openai_image_edits" ? "Edits" : "Generations"}`,
+    provider: "OpenAI",
+    protocol,
+    payload: {
+      defaultOptions: { output_format: "png", quality: "auto" },
+      optionControls: IMAGE_26_OPTION_CONTROLS,
+    },
+  })),
   {
     id: "anthropic_messages",
     protocol: "anthropic_messages",

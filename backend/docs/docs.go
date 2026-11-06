@@ -27068,6 +27068,7 @@ const docTemplate = `{
                 "durationNanousdPerSecond",
                 "durationUSDPerSecond",
                 "id",
+                "imagePricingJSON",
                 "inputNanousdPerMTokens",
                 "inputUSDPerMTokens",
                 "isFree",
@@ -27121,6 +27122,9 @@ const docTemplate = `{
                 },
                 "id": {
                     "type": "integer"
+                },
+                "imagePricingJSON": {
+                    "type": "string"
                 },
                 "inputNanousdPerMTokens": {
                     "type": "integer"
@@ -28023,6 +28027,10 @@ const docTemplate = `{
                 "billable": {
                     "type": "boolean"
                 },
+                "imagePricingJSON": {
+                    "type": "string",
+                    "maxLength": 20000
+                },
                 "priceLabel": {
                     "type": "string"
                 },
@@ -28042,6 +28050,7 @@ const docTemplate = `{
             "required": [
                 "billable",
                 "description",
+                "imagePricingJSON",
                 "label",
                 "priceLabel",
                 "priceNanousd",
@@ -28055,6 +28064,9 @@ const docTemplate = `{
                     "type": "boolean"
                 },
                 "description": {
+                    "type": "string"
+                },
+                "imagePricingJSON": {
                     "type": "string"
                 },
                 "label": {
@@ -29857,6 +29869,7 @@ const docTemplate = `{
                 "callUSDPerCall",
                 "currency",
                 "durationUSDPerSecond",
+                "imagePricingJSON",
                 "inputUSDPerMTokens",
                 "isFree",
                 "mode",
@@ -29886,6 +29899,9 @@ const docTemplate = `{
                 },
                 "durationUSDPerSecond": {
                     "type": "number"
+                },
+                "imagePricingJSON": {
+                    "type": "string"
                 },
                 "inputUSDPerMTokens": {
                     "type": "number"
@@ -33675,6 +33691,10 @@ const docTemplate = `{
                 "durationUSDPerSecond": {
                     "type": "number",
                     "minimum": 0
+                },
+                "imagePricingJSON": {
+                    "type": "string",
+                    "maxLength": 20000
                 },
                 "inputUSDPerMTokens": {
                     "type": "number",

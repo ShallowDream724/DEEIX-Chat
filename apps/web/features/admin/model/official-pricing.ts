@@ -4,6 +4,7 @@ import {
   type BillingModelPricingRow,
   type PricingFormState,
 } from "@/features/admin/model/billing-settings";
+import { imagePricingToForm, parseImagePricing } from "@/features/admin/model/image-pricing";
 
 export type OfficialPricingCatalogItem = AdminOfficialPricingCatalogItemDTO;
 
@@ -301,6 +302,7 @@ export function applyOfficialPricingToForm(form: PricingFormState, payload: Upse
     cacheRead: tiered ? "0" : String(payload.cacheReadUSDPerMTokens),
     cacheWrite: tiered ? "0" : String(payload.cacheWriteUSDPerMTokens),
     output: tiered ? "0" : String(payload.outputUSDPerMTokens),
+    imagePricing: imagePricingToForm(parseImagePricing(payload.imagePricingJSON)),
     tieredTiers: tiered ? parseTieredPricingJSON(payload.tieredPricingJSON) ?? form.tieredTiers : form.tieredTiers,
     call: "0",
     duration: "0",

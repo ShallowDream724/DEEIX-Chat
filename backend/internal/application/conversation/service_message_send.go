@@ -1351,6 +1351,8 @@ func (s *Service) sendMessageInternal(
 		UsageSpeed:            totalUsage.Speed,
 		UsageServiceTier:      totalUsage.ServiceTier,
 		RawUsageJSON:          totalUsage.RawUsageJSON,
+		ImageUsage:            totalUsage.ImageUsage,
+		ImageToolUsage:        totalUsage.ImageToolUsage,
 		CacheWrite5mTokens:    totalUsage.CacheWrite5mTokens,
 		CacheWrite1hTokens:    totalUsage.CacheWrite1hTokens,
 		ServerSideToolUsage:   runner.nativeToolUsage,

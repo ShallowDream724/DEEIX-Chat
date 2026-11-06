@@ -8,6 +8,7 @@ import type { PatchSettingItem, SettingItem } from "@/shared/api/settings-types"
 import { parseKindsJSON } from "@/entities/model";
 import { isOneOf, isRecord } from "@/shared/lib/type-guards";
 import { normalizeSchedulePeriods, parseSchedulePricing, type SchedulePeriodForm, schedulePeriodsToForm, stringifySchedulePricing } from "@/entities/billing";
+import { imagePricingToForm, parseImagePricing, type ImagePricing, type ImagePricingForm } from "./image-pricing";
 
 export type BillingModelPricingRow = {
   platformModelName: string;
@@ -39,6 +40,7 @@ export type PricingFormState = {
   output: string;
   call: string;
   duration: string;
+  imagePricing: ImagePricingForm | null;
   tieredTiers: TieredPricingTierForm[];
   schedulePeriods: SchedulePeriodForm[];
   isFree: boolean;
@@ -66,6 +68,7 @@ export type ModelPricingExportEntry = {
   durationUSDPerSecond: number;
   tieredPricing?: unknown;
   schedulePricing?: unknown;
+  imagePricing?: ImagePricing;
 };
 
 export type ModelPricingImportParseResult = {
@@ -86,6 +89,7 @@ export type ModelPricingImportMessages = {
   invalidTieredPricing: (model: string, field: string) => string;
   invalidTieredPricingJSON: (model: string) => string;
   invalidSchedulePricing: (model: string) => string;
+  invalidImagePricing: (model: string) => string;
 };
 
 export const DEFAULT_PAGE_SIZE = 25;
@@ -249,6 +253,7 @@ export function createFormState(row: BillingModelPricingRow): PricingFormState {
     output: String(pricing?.outputUSDPerMTokens ?? 0),
     call: String(pricing?.callUSDPerCall ?? 0),
     duration: String(pricing?.durationUSDPerSecond ?? 0),
+    imagePricing: imagePricingToForm(parseImagePricing(pricing?.imagePricingJSON)),
     tieredTiers: parseTieredPricingJSON(pricing?.tieredPricingJSON) ?? cloneDefaultTieredTiers(),
     schedulePeriods: schedulePeriodsToForm(parseSchedulePricing(pricing?.schedulePricingJSON)),
     isFree: pricing?.isFree ?? row.isFree,
@@ -302,6 +307,7 @@ const DEFAULT_IMPORT_MESSAGES: ModelPricingImportMessages = {
   invalidTieredPricing: (model, field) => `${model}.${field} must contain a non-empty tiers array`,
   invalidTieredPricingJSON: (model) => `${model}.tieredPricingJSON is not valid JSON`,
   invalidSchedulePricing: (model) => `${model}.schedulePricing must be a valid, non-overlapping periods list`,
+  invalidImagePricing: (model) => `${model}.imagePricing must contain all five non-negative prices`,
 };
 
 function numberFromPricingField(
@@ -407,6 +413,7 @@ export function buildModelPricingExportObject(pricingItems: AdminModelPricingDTO
       continue;
     }
     const pricingMode = normalizePricingMode(item.pricingMode);
+    const imagePricing = parseImagePricing(item.imagePricingJSON);
     result[platformModelName] = {
       currency: item.currency || "USD",
       isFree: item.isFree,
@@ -420,6 +427,7 @@ export function buildModelPricingExportObject(pricingItems: AdminModelPricingDTO
       durationUSDPerSecond: pricingMode === "duration" ? item.durationUSDPerSecond : 0,
       ...(pricingMode === "tiered" ? { tieredPricing: parseTieredPricingExportValue(item.tieredPricingJSON) } : {}),
       ...(parseSchedulePricing(item.schedulePricingJSON) ? { schedulePricing: parseSchedulePricing(item.schedulePricingJSON) } : {}),
+      ...(imagePricing ? { imagePricing } : {}),
     };
   }
   return result;
@@ -468,6 +476,7 @@ export function createOptimisticModelPricing(row: BillingModelPricingRow, payloa
     durationUSDPerSecond,
     tieredPricingJSON: pricingMode === "tiered" ? payload.tieredPricingJSON || "" : "",
     schedulePricingJSON: payload.schedulePricingJSON || "",
+    imagePricingJSON: payload.imagePricingJSON || "",
     inputNanousdPerMTokens: modelPricingNanousd(inputUSDPerMTokens),
     cacheReadNanousdPerMTokens: modelPricingNanousd(cacheReadUSDPerMTokens),
     cacheWriteNanousdPerMTokens: modelPricingNanousd(cacheWriteUSDPerMTokens),
@@ -547,6 +556,8 @@ export function parseModelPricingImportJSON(
       ? parseTieredPricingImportValue(rawEntry, platformModelName, entryErrors, messages)
       : undefined;
     const schedulePricingJSON = parseSchedulePricingImportValue(rawEntry, platformModelName, entryErrors, messages);
+    const imagePricing = parseImagePricing(rawEntry.imagePricing ?? rawEntry.imagePricingJSON);
+    if (imagePricing === undefined) entryErrors.push(messages.invalidImagePricing(platformModelName));
     const request: UpsertAdminModelPricingRequest = {
       platformModelName,
       currency: typeof rawEntry.currency === "string" && rawEntry.currency.trim() ? rawEntry.currency.trim() : "USD",
@@ -561,6 +572,7 @@ export function parseModelPricingImportJSON(
       durationUSDPerSecond: pricingMode === "duration" ? numberFromPricingField(rawEntry, "durationUSDPerSecond", entryErrors, platformModelName, messages) : 0,
       tieredPricingJSON,
       schedulePricingJSON,
+      imagePricingJSON: pricingMode === "token" && imagePricing ? JSON.stringify(imagePricing) : "",
     };
     if (entryErrors.length > 0) {
       errors.push(...entryErrors);

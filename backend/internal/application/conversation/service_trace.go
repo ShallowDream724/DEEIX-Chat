@@ -2006,6 +2006,11 @@ func buildAttachmentProcessTrace(
 		FileGroupRefs: &attachmentTraceRefGroups{},
 	}
 	for _, item := range attachments {
+		// Generated files are deliverables. Not re-reading an old assistant
+		// output is not an attachment failure for the user's current request.
+		if !item.Current && item.MessageRole == "assistant" && item.ContextMode == fileContextModeSkipped {
+			continue
+		}
 		name := strings.TrimSpace(item.FileName)
 		if name == "" {
 			name = strings.TrimSpace(item.FileID)
@@ -2048,7 +2053,10 @@ func buildAttachmentProcessTrace(
 		}
 	}
 	skippedCount := len(payload.FileGroups.Skipped) + len(payload.FileGroups.Unsupported)
-	includedCount := len(attachments) - skippedCount
+	if len(payload.FileRefs) == 0 {
+		return "", "", nil
+	}
+	includedCount := len(payload.FileRefs) - skippedCount
 	summary := formatAttachmentProcessCounts(includedCount, skippedCount, "已纳入")
 	detail := fmt.Sprintf("文件已就绪，%s。", formatAttachmentProcessCounts(includedCount, skippedCount, "纳入"))
 	return summary, formatTraceStep("文件上下文", detail), attachmentTracePayloadMap(payload)

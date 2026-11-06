@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/imageusage"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/inputlimits"
 )
 
@@ -186,6 +187,10 @@ type Usage struct {
 	Speed              string
 	ServiceTier        string
 	RawUsageJSON       string
+	// ImageUsage belongs to a direct image request. ImageToolUsage is billed
+	// separately from the language model's ordinary usage in Responses.
+	ImageUsage     imageusage.Usage
+	ImageToolUsage imageusage.Usage
 }
 
 // HasObservedInput 表示上游是否上报了输入侧用量。提示词全部命中缓存时非缓存输入

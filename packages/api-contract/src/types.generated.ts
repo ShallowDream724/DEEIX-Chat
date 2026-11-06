@@ -2754,6 +2754,7 @@ export interface ModelPricingResponse {
   durationNanousdPerSecond: number;
   durationUSDPerSecond: number;
   id: number;
+  imagePricingJSON: string;
   inputNanousdPerMTokens: number;
   inputUSDPerMTokens: number;
   isFree: boolean;
@@ -3026,6 +3027,8 @@ export interface NativeToolDefinitionResponse {
 
 export interface NativeToolPricingRequest {
   billable?: boolean;
+  /** @maxLength 20000 */
+  imagePricingJSON?: string;
   priceLabel?: string;
   priceNanousd?: number;
   toolKey?: string;
@@ -3035,6 +3038,7 @@ export interface NativeToolPricingRequest {
 export interface NativeToolPricingResponse {
   billable: boolean;
   description: string;
+  imagePricingJSON: string;
   label: string;
   priceLabel: string;
   priceNanousd: number;
@@ -3663,6 +3667,7 @@ export interface PublicModelPricingResponse {
   callUSDPerCall: number;
   currency: string;
   durationUSDPerSecond: number;
+  imagePricingJSON: string;
   inputUSDPerMTokens: number;
   isFree: boolean;
   mode: string;
@@ -4984,6 +4989,8 @@ export interface UpsertModelPricingRequest {
   currency?: string;
   /** @min 0 */
   durationUSDPerSecond: number;
+  /** @maxLength 20000 */
+  imagePricingJSON?: string;
   /** @min 0 */
   inputUSDPerMTokens: number;
   isFree: boolean;

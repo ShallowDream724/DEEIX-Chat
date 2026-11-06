@@ -82,6 +82,7 @@ type PublicModelPricing struct {
 	OutputUSDPerMTokens    float64
 	CallUSDPerCall         float64
 	DurationUSDPerSecond   float64
+	ImagePricingJSON       string
 	Tiers                  []PublicModelPricingTier
 	// SchedulePeriods 是时段倍率；时间按服务器本地时区，ScheduleUTCOffsetMinutes 供客户端换算"当前生效"。
 	SchedulePeriods          []PublicSchedulePeriod

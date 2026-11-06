@@ -268,6 +268,20 @@ func isLegacyDefaultModelOptionAllowedPaths(value string) bool {
 		legacyInteractionsWithoutSummaries,
 		legacyCombinedDefault,
 	}
+	// Preserve recognition of each known historical default after adding the
+	// Image 2.6 paths. Only a complete matching default is migrated; custom
+	// allowlists and the independent denylist remain under administrator control.
+	beforeImage26Defaults := append([]map[string][]string{latestDefault}, previousDefaults...)
+	for _, defaults := range beforeImage26Defaults {
+		previous := cloneStringSliceMap(defaults)
+		for _, protocol := range []string{"openai_image_generations", "openai_image_edits"} {
+			for _, path := range []string{"complexity", "frame_count", "frame_duration_ms", "safety_identifier"} {
+				previous[protocol] = removeStringValue(previous[protocol], path)
+			}
+		}
+		previous["openai_image_edits"] = removeStringValue(previous["openai_image_edits"], "moderation")
+		previousDefaults = append(previousDefaults, previous)
+	}
 	for _, previousDefault := range previousDefaults {
 		if sameStringSliceMap(current, previousDefault) {
 			return true

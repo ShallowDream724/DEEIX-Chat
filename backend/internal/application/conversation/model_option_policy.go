@@ -282,7 +282,15 @@ func nativeProviderToolPayload(rawTool map[string]any, capability nativeToolCapa
 	// alone cannot distinguish OpenAI and DeepSeek web_search declarations.
 	for _, definition := range nativeToolDefinitionsByKey(capability.Key) {
 		if definition.Protocol == capability.Protocol {
-			return nativetool.CanonicalPayload(definition, payload)
+			canonical := nativetool.CanonicalPayload(definition, payload)
+			// Only the administrator's capability may choose the nested image
+			// model. A caller cannot substitute a model through options.tools.
+			if definition.Key == "openai.image_generation" && definition.Protocol == "openai_responses" {
+				if model := strings.TrimSpace(modelOptionStringValue(capability.Payload["model"])); model != "" {
+					canonical["model"] = model
+				}
+			}
+			return canonical
 		}
 	}
 	return payload
@@ -397,7 +405,7 @@ func nativeToolCapabilitiesFromConfig(raw string, protocolKey string) []nativeTo
 					Key:      key,
 					Protocol: textutil.FirstNonEmpty(protocol, definition.Protocol, protocolKey),
 					Type:     textutil.FirstNonEmpty(item.Type, definition.Type),
-					Payload:  nativetool.CanonicalPayload(definition, item.Payload),
+					Payload:  configuredNativeToolPayload(definition, item.Payload),
 				})
 			}
 			continue
@@ -462,11 +470,24 @@ func nativeToolCapabilitiesFromConfig(raw string, protocolKey string) []nativeTo
 				Key:      definition.Key,
 				Protocol: definition.Protocol,
 				Type:     definition.Type,
-				Payload:  nativetool.CanonicalPayload(definition, tool),
+				Payload:  configuredNativeToolPayload(definition, tool),
 			})
 		}
 	}
 	return capabilities
+}
+
+// Configured payloads come from administrator-owned model capabilities, unlike
+// per-message options. Keep the scoped image model without relaxing generic
+// denied keys such as headers, input, instructions or model for other tools.
+func configuredNativeToolPayload(definition nativetool.Definition, raw map[string]any) map[string]any {
+	payload := nativetool.CanonicalPayload(definition, raw)
+	if definition.Key == "openai.image_generation" && definition.Protocol == "openai_responses" {
+		if model := strings.TrimSpace(modelOptionStringValue(raw["model"])); model != "" {
+			payload["model"] = model
+		}
+	}
+	return payload
 }
 
 func nativeToolCapabilityProtocols(values []string, single string) []string {

@@ -47,6 +47,7 @@ type UpsertModelPricingRequest struct {
 	TieredPricingJSON       string   `json:"tieredPricingJSON,omitempty" binding:"max=20000"`
 	// SchedulePricingJSON 是时段倍率配置 {"periods":[{"name","weekdays","start","end","ratePercent"}]}，空表示不启用。
 	SchedulePricingJSON string `json:"schedulePricingJSON,omitempty" binding:"max=20000"`
+	ImagePricingJSON    string `json:"imagePricingJSON,omitempty" binding:"max=20000"`
 }
 
 // BillingConfigRequest 保存计费全局配置。
@@ -478,6 +479,7 @@ type ModelPricingResponse struct {
 	DurationUSDPerSecond        float64   `json:"durationUSDPerSecond"`
 	TieredPricingJSON           string    `json:"tieredPricingJSON"`
 	SchedulePricingJSON         string    `json:"schedulePricingJSON"`
+	ImagePricingJSON            string    `json:"imagePricingJSON"`
 	InputNanousdPerMTokens      int64     `json:"inputNanousdPerMTokens"`
 	CacheReadNanousdPerMTokens  int64     `json:"cacheReadNanousdPerMTokens"`
 	CacheWriteNanousdPerMTokens int64     `json:"cacheWriteNanousdPerMTokens"`
@@ -548,24 +550,26 @@ type BillingConfigResponse struct {
 
 // NativeToolPricingResponse 原生工具默认价格响应。
 type NativeToolPricingResponse struct {
-	Provider     string `json:"provider"`
-	ToolKey      string `json:"toolKey"`
-	Label        string `json:"label"`
-	Description  string `json:"description"`
-	Type         string `json:"type"`
-	PriceNanousd int64  `json:"priceNanousd"`
-	Unit         string `json:"unit"`
-	PriceLabel   string `json:"priceLabel"`
-	Billable     bool   `json:"billable"`
+	ImagePricingJSON string `json:"imagePricingJSON"`
+	Provider         string `json:"provider"`
+	ToolKey          string `json:"toolKey"`
+	Label            string `json:"label"`
+	Description      string `json:"description"`
+	Type             string `json:"type"`
+	PriceNanousd     int64  `json:"priceNanousd"`
+	Unit             string `json:"unit"`
+	PriceLabel       string `json:"priceLabel"`
+	Billable         bool   `json:"billable"`
 }
 
 // NativeToolPricingRequest 原生工具价格保存请求。
 type NativeToolPricingRequest struct {
-	ToolKey      string `json:"toolKey,omitempty"`
-	PriceNanousd int64  `json:"priceNanousd,omitempty"`
-	Unit         string `json:"unit,omitempty"`
-	PriceLabel   string `json:"priceLabel,omitempty"`
-	Billable     bool   `json:"billable,omitempty"`
+	ImagePricingJSON string `json:"imagePricingJSON,omitempty" binding:"max=20000"`
+	ToolKey          string `json:"toolKey,omitempty"`
+	PriceNanousd     int64  `json:"priceNanousd,omitempty"`
+	Unit             string `json:"unit,omitempty"`
+	PriceLabel       string `json:"priceLabel,omitempty"`
+	Billable         bool   `json:"billable,omitempty"`
 }
 
 // PaymentTypeResponse 支付类型响应。
@@ -747,15 +751,16 @@ func toNativeToolPricingResponses(items []appbilling.NativeToolPricingView) []Na
 	results := make([]NativeToolPricingResponse, 0, len(items))
 	for _, item := range items {
 		results = append(results, NativeToolPricingResponse{
-			Provider:     strings.TrimSpace(item.Provider),
-			ToolKey:      strings.TrimSpace(item.ToolKey),
-			Label:        strings.TrimSpace(item.Label),
-			Description:  strings.TrimSpace(item.Description),
-			Type:         strings.TrimSpace(item.Type),
-			PriceNanousd: item.PriceNanousd,
-			Unit:         strings.TrimSpace(item.Unit),
-			PriceLabel:   strings.TrimSpace(item.PriceLabel),
-			Billable:     item.Billable,
+			Provider:         strings.TrimSpace(item.Provider),
+			ToolKey:          strings.TrimSpace(item.ToolKey),
+			Label:            strings.TrimSpace(item.Label),
+			Description:      strings.TrimSpace(item.Description),
+			Type:             strings.TrimSpace(item.Type),
+			PriceNanousd:     item.PriceNanousd,
+			ImagePricingJSON: item.ImagePricingJSON,
+			Unit:             strings.TrimSpace(item.Unit),
+			PriceLabel:       strings.TrimSpace(item.PriceLabel),
+			Billable:         item.Billable,
 		})
 	}
 	return results
@@ -769,10 +774,11 @@ func nativeToolPricingOverridesFromRequests(items []NativeToolPricingRequest) ma
 			continue
 		}
 		overrides[key] = nativetool.PricingOverride{
-			PriceNanousd: item.PriceNanousd,
-			Unit:         strings.TrimSpace(item.Unit),
-			PriceLabel:   strings.TrimSpace(item.PriceLabel),
-			Billable:     item.Billable,
+			ImagePricingJSON: item.ImagePricingJSON,
+			PriceNanousd:     item.PriceNanousd,
+			Unit:             strings.TrimSpace(item.Unit),
+			PriceLabel:       strings.TrimSpace(item.PriceLabel),
+			Billable:         item.Billable,
 		}
 	}
 	return overrides
@@ -1157,6 +1163,7 @@ func toModelPricingResponse(item appbilling.ModelPricingView) ModelPricingRespon
 		DurationUSDPerSecond:        nanousdToUSD(item.DurationNanousdPerSecond),
 		TieredPricingJSON:           item.TieredPricingJSON,
 		SchedulePricingJSON:         item.SchedulePricingJSON,
+		ImagePricingJSON:            item.ImagePricingJSON,
 		InputNanousdPerMTokens:      item.InputNanousdPerMTokens,
 		CacheReadNanousdPerMTokens:  item.CacheReadNanousdPerMTokens,
 		CacheWriteNanousdPerMTokens: item.CacheWriteNanousdPerMTokens,
@@ -1183,6 +1190,7 @@ func modelPricingInputFromRequest(req UpsertModelPricingRequest) appbilling.Mode
 		DurationNanousdPerSecond:    usdToNanousd(*req.DurationUSDPerSecond),
 		TieredPricingJSON:           req.TieredPricingJSON,
 		SchedulePricingJSON:         req.SchedulePricingJSON,
+		ImagePricingJSON:            req.ImagePricingJSON,
 	}
 }
 

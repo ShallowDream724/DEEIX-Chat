@@ -40,6 +40,8 @@ import { normalizeSchedulePeriods, parseSchedulePricing, schedulePeriodsToForm }
 import { isRecord, parseJSON, type UnknownRecord } from "@/shared/lib/type-guards";
 import { BillingScheduleEditor } from "./billing-schedule-editor";
 import type { PermissionGroup } from "@/features/admin/api/permission-groups";
+import { imagePricingFromForm, imagePricingToForm, parseImagePricing } from "@/features/admin/model/image-pricing";
+import { BillingImagePricingEditor } from "./billing-image-pricing-editor";
 
 function pricingFormToJSON(form: PricingFormState): string {
   const pricingMode = normalizePricingMode(form.pricingMode);
@@ -57,6 +59,7 @@ function pricingFormToJSON(form: PricingFormState): string {
     durationUSDPerSecond: pricingMode === "duration" ? parsePrice(form.duration) : 0,
     ...(pricingMode === "tiered" ? { tieredPricing: parseJSON(stringifyTieredPricing(form.tieredTiers)) } : {}),
     ...(form.schedulePeriods.length > 0 ? { schedulePricing: { periods: normalizeSchedulePeriods(form.schedulePeriods).periods } } : {}),
+    ...(form.imagePricing ? { imagePricing: imagePricingFromForm(form.imagePricing) } : {}),
   };
   return JSON.stringify(payload, null, 2);
 }
@@ -78,7 +81,7 @@ function pricingFormFromJSON(
   current: PricingFormState,
   raw: string,
   durationPricingEnabled: boolean,
-  messages: { root: string; model: string; mode: string; durationVideoOnly: string; tiered: string; schedule: string },
+  messages: { root: string; model: string; mode: string; durationVideoOnly: string; tiered: string; schedule: string; image: string },
 ): PricingFormState {
   // Plain JSON.parse on purpose: a syntax error must propagate to the caller's error toast.
   const payload: unknown = JSON.parse(raw);
@@ -97,6 +100,8 @@ function pricingFormFromJSON(
     throw new Error(messages.durationVideoOnly);
   }
   const cacheWritePriceBasis = payload.cacheWritePriceBasis;
+  const imagePricing = parseImagePricing(payload.imagePricing ?? payload.imagePricingJSON);
+  if (imagePricing === undefined) throw new Error(messages.image);
   if (cacheWritePriceBasis !== undefined && cacheWritePriceBasis !== "direct" && cacheWritePriceBasis !== "anthropic_5m") {
     throw new Error(messages.root);
   }
@@ -104,6 +109,7 @@ function pricingFormFromJSON(
     ...current,
     pricingMode,
     cacheWritePriceBasis,
+    imagePricing: imagePricingToForm(imagePricing),
     isFree: typeof payload.isFree === "boolean" ? payload.isFree : current.isFree,
     input: pricingMode === "token" ? readPricingNumber(payload, "inputUSDPerMTokens") : "0",
     cacheRead: pricingMode === "token" ? readPricingNumber(payload, "cacheReadUSDPerMTokens") : "0",
@@ -308,6 +314,7 @@ export function PricingBillingDialog({
         durationVideoOnly: t("modelPricing.jsonErrors.durationVideoOnly"),
         tiered: t("modelPricing.jsonErrors.tiered"),
         schedule: t("modelPricing.jsonErrors.schedule"),
+        image: t("modelPricing.jsonErrors.image"),
       });
       setJSONError("");
       setForm(nextForm);
@@ -402,6 +409,8 @@ export function PricingBillingDialog({
 
                     {form.pricingMode === "token" ? (
                       <>
+                        <BillingImagePricingEditor value={form.imagePricing} onChange={(imagePricing) => setForm({ ...form, imagePricing })} disabled={saving} />
+                        {!form.imagePricing ? <>
                         <div className="grid grid-cols-2 gap-5">
                           <div className="space-y-1">
                             <p className="text-xs text-muted-foreground">{t("modelPricing.inputPerM")}</p>
@@ -423,6 +432,7 @@ export function PricingBillingDialog({
                             <Input value={form.cacheWrite} type="number" min="0" step="0.000001" onChange={(event) => setForm({ ...form, cacheWrite: event.target.value })} />
                           </div>
                         </div>
+                        </> : null}
                       </>
                     ) : null}
 
@@ -566,7 +576,7 @@ export function PricingBillingDialog({
               <Button type="button" variant="ghost" onClick={onCancel} disabled={saving}>
                 {tActions("cancel")}
               </Button>
-              <Button type="submit" disabled={saving || Boolean(jsonError)}>
+              <Button type="submit" disabled={saving || Boolean(jsonError) || Boolean(form?.pricingMode === "token" && imagePricingFromForm(form.imagePricing) === undefined)}>
                 {saving ? <SpinnerLabel>{tActions("saving")}</SpinnerLabel> : tActions("save")}
               </Button>
             </DialogFooter>
