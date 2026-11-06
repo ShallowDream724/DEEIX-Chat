@@ -1,6 +1,6 @@
 # OpenAI 图像与动画适配
 
-核对日期：2026-11-06。本批仅本地验证，未执行收费 OpenAI 请求，也未发布生产镜像。
+核对日期：2026-11-06。本批已随源码 `766dded7` 发布至 `ghcr.io/shallowdream724/deeix-chat:latest`（linux/amd64），[构建与容器检查通过](https://github.com/ShallowDream724/DEEIX-Chat/actions/runs/42215193509)。未执行收费 OpenAI 请求；真实动图生成/编辑、下载字节及分项账单由生产账号验证。
 
 ## 协议和产物
 
