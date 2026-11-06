@@ -420,6 +420,11 @@ func (r *messageGenerationRunner) generate(ctx context.Context, currentInput llm
 	}
 	defer releaseTransport()
 	currentInput = transportInput
+	// Attachment/context preparation ends at dispatch, not at the first visible
+	// upstream token. Heartbeats and parser buffering must not keep it spinning.
+	if r.traceRecorder != nil {
+		r.traceRecorder.completeProcess()
+	}
 	call := &generationCall{
 		runner:              r,
 		observation:         &generationAttemptObservation{},

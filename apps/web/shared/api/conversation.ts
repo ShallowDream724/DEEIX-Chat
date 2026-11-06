@@ -60,6 +60,7 @@ import type {
   UpdateMessageRequest,
 } from "@/shared/api/conversation-types";
 import { ApiError, apiRequest, pathParam } from "@/shared/api/http-client";
+import { ConversationStreamDisconnectedError } from "@/shared/api/conversation-stream-error";
 import {
   isOneOf,
   isRecord,
@@ -197,8 +198,8 @@ function isStreamMessageEvent(value: unknown): value is StreamMessageEvent {
   return isRecord(value) && isStreamMessageEventType(value.type);
 }
 
-// An event type this client does not know. It ends the stream with an ApiError, exactly like the
-// `error` fallthrough in handleStreamEvent, but never reaches the typed per-event callbacks.
+// An event type this client does not know. It cannot establish a generation
+// failure and never reaches the typed per-event callbacks.
 type UnrecognizedStreamEvent = {
   type: "unrecognized";
   seq?: number;
@@ -214,7 +215,7 @@ type ParsedStreamEvent = StreamMessageEvent | UnrecognizedStreamEvent;
 
 function normalizeStreamEvent(rawEvent: unknown): ParsedStreamEvent {
   if (!isRecord(rawEvent)) {
-    throw new ApiError("stream event is invalid", 500);
+    throw new ConversationStreamDisconnectedError(true);
   }
 
   if (!isStreamMessageEvent(rawEvent)) {
@@ -318,6 +319,9 @@ function extractJSONDocuments(source: string): { documents: string[]; remainder:
   };
 }
 
+/** An explicit generation failure from the stream, distinct from a failed resume HTTP request. */
+export class ConversationStreamServerError extends ApiError {}
+
 function handleStreamEvent(event: ParsedStreamEvent, options: ConversationStreamOptions, responseStatus: number): SendMessageResult | null {
   const seq = streamEventSeq(event);
   if (seq > 0) {
@@ -403,7 +407,8 @@ function handleStreamEvent(event: ParsedStreamEvent, options: ConversationStream
     }
   }
 
-  throw new ApiError(
+  if (event.type === "unrecognized") throw new ConversationStreamDisconnectedError(true);
+  throw new ConversationStreamServerError(
     event.message || "stream failed",
     event.status ?? responseStatus,
     event.details ?? event.debug,
@@ -664,11 +669,13 @@ export async function createConversation(
 export async function getConversation(
   accessToken: string,
   conversationPublicID: string,
+  signal?: AbortSignal,
 ): Promise<ConversationDTO> {
   return authedRequest<ConversationDTO>(
     `/api/v1/conversations/${pathParam(conversationPublicID)}`,
     {
       accessToken,
+      signal,
     },
     true,
   );
@@ -1358,6 +1365,11 @@ async function readConversationStream(
 
     for (const document of documents) {
       consumeEvent(normalizeStreamEvent(JSON.parse(document)));
+      if (completed || moderationBlocked) {
+        // Terminal authority wins over a later connection reset or truncated tail.
+        void reader.cancel().catch(() => undefined);
+        return { completed, moderationBlocked };
+      }
     }
 
     if (done) {
@@ -1398,18 +1410,38 @@ async function postMessageStreamRequest(
   cache?: RequestCache,
 ): Promise<SendMessageResult> {
   const { signal, ...requestWithoutSignal } = request;
-  const response = await authedFetch(endpoint, {
-    ...requestWithoutSignal,
-    accessToken,
-    signal: signal ?? undefined,
-    cache,
-  }, true);
-
-  if (!response.body) {
-    throw new ApiError("stream body is empty", response.status);
+  let response: Response;
+  try {
+    response = await authedFetch(endpoint, {
+      ...requestWithoutSignal,
+      accessToken,
+      signal: signal ?? undefined,
+      cache,
+    }, true);
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    if (error instanceof ApiError) {
+      // Proxies can terminate the HTTP wait while the detached worker keeps
+      // running. DEEIX application rejections carry an errorCode; a bare gateway
+      // timeout (including CDN HTML) cannot establish generation failure.
+      const uncertainGateway = !error.errorCode?.trim() && [408, 502, 504, 520, 521, 522, 523, 524].includes(error.status);
+      if (!uncertainGateway) throw error;
+    }
+    throw new ConversationStreamDisconnectedError(false, { cause: error });
   }
 
-  const { completed, moderationBlocked } = await readConversationStream(response, options);
+  if (!response.body) {
+    throw new ConversationStreamDisconnectedError(true);
+  }
+
+  let streamResult: StreamReadResult;
+  try {
+    streamResult = await readConversationStream(response, options);
+  } catch (error) {
+    if (error instanceof ApiError || signal?.aborted) throw error;
+    throw new ConversationStreamDisconnectedError(true, { cause: error });
+  }
+  const { completed, moderationBlocked } = streamResult;
   if (moderationBlocked) {
     throw new ApiError(
       "content blocked by moderation",
@@ -1425,7 +1457,7 @@ async function postMessageStreamRequest(
   if (completed) {
     return completed;
   }
-  throw new ApiError("stream completed without final payload", response.status);
+  throw new ConversationStreamDisconnectedError(true);
 }
 
 async function postConversationStream<TPayload>(

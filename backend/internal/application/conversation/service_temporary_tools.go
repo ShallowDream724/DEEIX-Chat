@@ -82,6 +82,9 @@ func (s *Service) runTemporaryGeneration(ctx context.Context, input temporaryGen
 		}
 		defer releaseTransport()
 		currentInput = transportInput
+		if traceRecorder != nil {
+			traceRecorder.completeProcess()
+		}
 		var observedUsage llm.Usage
 		llmCallCount++
 		output, err := s.llmClient.GenerateStream(ctx, routeConfig, currentInput, func(event llm.GenerateStreamEvent) error {

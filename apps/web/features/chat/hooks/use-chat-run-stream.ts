@@ -9,6 +9,7 @@ import type { ChatSubmitTask } from "@/features/chat/model/chat-task";
 import { buildMediaImagePreviewMarkdown } from "@/features/chat/model/media-image-preview";
 import { mergeProcessTraceSnapshot, toPendingProcessTrace } from "@/features/chat/model/message-submit";
 import { settleCompletedExchange } from "@/features/chat/model/message-submit-exchange";
+import { recoverSubmittedRun, SubmissionRecoveryError } from "@/features/chat/model/message-submit-recovery";
 import {
   resolveMediaStatusLabel,
   resolveVideoExtensionOptions,
@@ -16,12 +17,17 @@ import {
 import type { PendingAttachment, PendingExchange } from "@/features/chat/types/chat-runtime";
 import {
   type ConversationStreamOptions,
+  ConversationStreamServerError,
+  getConversationRunStatuses,
+  resumeMessageGenerationStream,
   streamMessage as streamConversationMessage,
   streamImageEdit,
   streamImageGeneration,
   streamVideoExtension,
   streamVideoGeneration,
 } from "@/shared/api/conversation";
+import { ConversationStreamDisconnectedError } from "@/shared/api/conversation-stream-error";
+import { ApiError } from "@/shared/api/http-client";
 import type {
   ConversationOptions,
   MediaImageRequest,
@@ -84,6 +90,7 @@ export function useChatRunStream({
       branchReason,
       assistantOnlyBranch,
       signal,
+      shouldNotify,
     }: {
       token: string;
       conversationID: string;
@@ -105,6 +112,7 @@ export function useChatRunStream({
       branchReason: "default" | "retry" | "edit";
       assistantOnlyBranch: boolean;
       signal: AbortSignal;
+      shouldNotify: () => boolean;
     }): Promise<SendMessageResult> => {
       let terminalStreamError: Extract<StreamMessageEvent, { type: "error" }> | null = null;
       const streamOptions: ConversationStreamOptions = {
@@ -232,9 +240,11 @@ export function useChatRunStream({
                 .join("\n"),
             },
           }));
-          toast.error(t("moderationBlocked"), {
-            description: t("moderationBlockedDescription"),
-          });
+          if (shouldNotify()) {
+            toast.error(t("moderationBlocked"), {
+              description: t("moderationBlockedDescription"),
+            });
+          }
         },
       };
 
@@ -252,6 +262,7 @@ export function useChatRunStream({
         branchReason,
       };
       let completed: SendMessageResult;
+      try {
       if (submitTask === "chat") {
         const chatPayload: SendMessageRequest = {
           ...commonStreamPayload,
@@ -298,6 +309,26 @@ export function useChatRunStream({
           submitTask === "image_generation"
             ? await streamImageGeneration(token, conversationID, mediaPayload, streamOptions)
             : await streamImageEdit(token, conversationID, mediaPayload, streamOptions);
+      }
+      } catch (error) {
+        if (!(error instanceof ConversationStreamDisconnectedError) || signal.aborted) throw error;
+        const recovery = await recoverSubmittedRun({
+          accepted: error.accepted,
+          signal,
+          queryStatus: async (querySignal) => {
+            const statuses = await getConversationRunStatuses(token, [clientRunID], querySignal);
+            return statuses.find((item) => item.runID === clientRunID)?.status;
+          },
+          readResult: (querySignal) => resumeMessageGenerationStream(token, clientRunID, {
+            signal: querySignal,
+            onInterrupted: streamOptions.onInterrupted,
+            onModerationBlocked: streamOptions.onModerationBlocked,
+          }),
+          isTerminalError: (recoveryError) => recoveryError instanceof ConversationStreamServerError ||
+            (recoveryError instanceof ApiError && recoveryError.errorCode === "content_moderation.blocked"),
+        });
+        if (recovery.kind !== "completed") throw new SubmissionRecoveryError(recovery, { cause: error });
+        completed = recovery.result;
       }
 
       flushStreamTextNow(exchangeKey);

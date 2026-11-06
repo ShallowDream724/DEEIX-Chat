@@ -173,6 +173,22 @@ export function abortPendingExchange(current: PendingExchange, clientRunID: stri
   };
 }
 
+export function detachPendingExchange(
+  current: PendingExchange,
+  activityLabel: string,
+  unconfirmedAlert?: { title: string; message: string },
+): PendingExchange {
+  return {
+    ...current,
+    assistantPending: !unconfirmedAlert,
+    assistantStreaming: false,
+    assistantFileProc: false,
+    assistantActivityLabel: unconfirmedAlert ? undefined : activityLabel,
+    assistantStatus: unconfirmedAlert ? undefined : "pending",
+    assistantInlineAlert: unconfirmedAlert,
+  };
+}
+
 export function failPendingExchange(
   current: PendingExchange,
   params: {
@@ -226,17 +242,16 @@ export function collectSettledExchanges(
       completedKeys.push(exchangeKey);
       continue;
     }
-    if (exchange.assistantPending || !exchange.runID?.trim()) {
+    if (exchange.assistantStreaming || !exchange.runID?.trim()) {
       continue;
     }
+    // Once detached, persisted state owns pending/resume as well as terminal state.
+    // Keeping the optimistic copy would mask resumed snapshots and terminal results.
     const serverAssistant = combinedMessages.find(
       (item) =>
         item.role === "assistant" &&
         item.runID === exchange.runID &&
-        serverMessagePublicIDs.has(item.publicID) &&
-        !item.isPending &&
-        !item.isStreaming &&
-        item.status !== "pending",
+        serverMessagePublicIDs.has(item.publicID),
     );
     if (!serverAssistant?.parentPublicID) {
       continue;

@@ -33,7 +33,7 @@ import { useChatElapsedDurationMS } from "@/features/chat/hooks/use-chat-elapsed
 import {
   durationBetweenMS,
   formatDurationMS,
-  sumDurationsMS,
+  timelineDurationMS,
 } from "@/features/chat/model/duration";
 import type { TraceDisplayEvent } from "@/features/chat/model/message-process-trace";
 
@@ -256,9 +256,7 @@ function groupTraceDisplayEvents(
 }
 
 function thinkEventDurationMS(thinkEvents: TraceDisplayEvent[]): number | undefined {
-  return sumDurationsMS(
-    thinkEvents.map(({ event }) => durationBetweenMS(event.startedAt, event.endedAt)),
-  );
+  return timelineDurationMS(thinkEvents.map(({ event }) => event));
 }
 
 type TraceTimelineItem =
@@ -482,9 +480,11 @@ export function MessageAgentTrace({
 
   const renderedToolSteps = items.flatMap((item) => (item.kind === "tool" ? [item.step] : []));
   const thinkRounds = items.filter((item) => item.kind === "think").length;
-  const traceDurationMS = sumDurationsMS(
-    items.map((item) => (item.kind === "think" ? item.durationMS : item.step.latencyMS)),
-  );
+  const traceDurationMS = timelineDurationMS([
+    ...displayEvents.map(({ event }) => event),
+    ...(activeThinkBlock ? [activeThinkBlock] : []),
+    ...(activeToolBlock ? [activeToolBlock] : []),
+  ]);
   const durationText = traceRunActive ? undefined : formatDurationMS(traceDurationMS);
 
   const subtitleParts: string[] = [];

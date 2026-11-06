@@ -44,10 +44,12 @@ import {
 import {
   abortPendingExchange,
   createInitialPendingExchange,
+  detachPendingExchange,
   failPendingExchange,
 } from "@/features/chat/model/message-submit-exchange";
 import { resolveSubmitBlockDescription } from "@/features/chat/model/message-submit-media";
 import { planChatSubmission } from "@/features/chat/model/message-submit-plan";
+import { SubmissionRecoveryError } from "@/features/chat/model/message-submit-recovery";
 import type {
   ChatModelOption,
   PendingAttachment,
@@ -95,6 +97,7 @@ export function useChatMessageSubmit({
   uploading,
   restoreDraftOnFailure,
   autoGenerateLabels,
+  autoGenerateTitle,
   prependNewConversation,
   onConversationCreated,
   onConversationForked,
@@ -151,6 +154,7 @@ export function useChatMessageSubmit({
   uploading: boolean;
   restoreDraftOnFailure: boolean;
   autoGenerateLabels: boolean;
+  autoGenerateTitle: boolean;
   prependNewConversation: (platformModelName: string) => Promise<ConversationDTO | null | undefined>;
   onConversationCreated?: (conversationPublicID: string) => void;
   onConversationForked?: (conversation: ConversationDTO) => Promise<void> | void;
@@ -446,6 +450,7 @@ export function useChatMessageSubmit({
               result,
               autoGenerateLabels,
               metadataFallbackTitle,
+              autoGenerateTitle,
             )
           ) {
             return;
@@ -458,6 +463,7 @@ export function useChatMessageSubmit({
             autoGenerateLabels,
             metadataFallbackTitle,
             touchByPublicID,
+            autoGenerateTitle,
           )
             .catch(() => {
               // Metadata refresh failure does not affect this turn; the next list load will fetch server state.
@@ -581,6 +587,13 @@ export function useChatMessageSubmit({
           branchReason: plan.branchReason,
           assistantOnlyBranch,
           signal: streamAbortController.signal,
+          shouldNotify: () => document.visibilityState === "visible" && window.location.pathname.replace(/\/+$/, "") === "/chat" && branchRunIsVisible(
+            targetBranchScope,
+            clientRunID,
+            conversationScopeKeyRef.current,
+            visibleBranchScopePathRef.current,
+            visibleMessagesRef.current,
+          ),
         });
 
         terminalResultReceived = true;
@@ -706,12 +719,28 @@ export function useChatMessageSubmit({
         if (error instanceof ApiError && error.errorCode === "content_moderation.blocked") {
           // UI already updated via onModerationBlocked; settle as a soft block with retry.
           shouldKeepConversationLayout = true;
+          terminalResultReceived = true;
           releaseAttachments(currentAttachments);
           if (conversationScopeKeyRef.current === targetConversationScopeKey) {
             reload();
           }
           return false;
         }
+        if (error instanceof SubmissionRecoveryError) {
+          shouldKeepConversationLayout = true;
+          releaseAttachments(currentAttachments);
+          const unconfirmed = error.recovery.kind === "unconfirmed";
+          updatePendingExchange(exchangeKey, (current) => detachPendingExchange(
+            current,
+            t("recoveryPending"),
+            unconfirmed ? { title: t("recoveryUnconfirmed"), message: t("recoveryUnconfirmedDescription") } : undefined,
+          ));
+          if (conversationScopeKeyRef.current === targetConversationScopeKey) reload();
+          return false;
+        }
+        // Rejections and explicit server failures are terminal; only transport
+        // uncertainty above belongs to the detached reconciliation lifecycle.
+        terminalResultReceived = true;
         const errorMessage = resolveErrorReason(error, t("retryLater"));
         const errorDetails = resolveErrorDetails(error);
         const errorSummary = resolveErrorSummary(error, t("retryLater"));
@@ -738,7 +767,7 @@ export function useChatMessageSubmit({
         const inputLimits = getInputLimitReasons(error);
         if (inputLimits.length > 0) {
           if (runVisible) onInputLimit(inputLimits);
-        } else {
+        } else if (runVisible && document.visibilityState === "visible" && window.location.pathname.replace(/\/+$/, "") === "/chat") {
           toast.error(t("sendFailed"), { description: errorSummary });
         }
         if (targetConversationID) {
@@ -768,9 +797,8 @@ export function useChatMessageSubmit({
         }
         activeGenerationRunsRef?.current.delete(clientRunID);
         if (terminalResultReceived) {
-          // A resolved stream already has an authoritative terminal result.
-          // Settle locally as a fallback even if the final SSE callback was
-          // missed; only uncertain disconnects should remain detached.
+          // Completed results and explicit rejections settle locally even if
+          // a final SSE callback was missed. Uncertain transport stays detached.
           onConversationRunFinished?.(clientRunID);
         } else {
           onConversationRunDetached?.(clientRunID);
@@ -796,6 +824,7 @@ export function useChatMessageSubmit({
     [
       activeGenerationRunsRef,
       autoGenerateLabels,
+      autoGenerateTitle,
       collectUIStates,
       combinedMessages,
       flushStreamTextNow,

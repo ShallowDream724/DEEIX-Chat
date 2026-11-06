@@ -1,10 +1,15 @@
 import { getConversation } from "@/shared/api/conversation";
 import type { ConversationDTO, SendMessageResult } from "@/shared/api/conversation-types";
+import { ApiError } from "@/shared/api/http-client";
 
-const CONVERSATION_METADATA_REFRESH_MAX_WAIT_MS = 45_000;
+// Title and labels have independent bounded backend attempts. Do not stop
+// observing after 45 seconds while their first 90-second attempt is still live.
+const CONVERSATION_METADATA_REFRESH_MAX_WAIT_MS = 10 * 60_000;
+const CONVERSATION_METADATA_REFRESH_MAX_READS = 48;
 const CONVERSATION_METADATA_REFRESH_INITIAL_DELAY_MS = 800;
-const CONVERSATION_METADATA_REFRESH_MAX_DELAY_MS = 5_000;
+const CONVERSATION_METADATA_REFRESH_MAX_DELAY_MS = 15_000;
 const CONVERSATION_METADATA_REFRESH_BACKOFF = 1.5;
+const metadataRefreshes = new Map<string, Promise<void>>();
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -39,11 +44,13 @@ function hasPendingGeneratedConversationMetadata(
   item: ConversationDTO | null,
   autoGenerateLabels: boolean,
   fallbackTitle = "",
+  autoGenerateTitle = true,
 ): boolean {
+  if (!autoGenerateTitle && !autoGenerateLabels) return false;
   return (
     !item ||
-    isPlaceholderConversationTitle(item.title) ||
-    isFallbackConversationTitle(item.title, fallbackTitle) ||
+    (autoGenerateTitle && (isPlaceholderConversationTitle(item.title) ||
+    isFallbackConversationTitle(item.title, fallbackTitle))) ||
     (autoGenerateLabels && normalizeLabelsJSON(item.labelsJSON) === "[]")
   );
 }
@@ -65,8 +72,9 @@ export function shouldPollGeneratedConversationMetadata(
   result: SendMessageResult | null | undefined,
   autoGenerateLabels: boolean,
   fallbackTitle = "",
+  autoGenerateTitle = true,
 ): boolean {
-  if (!hasPendingGeneratedConversationMetadata(item, autoGenerateLabels, fallbackTitle)) {
+  if (!hasPendingGeneratedConversationMetadata(item, autoGenerateLabels, fallbackTitle, autoGenerateTitle)) {
     return false;
   }
   const hint = result?.metadataRefreshHint?.trim();
@@ -76,40 +84,54 @@ export function shouldPollGeneratedConversationMetadata(
   return hint === "pending";
 }
 
-export async function refreshGeneratedConversationMetadata(
+export function refreshGeneratedConversationMetadata(
   accessToken: string,
   conversationPublicID: string,
   previous: ConversationDTO | null,
   autoGenerateLabels: boolean,
   fallbackTitle: string,
   touchByPublicID: (publicID: string, patch: Partial<ConversationDTO>) => void,
+  autoGenerateTitle = true,
 ): Promise<void> {
-  let elapsedMS = 0;
+  const key = `${accessToken}\0${conversationPublicID}`;
+  const current = metadataRefreshes.get(key);
+  if (current) return current;
+  const refresh = pollGeneratedConversationMetadata(accessToken, conversationPublicID, previous, autoGenerateLabels, fallbackTitle, touchByPublicID, autoGenerateTitle)
+    .finally(() => { if (metadataRefreshes.get(key) === refresh) metadataRefreshes.delete(key); });
+  metadataRefreshes.set(key, refresh);
+  return refresh;
+}
+
+async function pollGeneratedConversationMetadata(
+  accessToken: string,
+  conversationPublicID: string,
+  previous: ConversationDTO | null,
+  autoGenerateLabels: boolean,
+  fallbackTitle: string,
+  touchByPublicID: (publicID: string, patch: Partial<ConversationDTO>) => void,
+  autoGenerateTitle: boolean,
+): Promise<void> {
+  const deadline = Date.now() + CONVERSATION_METADATA_REFRESH_MAX_WAIT_MS;
   let delayMS = CONVERSATION_METADATA_REFRESH_INITIAL_DELAY_MS;
   let current = previous;
 
-  while (elapsedMS < CONVERSATION_METADATA_REFRESH_MAX_WAIT_MS) {
-    const nextDelayMS = Math.min(delayMS, CONVERSATION_METADATA_REFRESH_MAX_WAIT_MS - elapsedMS);
+  for (let reads = 0; reads < CONVERSATION_METADATA_REFRESH_MAX_READS && Date.now() < deadline; reads += 1) {
+    const nextDelayMS = Math.min(delayMS, deadline - Date.now());
     await sleep(nextDelayMS);
-    elapsedMS += nextDelayMS;
+    if (Date.now() >= deadline) return;
+    delayMS = Math.min(Math.round(delayMS * CONVERSATION_METADATA_REFRESH_BACKOFF), CONVERSATION_METADATA_REFRESH_MAX_DELAY_MS);
 
     let latest: ConversationDTO;
     try {
-      latest = await getConversation(accessToken, conversationPublicID);
-    } catch {
+      latest = await getConversation(accessToken, conversationPublicID, AbortSignal.timeout(Math.max(1, Math.min(5000, deadline - Date.now()))));
+    } catch (error) {
+      if (error instanceof ApiError && [401, 403, 404].includes(error.status)) return;
       continue;
     }
     if (hasGeneratedConversationMetadataChanged(current, latest)) {
       touchByPublicID(conversationPublicID, latest);
       current = latest;
-      if (!hasPendingGeneratedConversationMetadata(latest, autoGenerateLabels, fallbackTitle)) {
-        return;
-      }
     }
-
-    delayMS = Math.min(
-      Math.round(delayMS * CONVERSATION_METADATA_REFRESH_BACKOFF),
-      CONVERSATION_METADATA_REFRESH_MAX_DELAY_MS,
-    );
+    if (!hasPendingGeneratedConversationMetadata(latest, autoGenerateLabels, fallbackTitle, autoGenerateTitle)) return;
   }
 }

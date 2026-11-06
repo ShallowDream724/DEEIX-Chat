@@ -35,6 +35,24 @@ export function sumDurationsMS(values: Iterable<DurationMS>): number | undefined
   return validDurationMS(totalMS);
 }
 
+// Wall-clock duration of a complete observed timeline. Summing child durations
+// double-counts parallel calls/replayed snapshots; missing timestamps do not
+// provide enough evidence for a total, so individual timings remain separate.
+export function timelineDurationMS(
+  values: Iterable<{ startedAt?: string; endedAt?: string }>,
+): number | undefined {
+  let start = Number.POSITIVE_INFINITY;
+  let end = Number.NEGATIVE_INFINITY;
+  for (const value of values) {
+    const itemStart = value.startedAt ? Date.parse(value.startedAt) : Number.NaN;
+    const itemEnd = value.endedAt ? Date.parse(value.endedAt) : Number.NaN;
+    if (!Number.isFinite(itemStart) || !Number.isFinite(itemEnd) || itemEnd < itemStart) return undefined;
+    start = Math.min(start, itemStart);
+    end = Math.max(end, itemEnd);
+  }
+  return validDurationMS(end - start);
+}
+
 export function formatDurationMS(value: DurationMS): string | undefined {
   const durationMS = validDurationMS(value);
   if (durationMS === undefined) {

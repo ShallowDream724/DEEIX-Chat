@@ -110,6 +110,7 @@ export function useChatRuntime({
   uploading,
   restoreDraftOnFailure,
   autoGenerateLabels,
+  autoGenerateTitle,
   prependNewConversation,
   onConversationCreated,
   onConversationForked,
@@ -150,6 +151,7 @@ export function useChatRuntime({
   uploading: boolean;
   restoreDraftOnFailure: boolean;
   autoGenerateLabels: boolean;
+  autoGenerateTitle: boolean;
   prependNewConversation: (platformModelName: string) => Promise<ConversationDTO | null | undefined>;
   onConversationCreated?: (conversationPublicID: string) => void;
   onConversationForked?: (conversation: ConversationDTO) => Promise<void> | void;
@@ -233,6 +235,7 @@ export function useChatRuntime({
     uploading,
     restoreDraftOnFailure,
     autoGenerateLabels,
+    autoGenerateTitle,
     prependNewConversation,
     onConversationCreated,
     onConversationForked,

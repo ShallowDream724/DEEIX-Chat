@@ -437,7 +437,7 @@ export function ChatMessageBot({
           <AssistantImageGenerationSkeleton label={item.activityLabel} aspectRatio={item.imageAspectRatio} />
         ) : isVideoGenerationLoading && !item.inlineAlert ? (
           <AssistantVideoGenerationSkeleton label={item.activityLabel} />
-        ) : item.isStreaming && !hasStreamdownContent && !item.inlineAlert ? (
+        ) : (item.isPending || item.isStreaming) && !hasStreamdownContent && !item.inlineAlert ? (
           <AssistantMessageSkeleton fileProc={item.isFileProc} label={item.activityLabel} />
         ) : leadingImagePending ? (
           <AssistantImageGenerationSkeleton label={leadingImageAlt} aspectRatio={item.imageAspectRatio} />
@@ -631,7 +631,7 @@ function ChatInlineAlertErrorId({ errorId }: { errorId: string }) {
 
 export function AssistantMessageSkeleton({ fileProc, label }: { fileProc?: boolean; label?: string } = {}) {
   const t = useTranslations("chat.messages");
-  if (fileProc) {
+  if (fileProc || label?.trim()) {
     return (
       <div className="flex items-center gap-2 pt-1 text-[13px] text-muted-foreground">
         <span className="inline-block size-3.5 animate-spin rounded-full border-2 border-muted border-t-foreground/50" />

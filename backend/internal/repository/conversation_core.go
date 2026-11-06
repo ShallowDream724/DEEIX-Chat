@@ -59,6 +59,9 @@ type ConversationForkRepository interface {
 type ConversationMetadataPatch struct {
 	Title             string
 	ReplaceableTitles []string
+	// ExpectedTitle atomically preserves a title changed while an automatic request was in flight.
+	// Nil preserves legacy placeholder updates; unrelated conversation writes do not invalidate it.
+	ExpectedTitle *string
 }
 
 // ConversationListInput 描述用户会话列表的分页与筛选条件。

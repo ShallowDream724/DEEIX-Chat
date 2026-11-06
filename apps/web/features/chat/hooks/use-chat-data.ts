@@ -4,9 +4,12 @@ import { useTranslations } from "next-intl";
 import * as React from "react";
 import { buildMediaImagePreviewMarkdown } from "@/features/chat/model/media-image-preview";
 import { mergeProcessTraceSnapshot } from "@/features/chat/model/message-submit";
+import { RecoveredGenerationTracker, resumeFallbackPollingDelay, resumeWithRecovery } from "@/features/chat/model/message-submit-recovery";
 import { upsertLiveUpstreamThinkTrace } from "@/features/chat/model/upstream-think-store";
-import { cancelMessageGeneration, listMessagesPage, resumeMessageGenerationStream } from "@/shared/api/conversation";
-import type { MessageDTO } from "@/shared/api/conversation-types";
+import { cancelMessageGeneration, ConversationStreamServerError, listMessagesPage, resumeMessageGenerationStream } from "@/shared/api/conversation";
+import { ConversationStreamDisconnectedError } from "@/shared/api/conversation-stream-error";
+import { ApiError } from "@/shared/api/http-client";
+import type { MessageDTO, SendMessageResult } from "@/shared/api/conversation-types";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 
 // The first page covers recent turns; older ones load as the user scrolls up.
@@ -34,10 +37,12 @@ export function useChatData(
     activeGenerationRunsRef,
     activeGenerationRunsRevision = 0,
     onConversationRunFinished,
+    onRecoveredGenerationCompleted,
   }: {
     activeGenerationRunsRef?: React.RefObject<Set<string>>;
     activeGenerationRunsRevision?: number;
     onConversationRunFinished?: (runID: string) => void;
+    onRecoveredGenerationCompleted?: (accessToken: string, conversationPublicID: string, result: SendMessageResult) => void;
   } = {},
 ) {
   const t = useTranslations("chat.data");
@@ -52,6 +57,11 @@ export function useChatData(
     hasOlder: false,
   });
   const [reloadToken, setReloadToken] = React.useState(0);
+  const [loadCompletionRevision, setLoadCompletionRevision] = React.useState(0);
+  const [resumeRetryToken, setResumeRetryToken] = React.useState(0);
+  const [resumeAuthBlockedRunID, setResumeAuthBlockedRunID] = React.useState("");
+  const [resumeFallbackRunID, setResumeFallbackRunID] = React.useState("");
+  const fallbackPollAttemptsRef = React.useRef({ runID: "", attempts: 0 });
   const [resumingRunID, setResumingRunID] = React.useState("");
   const [resumingActivityLabel, setResumingActivityLabel] = React.useState("");
   const stateRef = React.useRef(state);
@@ -61,6 +71,9 @@ export function useChatData(
   const pendingAssistantContentRef = React.useRef("");
   const resumedTextByRunRef = React.useRef<Record<string, string>>({});
   const activeResumeStreamRef = React.useRef<ActiveResumeStream | null>(null);
+  const recoveredRunsRef = React.useRef(new RecoveredGenerationTracker());
+  const recoveredCompletionRef = React.useRef(onRecoveredGenerationCompleted);
+  recoveredCompletionRef.current = onRecoveredGenerationCompleted;
   // The resume cursor is only valid while its visible content is retained; both must be cleared together.
   const clearResumeCheckpoint = React.useCallback((runID: string) => {
     const normalizedRunID = runID.trim();
@@ -126,6 +139,11 @@ export function useChatData(
           return;
         }
 
+        const recovered = recoveredRunsRef.current.collect(data.results, activeGenerationRunsRef?.current);
+        for (const completed of recovered) {
+          recoveredCompletionRef.current?.(token, conversationID, completed);
+        }
+
         setState((prev) => {
           const firstTailMessageID = data.results[0]?.id ?? 0;
           // Keep the old range only if extra history pages were loaded, so ordinary reloads don't accumulate tail messages indefinitely.
@@ -155,6 +173,8 @@ export function useChatData(
             errorMsg: t("loadFailed"),
           }));
         }
+      } finally {
+        if (!cancelled) setLoadCompletionRevision((current) => current + 1);
       }
     }
 
@@ -162,11 +182,36 @@ export function useChatData(
     return () => {
       cancelled = true;
     };
-  }, [conversationID, reloadToken, t]);
+  }, [activeGenerationRunsRef, conversationID, reloadToken, t]);
 
   const reload = React.useCallback(() => {
     setReloadToken((prev) => prev + 1);
   }, []);
+
+  React.useEffect(() => {
+    if (!conversationID) return;
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        reload();
+        setResumeAuthBlockedRunID("");
+        setResumeFallbackRunID("");
+        fallbackPollAttemptsRef.current.attempts = 0;
+        // Exhausted/permanently stopped attempts can retry after the user
+        // returns or reconnects. A healthy resume stream keeps its connection.
+        if (!activeResumeStreamRef.current) setResumeRetryToken((current) => current + 1);
+      }
+    };
+    // A failed read while offline or in a suspended tab must reconcile on return,
+    // even if no persisted pending message was available during that failed read.
+    window.addEventListener("online", refreshWhenVisible);
+    window.addEventListener("focus", refreshWhenVisible);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("online", refreshWhenVisible);
+      window.removeEventListener("focus", refreshWhenVisible);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [conversationID, reload]);
 
   const replaceMessage = React.useCallback((nextMessage: MessageDTO) => {
     setState((prev) => ({
@@ -302,7 +347,8 @@ export function useChatData(
     if (
       !conversationID ||
       !pendingRunID ||
-      pendingRunIsActive
+      pendingRunIsActive ||
+      document.hidden || navigator.onLine === false
     ) {
       setResumingRunID("");
       setResumingActivityLabel("");
@@ -311,7 +357,6 @@ export function useChatData(
 
     const controller = new AbortController();
     let closed = false;
-    const afterSeq = resumeSeqByRunRef.current[pendingRunID] ?? 0;
     const baseContent = pendingAssistantContentRef.current;
     const resumedTextByRun = resumedTextByRunRef.current;
     const clearResumedText = () => {
@@ -335,7 +380,6 @@ export function useChatData(
     setResumingActivityLabel("");
 
     async function resume() {
-      try {
         const token = await resolveAccessToken();
         if (!token || controller.signal.aborted) {
           return;
@@ -343,9 +387,9 @@ export function useChatData(
         if (activeResumeStreamRef.current?.controller === controller) {
           activeResumeStreamRef.current.accessToken = token;
         }
-        await resumeMessageGenerationStream(token, pendingRunID, {
+        const completed = await resumeMessageGenerationStream(token, pendingRunID, {
           signal: controller.signal,
-          afterSeq,
+          afterSeq: resumeSeqByRunRef.current[pendingRunID] ?? 0,
           onTerminal: () => {
             onConversationRunFinished?.(pendingRunID);
           },
@@ -502,19 +546,32 @@ export function useChatData(
             }));
           },
         });
+        if (!completed && !controller.signal.aborted) throw new ConversationStreamDisconnectedError(true);
         if (!controller.signal.aborted) {
+          if (completed && conversationID && recoveredRunsRef.current.markCompleted(pendingRunID)) {
+            recoveredCompletionRef.current?.(token, conversationID, completed);
+          }
           setResumingActivityLabel("");
           clearResumeCheckpoint(pendingRunID);
           reload();
         }
-      } catch (error) {
-        if (!controller.signal.aborted && error instanceof Error && error.name !== "AbortError") {
+    }
+
+    void resumeWithRecovery({
+      signal: controller.signal,
+      attempt: resume,
+      isPermanentFailure: (error) => document.hidden || navigator.onLine === false || error instanceof ConversationStreamServerError ||
+        (error instanceof ApiError && [401, 403, 404, 410].includes(error.status)),
+      onFailure: (error) => {
+          const authBlocked = error instanceof ApiError && [401, 403].includes(error.status);
+          if (authBlocked) setResumeAuthBlockedRunID(pendingRunID);
           clearResumeCheckpoint(pendingRunID);
-          setResumingRunID("");
-          setResumingActivityLabel("");
-          reload();
-        }
-      } finally {
+          setResumingActivityLabel(tSubmit("recoveryPending"));
+          if (!authBlocked && !document.hidden && navigator.onLine !== false) reload();
+      },
+    }).then((outcome) => {
+      if (outcome !== "completed" && !closed && !controller.signal.aborted) setResumeFallbackRunID(pendingRunID);
+    }).finally(() => {
         if (activeResumeStreamRef.current?.controller === controller) {
           activeResumeStreamRef.current = null;
         }
@@ -522,10 +579,7 @@ export function useChatData(
           setResumingRunID("");
           setResumingActivityLabel("");
         }
-      }
-    }
-
-    void resume();
+    });
     return () => {
       closed = true;
       controller.abort();
@@ -540,6 +594,7 @@ export function useChatData(
     conversationID,
     pendingRunID,
     pendingRunIsActive,
+    resumeRetryToken,
     onConversationRunFinished,
     reload,
     tSubmit,
@@ -549,18 +604,25 @@ export function useChatData(
     if (
       !conversationID ||
       !pendingAssistant ||
+      document.hidden || navigator.onLine === false ||
       pendingRunIsActive ||
+      (pendingRunID && pendingRunID === resumeAuthBlockedRunID) ||
       (pendingRunID && pendingRunID === resumingRunID)
     ) {
       return;
     }
+    if (fallbackPollAttemptsRef.current.runID !== pendingRunID) fallbackPollAttemptsRef.current = { runID: pendingRunID, attempts: 0 };
+    const fallback = pendingRunID && pendingRunID === resumeFallbackRunID;
+    const delay = fallback ? resumeFallbackPollingDelay(fallbackPollAttemptsRef.current.attempts) : 1500;
     const timer = window.setTimeout(() => {
+      if (document.hidden || navigator.onLine === false) return;
+      if (fallback) fallbackPollAttemptsRef.current.attempts += 1;
       reload();
-    }, 1500);
+    }, delay);
     return () => {
       window.clearTimeout(timer);
     };
-  }, [conversationID, pendingAssistant, pendingRunID, pendingRunIsActive, reload, resumingRunID]);
+  }, [conversationID, loadCompletionRevision, pendingAssistant, pendingRunID, pendingRunIsActive, reload, resumeAuthBlockedRunID, resumeFallbackRunID, resumingRunID]);
 
   return {
     ...state,

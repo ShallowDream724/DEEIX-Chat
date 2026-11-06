@@ -528,10 +528,11 @@ func (r *Repo) UpdateConversationMetadata(ctx context.Context, conversationID ui
 		result := toConversationDomain(current)
 		return &result, nil
 	}
-	result := r.db.WithContext(ctx).
-		Model(&models.Conversation{}).
-		Where("id = ?", conversationID).
-		Updates(updates)
+	query := r.db.WithContext(ctx).Model(&models.Conversation{}).Where("id = ?", conversationID)
+	if patch.ExpectedTitle != nil {
+		query = query.Where("title = ?", *patch.ExpectedTitle)
+	}
+	result := query.Updates(updates)
 	if result.Error != nil {
 		return nil, dberror.Translate(result.Error)
 	}

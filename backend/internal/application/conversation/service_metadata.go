@@ -83,12 +83,17 @@ type conversationMetadataLLMInput struct {
 	ConversationID    uint
 	ServiceCode       string
 	Prompt            string
+	// RecoveryAttempt selects a candidate within the caller's finite field budget.
+	// Nil retains safe immediate candidate fallback for direct/manual calls.
+	RecoveryAttempt *int
 }
 
 type conversationMetadataGenerationPlan struct {
-	replaceTitle   bool
-	generateTitle  bool
-	generateLabels bool
+	replaceTitle    bool
+	generateTitle   bool
+	generateLabels  bool
+	expectedTitle   *string
+	recoveryAttempt *int
 }
 
 func (p conversationMetadataGenerationPlan) shouldRun() bool {
@@ -100,31 +105,13 @@ func (s *Service) maybeGenerateConversationMetadataAsync(ctx context.Context, co
 		return
 	}
 
+	key := conversationMetadataRecoveryKey{conversation.ID, userMsg.ID, userMsg.RunID}
+	if !s.metadataRecovery.start(key) {
+		return
+	}
 	background.Go(s.logger, "conversation_metadata_generation", func() {
-		asyncCtx, cancel := background.WithTimeout(ctx, conversationMetadataGenerationTimeout)
-		defer cancel()
-		plan := s.resolveConversationMetadataGenerationPlan(asyncCtx, conversation)
-		if !plan.shouldRun() {
-			return
-		}
-
-		s.persistConversationFallbackTitle(asyncCtx, conversation, userMsg)
-
-		if _, err := s.generateConversationMetadata(asyncCtx, conversation, userMsg, plan); err != nil && s.logger != nil {
-			if errors.Is(err, ErrInvalidConversationTitle) {
-				s.logger.Info("conversation_metadata_skipped",
-					zap.Uint("conversation_id", conversation.ID),
-					zap.String("model", conversation.Model),
-					zap.String("reason", "no_titleable_content"),
-				)
-				return
-			}
-			s.logger.Warn("conversation_metadata_generation_failed",
-				zap.Uint("conversation_id", conversation.ID),
-				zap.String("model", conversation.Model),
-				zap.Error(err),
-			)
-		}
+		defer s.metadataRecovery.finish(key)
+		s.runConversationMetadataRecovery(ctx, conversation, userMsg, defaultConversationMetadataRecoveryOptions())
 	})
 }
 
@@ -158,6 +145,7 @@ func (s *Service) generateConversationMetadata(
 			ConversationID:    conversation.ID,
 			ServiceCode:       "title",
 			Prompt:            prompt,
+			RecoveryAttempt:   plan.recoveryAttempt,
 		})
 		if err != nil {
 			titleErr = err
@@ -180,22 +168,25 @@ func (s *Service) generateConversationMetadata(
 				LatencyMS:         out.LatencyMS,
 			}); err != nil {
 				// 上游费用已经产生但账单未落地时立即终止后续辅助调用，避免继续扩大待核对金额。
-				return nil, err
+				return nil, &conversationMetadataBillingError{cause: err}
 			}
 			title := resolveConversationMetadataTitle(shouldReplaceTitle, sanitizeGeneratedConversationTitle(parseGeneratedConversationTitle(out.Text)), userMsg.Content)
 			if title != "" {
 				updated, err = s.repo.UpdateConversationMetadata(ctx, conversation.ID, repository.ConversationMetadataPatch{
 					Title:             title,
 					ReplaceableTitles: []string{fallbackTitle},
+					ExpectedTitle:     plan.expectedTitle,
 				})
 				if err != nil {
 					titleErr = fmt.Errorf("update conversation title metadata: %w", err)
-				} else if s.logger != nil {
+				} else if s.logger != nil && updated != nil && updated.Title == title {
 					s.logger.Info("conversation_metadata_updated",
 						zap.Uint("conversation_id", conversation.ID),
 						zap.String("conversation_model", conversation.Model),
 						zap.Bool("title_updated", true),
 					)
+				} else if s.logger != nil {
+					s.logger.Info("conversation_metadata_title_update_skipped", zap.Uint("conversation_id", conversation.ID), zap.String("reason", "conversation_changed"))
 				}
 			}
 		}
@@ -214,6 +205,7 @@ func (s *Service) generateConversationMetadata(
 			ConversationID:    conversation.ID,
 			ServiceCode:       "labels",
 			Prompt:            labelsPrompt,
+			RecoveryAttempt:   plan.recoveryAttempt,
 		})
 		if err != nil {
 			labelsErr = err
@@ -235,7 +227,7 @@ func (s *Service) generateConversationMetadata(
 				FallbackOutput:    labelsOut.Text,
 				LatencyMS:         labelsOut.LatencyMS,
 			}); err != nil {
-				return nil, err
+				return nil, &conversationMetadataBillingError{cause: err}
 			}
 			labels := sanitizeGeneratedConversationLabels(parseGeneratedConversationLabels(labelsOut.Text))
 			if len(labels) > 0 {
@@ -576,11 +568,22 @@ func (s *Service) callConversationMetadataLLM(ctx context.Context, input convers
 	if len(routes) == 0 {
 		return nil, ErrModelRouteNotConfigured
 	}
+	if input.RecoveryAttempt != nil {
+		// follow candidates are current chat model then default chat model. A known
+		// rejection advances to the next candidate without resetting the field budget.
+		selected := routes[*input.RecoveryAttempt%len(routes)]
+		routes = routes[:1]
+		routes[0] = selected
+	}
 	attributionReferer, attributionTitle := s.llmAttribution()
 	messages := []llm.Message{{Role: "user", Content: input.Prompt}}
 	cfg := s.cfg.Snapshot()
 	var lastErr error
+	generateCalls := 0
 	for _, route := range routes {
+		if generateCalls >= conversationMetadataRecoveryAttempts {
+			break
+		}
 		if route == nil || strings.TrimSpace(route.PlatformModelName) == "" {
 			continue
 		}
@@ -592,14 +595,34 @@ func (s *Service) callConversationMetadataLLM(ctx context.Context, input convers
 			lastErr = fmt.Errorf("metadata usage authorization: %w", authorizeErr)
 			continue
 		}
+		generateCalls++
 		out, generateErr := s.llmClient.Generate(ctx, routeConfig, generateInput)
 		if generateErr != nil {
-			releaseErr := s.releaseBasicServiceUsageAuthorization(ctx, authorization)
 			lastErr = fmt.Errorf("metadata llm generate: %w", generateErr)
-			if releaseErr != nil {
-				lastErr = errors.Join(lastErr, fmt.Errorf("release metadata usage authorization: %w", releaseErr))
+			cleanupCtx, cancel := background.WithTimeout(ctx, 5*time.Second)
+			if conversationMetadataRequestResultUnknown(generateErr) {
+				// There is no provider-wide generation idempotency key. An unknown paid result
+				// must be reconciled rather than released and dispatched again.
+				reconcileErr := s.markUsageAuthorizationForReconciliation(cleanupCtx, authorization, "basic_generation_result_unknown", lastErr)
+				cancel()
+				if reconcileErr != lastErr {
+					return nil, &conversationMetadataBillingError{cause: reconcileErr}
+				}
+				return nil, lastErr
 			}
-			continue
+			releaseErr := s.releaseBasicServiceUsageAuthorization(cleanupCtx, authorization)
+			cancel()
+			if releaseErr != nil {
+				return nil, &conversationMetadataBillingError{cause: errors.Join(lastErr, fmt.Errorf("release metadata usage authorization: %w", releaseErr))}
+			}
+			if isRetryableConversationMetadataRequestError(generateErr) {
+				lastErr = &retryableConversationMetadataError{cause: lastErr}
+				if input.RecoveryAttempt == nil {
+					continue
+				}
+				return nil, lastErr
+			}
+			return nil, lastErr
 		}
 		return &conversationMetadataLLMResult{
 			Text:              strings.TrimSpace(out.Text),

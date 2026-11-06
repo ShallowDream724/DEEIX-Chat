@@ -56,12 +56,17 @@ import { filterAvailableMCPToolIDs } from "@/features/chat/model/chat-mcp-tool-d
 import { resolveChatSubmitDecision } from "@/features/chat/model/chat-task";
 import { resolveDefaultSubmissionParentMessage, resolvePersistedPublicID } from "@/features/chat/model/message-submit";
 import { resolveSubmitBlockDescription } from "@/features/chat/model/message-submit-media";
+import {
+  conversationTitleFromFirstUserMessage,
+  refreshGeneratedConversationMetadata,
+  shouldPollGeneratedConversationMetadata,
+} from "@/features/chat/model/conversation-metadata-refresh";
 import { InputLimitDialog } from "@/shared/components/input-limit-dialog";
 import type { InputLimitReason } from "@/shared/lib/input-limit";
 import type { ChatAreaMessage, } from "@/features/chat/types/messages";
 import { useSettingsChatPreferences } from "@/features/settings";
 import { cn } from "@/lib/utils";
-import type { ConversationDTO, ConversationOptions } from "@/shared/api/conversation-types";
+import type { ConversationDTO, ConversationOptions, SendMessageResult } from "@/shared/api/conversation-types";
 import { useAuthSession } from "@/shared/auth/auth-session-context";
 import { DeleteFilesOption, isFileProcessing } from "@/entities/file";
 import { hasMultipleImageAttachmentProcessors, normalizeImageAttachmentProcessorSelection } from "@/entities/mcp";
@@ -142,6 +147,7 @@ export function AppChatArea() {
     autoExpandThinking,
     autoExpandToolCalls,
     autoGenerateLabels,
+    autoGenerateTitle,
     deleteFilesByDefault,
     loaded: chatPreferencesLoaded,
     reuseModelOptions,
@@ -153,6 +159,23 @@ export function AppChatArea() {
   const touchByPublicID = useSidebarConversationField("touchByPublicID");
   const renameByPublicID = useSidebarConversationField("renameByPublicID");
   const upsertConversation = useSidebarConversationField("upsertConversation");
+  const activeConversation = React.useMemo(() => {
+    if (!conversationID) {
+      return null;
+    }
+    return items.find((item) => item.publicID === conversationID) ?? null;
+  }, [conversationID, items]);
+  const currentConversation = useChatLoadedConversation(conversationID, activeConversation);
+  const handleRecoveredGenerationCompleted = React.useCallback((token: string, publicID: string, result: SendMessageResult) => {
+    if ((result.assistantMessage.status || "success") !== "success" && result.metadataRefreshHint?.trim() !== "pending") return;
+    const previous = currentConversation?.publicID === publicID ? currentConversation : null;
+    const fallbackTitle = conversationTitleFromFirstUserMessage(result.userMessage.content);
+    if (!shouldPollGeneratedConversationMetadata(previous, result, autoGenerateLabels, fallbackTitle, autoGenerateTitle)) return;
+    void refreshGeneratedConversationMetadata(token, publicID, previous, autoGenerateLabels, fallbackTitle, touchByPublicID, autoGenerateTitle)
+      .catch(() => {
+        // A later conversation list read reconciles unavailable metadata.
+      });
+  }, [autoGenerateLabels, autoGenerateTitle, currentConversation, touchByPublicID]);
   const {
     cancelResumedGeneration,
     conversationPublicID: messageDataConversationID,
@@ -170,15 +193,9 @@ export function AppChatArea() {
     activeGenerationRunsRef,
     activeGenerationRunsRevision,
     onConversationRunFinished: finishConversationRun,
+    onRecoveredGenerationCompleted: handleRecoveredGenerationCompleted,
   });
   const { greetingTitle } = useChatViewerProfile();
-  const activeConversation = React.useMemo(() => {
-    if (!conversationID) {
-      return null;
-    }
-    return items.find((item) => item.publicID === conversationID) ?? null;
-  }, [conversationID, items]);
-  const currentConversation = useChatLoadedConversation(conversationID, activeConversation);
   const activeRouteProject = React.useMemo(() => {
     if (!routeProjectID || conversationID) {
       return null;
@@ -500,6 +517,7 @@ export function AppChatArea() {
     uploading,
     restoreDraftOnFailure,
     autoGenerateLabels,
+    autoGenerateTitle,
     prependNewConversation: prependNewConversationInContext,
     onConversationCreated: setLocallyCreatedConversationID,
     onConversationForked: handleConversationForked,
