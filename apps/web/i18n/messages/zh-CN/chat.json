@@ -1031,7 +1031,7 @@
     "web_search": "联网搜索"
   },
   "image26OptionDescriptions": {
-    "size": "auto 自动选择尺寸，也可指定宽×高。",
+    "size": "auto 自动选尺寸；预设含横版、竖版、方形及 2K、4K。GIF 尺寸与帧数共同受总像素预算限制。",
     "quality": "控制成图的细节与质量。",
     "background": "透明背景使用 PNG 或 WebP。",
     "output_format": "GIF 生成动图，其余格式生成静态图。",

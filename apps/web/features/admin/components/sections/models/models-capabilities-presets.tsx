@@ -212,8 +212,23 @@ const OPENAI_IMAGE_OPTION_CONTROLS = [
   },
 ];
 
+// Common raster sizes, not a closed API enum: administrators can add custom WIDTHxHEIGHT values.
+// Keep these model-specific presets separate from the older GPT Image protocol defaults.
+const IMAGE_26_SIZES = [
+  "auto",
+  "1024x1024", "1024x768", "768x1024", "1280x720", "720x1280",
+  "1536x1024", "1024x1536", "1536x864", "864x1536", "1536x1536",
+  "2048x2048", "2048x1536", "1536x2048", "2048x1152", "1152x2048",
+  "2048x1024", "1024x2048", "2560x1440", "1440x2560",
+  "2560x1920", "1920x2560", "2560x2048", "2048x2560", "2560x2560",
+  "2880x2880", "2880x2160", "2160x2880", "3072x2048", "2048x3072",
+  "3840x1280", "1280x3840", "3840x2160", "2160x3840",
+];
+
 const IMAGE_26_OPTION_CONTROLS = [
-  ...OPENAI_IMAGE_OPTION_CONTROLS.map((control) => control.path === "quality"
+  ...OPENAI_IMAGE_OPTION_CONTROLS.map((control) => control.path === "size"
+    ? { ...control, options: IMAGE_26_SIZES }
+    : control.path === "quality"
     ? { ...control, options: ["auto", "low", "medium", "high", "xhigh", "max"] }
     : control.path === "output_format"
       ? { ...control, options: ["png", "jpeg", "webp", "gif"] }

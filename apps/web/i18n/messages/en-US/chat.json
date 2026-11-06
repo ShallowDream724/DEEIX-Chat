@@ -1031,7 +1031,7 @@
     "web_search": "Web search"
   },
   "image26OptionDescriptions": {
-    "size": "Choose auto or a width×height size.",
+    "size": "Auto selects the size. Presets include landscape, portrait, square, 2K, and 4K. GIF dimensions and frame count share a total pixel budget.",
     "quality": "Controls the detail and quality of the finished image.",
     "background": "Use PNG or WebP for transparent backgrounds.",
     "output_format": "GIF creates animations; other formats create still images.",
