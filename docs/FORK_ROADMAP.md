@@ -18,6 +18,8 @@
 
 展示修复发布（2026-11-06）：源码 `dcf9ba1a5431f68eab21604bdcbfce49dc4273bf`；`ghcr.io/shallowdream724/deeix-chat:latest`（linux/amd64），摘要 `sha256:c5dfd793cfa1050a1157118730769dd1f66dd304a3d63a1e68732a70f95ee059`。[Image 构建与容器检查](https://github.com/ShallowDream724/DEEIX-Chat/actions/runs/42226499096) 成功；匿名核验 latest 与不可变 sha 标签、revision 一致。包含 Image 2.6 尺寸模板补齐、模型信息卡分项价格、统一四列计费明细及单一总计、历史用户图片缩略图、回复文件列表收窄、图片预览滚动条反馈振荡修复。类型检查、定向 lint 和 11 项专项测试通过；实际页面核对桌面/390px 窄屏，旧布局临界尺寸 30 帧发生 29 次切换，修复后 120 帧尺寸稳定。不改变数据库、配置和存储归属，不覆盖已保存的模型参数。
 
+文件预览开关修复发布（2026-11-06）：源码 `db44ab400602d5d4f1ae00d691f2c4e8c5e7b1f0`；`ghcr.io/shallowdream724/deeix-chat:latest`（linux/amd64），摘要 `sha256:6dcf1ad63a90f2406c7ece970d98b841f09e0b45727d16b41c10f0a138a227c8`。[构建与容器检查](https://github.com/ShallowDream724/DEEIX-Chat/actions/runs/42233056880) 及匿名 latest/revision 核验通过。文件面板不再继承 Artifact 半秒退出生命周期，手机头部同步恢复，导航按钮不做尺寸过渡；聊天直接加载轻量预览外壳，按文件类型并行加载查看器与文件内容。保留按需加载、取消请求和资源释放，不增加全量文件缓存或历史附件预下载。
+
 ## 当前 Chat01 实施与验收（2026-11-05）
 
 2026-11-06 数量边界追加核验：用户怀疑 TXT 会被上游转为正文，另授权只选 11 PDF 或 11 图之一。实际直连 GPT 6 提交 11 张不同 PNG（480×280，`image_url` Base64，请求 124,093 字节），每张含独立编号和随机五位验证码，文字提示未泄露验证码。15.8 秒收到 HTTP 200 SSE，39.1 秒完整结束，11 组编号/验证码全部精确匹配，无 usage 和超限错误。因此当前已证明该接口此次可以完整读到 11 张图，不能将“最多 10 个附件”当作已验证供应商硬限制；本站既有管理员数量保护不自动调整。不额外测试 PDF 或 20 图。私有验证结果：`.cache/chat01-limits-20261106/images-11.verification.json`。
