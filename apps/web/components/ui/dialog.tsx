@@ -99,7 +99,7 @@ type DialogHeightTransitionProps = {
 
 function DialogHeightTransition({ children, contentClassName }: DialogHeightTransitionProps) {
   return (
-    <HeightTransition contentClassName={cn("flex max-h-[min(82vh,560px)] min-h-0 flex-col overflow-hidden", contentClassName)}>
+    <HeightTransition className="min-w-0" contentClassName={cn("flex max-h-[min(82vh,560px)] min-h-0 min-w-0 flex-col overflow-hidden", contentClassName)}>
       {children}
     </HeightTransition>
   )
