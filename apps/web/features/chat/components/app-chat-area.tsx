@@ -1126,7 +1126,8 @@ export function AppChatArea() {
       </div>
           <ChatArtifactWorkspace
             artifact={artifactWorkspace.activeArtifact}
-            blockPanel={filePanel ?? blockPanel}
+            filePanel={filePanel}
+            blockPanel={blockPanel}
             expanded={Boolean(activeFile && artifactWorkspace.fileExpanded)}
             artifacts={artifactWorkspace.artifacts}
             isInlineViewport={artifactWorkspace.isInlineViewport}

@@ -26,7 +26,7 @@ export function MobileHeader({
           type="button"
           variant="ghost"
           size="icon"
-          className={preview.active ? "size-8 rounded-lg border border-border/60 bg-background/90 backdrop-blur-sm" : "size-6"}
+          className={cn("transition-colors", preview.active ? "size-8 rounded-lg border border-border/60 bg-background/90 backdrop-blur-sm" : "size-6")}
           aria-label={t("openSidebar")}
           onClick={toggleSidebar}
         >

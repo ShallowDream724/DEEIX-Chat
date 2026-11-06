@@ -41,6 +41,7 @@ type ChatArtifactWorkspaceProps = {
   artifact: ChatArtifact | null;
   // An interactive block shown in the panel instead of a code artifact.
   blockPanel?: React.ReactNode;
+  filePanel?: React.ReactNode;
   // Files and interactive blocks share the existing single workspace slot.
   expanded?: boolean;
   artifacts: ChatArtifact[];
@@ -327,6 +328,7 @@ function ChatArtifactPanel({
 export function ChatArtifactWorkspace({
   artifact,
   blockPanel = null,
+  filePanel = null,
   artifacts,
   isInlineViewport,
   expanded = false,
@@ -336,10 +338,20 @@ export function ChatArtifactWorkspace({
   onResizeStart,
 }: ChatArtifactWorkspaceProps) {
   const t = useTranslations("chat.artifacts");
-  const open = Boolean(artifact || blockPanel);
+  const open = Boolean(artifact || blockPanel || filePanel);
   const isDesktopOpen = open && isInlineViewport && !expanded;
   const overlay = !isInlineViewport || expanded;
   const desktopBleedWidth = `calc(100% + ${DESKTOP_SHELL_GUTTER_PX}px)`;
+  const resizeHandle = isDesktopOpen ? <button
+    type="button"
+    className="group absolute -left-2 inset-y-0 z-20 hidden w-4 cursor-col-resize touch-none items-center justify-center bg-transparent outline-none md:flex"
+    aria-label={t("resize")}
+    title={t("resize")}
+    onDoubleClick={onResizeReset}
+    onPointerDown={onResizeStart}
+  >
+    <span className="h-9 w-1 translate-x-2 rounded-full bg-foreground/20 opacity-0 transition-[background-color,opacity] group-hover:bg-foreground/32 group-hover:opacity-100 group-focus-visible:bg-foreground/32 group-focus-visible:opacity-100" />
+  </button> : null;
 
   return (
       <motion.div
@@ -361,7 +373,14 @@ export function ChatArtifactWorkspace({
           willChange: "margin",
         }}
       >
-        <AnimatePresence initial={false}>
+        {filePanel ? (
+          // File controls may be portalled into the mobile header. Closing must
+          // release that header in this commit, not after the artifact exit animation.
+          <div className="relative h-full min-h-0 overflow-hidden bg-background">
+            {resizeHandle}
+            {filePanel}
+          </div>
+        ) : <AnimatePresence initial={false}>
           {open ? (
             <motion.div
               key="preview-panel"
@@ -372,16 +391,7 @@ export function ChatArtifactWorkspace({
               transition={workspaceTransition}
               style={{ width: "100%", willChange: "transform, opacity" }}
             >
-              {isDesktopOpen ? <button
-                type="button"
-                className="group absolute -left-2 inset-y-0 z-20 hidden w-4 cursor-col-resize touch-none items-center justify-center bg-transparent outline-none md:flex"
-                aria-label={t("resize")}
-                title={t("resize")}
-                onDoubleClick={onResizeReset}
-                onPointerDown={onResizeStart}
-              >
-                <span className="h-9 w-1 translate-x-2 rounded-full bg-foreground/20 opacity-0 transition-[background-color,opacity] group-hover:bg-foreground/32 group-hover:opacity-100 group-focus-visible:bg-foreground/32 group-focus-visible:opacity-100" />
-              </button> : null}
+              {resizeHandle}
               {blockPanel ?? (artifact ? (
                 <ChatArtifactPanel
                   artifact={artifact}
@@ -393,7 +403,7 @@ export function ChatArtifactWorkspace({
               ) : null)}
             </motion.div>
           ) : null}
-        </AnimatePresence>
+        </AnimatePresence>}
       </motion.div>
   );
 }

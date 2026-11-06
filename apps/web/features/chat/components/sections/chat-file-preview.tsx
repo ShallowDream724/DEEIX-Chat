@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { LazyFilePreviewPanel } from "@/entities/file";
+import { FilePreviewPanel } from "@/entities/file";
 import type { ChatFilePreviewRequest } from "@/features/chat/context/chat-file-preview-context";
 import { useMobilePreviewHeaderSlot } from "@/features/shell";
 
@@ -40,7 +40,7 @@ export function ChatFilePreview(props: ChatFilePreviewProps) {
         props.onClose();
       }}
     >
-      <LazyFilePreviewPanel {...props} headerContainer={headerContainer} />
+      <FilePreviewPanel {...props} headerContainer={headerContainer} />
     </div>
   );
 }

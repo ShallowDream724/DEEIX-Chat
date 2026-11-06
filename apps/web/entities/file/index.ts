@@ -4,6 +4,7 @@ export { DeleteFilesOption } from "@/entities/file/components/delete-files-optio
 export { FileThumbnail } from "@/entities/file/components/file-thumbnail";
 export { LazyFilePreviewDialog } from "@/entities/file/components/file-preview/lazy-file-preview-dialog";
 export { LazyFilePreviewPanel } from "@/entities/file/components/file-preview/lazy-file-preview-panel";
+export { FilePreviewPanel } from "@/entities/file/components/file-preview/preview-panel";
 export type { FilePreviewPanelProps } from "@/entities/file/components/file-preview/preview-panel";
 export { PreviewDocument } from "@/entities/file/components/file-preview/preview-document";
 export { PreviewDocx } from "@/entities/file/components/file-preview/preview-docx";

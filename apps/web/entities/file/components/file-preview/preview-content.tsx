@@ -7,6 +7,8 @@ import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { PreviewLoading } from "@/entities/file/components/file-preview/preview-loading";
 import type { FilePreviewState, PreviewDialogFile } from "@/entities/file/hooks/use-file-preview-dialog";
+import { resolveFilePreviewKind } from "@/entities/file/lib/file-display";
+import { loadPdfPreview, loadDocxPreview, loadSheetPreview, loadMediaPreview, loadTextPreview, preloadFileViewer } from "./preview-viewers";
 
 type SourceProps = {
   source: string;
@@ -18,11 +20,11 @@ type SourceProps = {
 type MediaProps = SourceProps & { kind: "image" | "audio" | "video"; alt: string; contentType: string };
 type TextProps = { kind: "markdown" | "code" | "text"; content: string; fileName?: string };
 const fallback = () => <PreviewLoading className="h-full min-h-40" />;
-const PreviewPdf = dynamic<SourceProps>(() => import("./preview-pdf").then((mod) => mod.PreviewPdf), { ssr: false, loading: fallback });
-const PreviewDocx = dynamic<SourceProps>(() => import("./preview-docx").then((mod) => mod.PreviewDocx), { ssr: false, loading: fallback });
-const PreviewSheet = dynamic<SourceProps>(() => import("./preview-sheet").then((mod) => mod.PreviewSheet), { ssr: false, loading: fallback });
-const PreviewMedia = dynamic<MediaProps>(() => import("./preview-media").then((mod) => mod.PreviewMedia), { ssr: false, loading: fallback });
-const PreviewText = dynamic<TextProps>(() => import("./preview-text").then((mod) => mod.PreviewText), { ssr: false, loading: fallback });
+const PreviewPdf = dynamic<SourceProps>(loadPdfPreview, { ssr: false, loading: fallback });
+const PreviewDocx = dynamic<SourceProps>(loadDocxPreview, { ssr: false, loading: fallback });
+const PreviewSheet = dynamic<SourceProps>(loadSheetPreview, { ssr: false, loading: fallback });
+const PreviewMedia = dynamic<MediaProps>(loadMediaPreview, { ssr: false, loading: fallback });
+const PreviewText = dynamic<TextProps>(loadTextPreview, { ssr: false, loading: fallback });
 
 export function FilePreviewContent({ file, state, download, allowDownload, toolbarContainer, allowFullscreen = true }: {
   file: PreviewDialogFile | null;
@@ -34,6 +36,14 @@ export function FilePreviewContent({ file, state, download, allowDownload, toolb
 }) {
   const t = useTranslations("files.previewDialog");
   const [viewerLoading, setViewerLoading] = React.useState(true);
+  const fileName = file?.fileName;
+  const mimeType = file?.mimeType;
+  React.useEffect(() => {
+    if (fileName === undefined || mimeType === undefined) return;
+    // A failed speculative module load does not fail the file request; dynamic
+    // rendering retains its normal error path once the actual content type is known.
+    void preloadFileViewer(resolveFilePreviewKind({ fileName, mimeType }, mimeType))?.catch(() => undefined);
+  }, [fileName, mimeType]);
   if (!file) return null;
   const isDocument = state.status === "ready" && ["pdf", "docx", "spreadsheet"].includes(state.kind);
   let content: React.ReactNode = null;
@@ -63,6 +73,6 @@ export function FilePreviewContent({ file, state, download, allowDownload, toolb
   }
   return <div className="relative h-full min-h-0 overflow-hidden">
     {content}
-    {state.status === "loading" || isDocument && viewerLoading ? <PreviewLoading className="pointer-events-none absolute inset-0 z-10" /> : null}
+    {state.status === "idle" || state.status === "loading" || isDocument && viewerLoading ? <PreviewLoading className="pointer-events-none absolute inset-0 z-10" /> : null}
   </div>;
 }
