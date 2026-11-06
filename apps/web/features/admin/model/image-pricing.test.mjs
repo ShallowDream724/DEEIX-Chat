@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { emptyImagePricingForm, imagePricingFromForm, imagePricingToForm, parseImagePricing, stringifyImagePricing } from "./image-pricing.ts";
+import { emptyImagePricingForm, imagePricingFromForm, imagePricingToForm, parseImagePricing, stringifyImagePricing } from "../../../entities/billing/model/image-pricing.ts";
 
 const pricing = {
   textInputUSDPerMTokens: 5,

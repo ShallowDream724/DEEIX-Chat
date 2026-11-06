@@ -611,9 +611,9 @@ function calcTokenBilledNanousd(tokens: number, rateNanousd: number): number {
 type BillingTooltipLine =
   | { type: "row"; left: string; right: string }
   | { type: "divider" }
-  | { type: "tiered-table"; rangeLabel: string; rows: BillingTieredTableRow[]; totalAmount: string };
+  | { type: "table"; rangeLabel?: string; rows: BillingTableRow[]; subtotalAmount?: string };
 
-type BillingTieredTableRow = {
+type BillingTableRow = {
   item: string;
   tokens: string;
   unitPrice: string;
@@ -673,14 +673,6 @@ function useBillingMetaLabels(): BillingMetaLabels {
   );
 }
 
-function formatBillingFormulaLine(label: string, tokens: number, rateNanousd: number, billedNanousd: number, billingDisplay: BillingDisplayOptions): BillingTooltipLine {
-  return {
-    type: "row",
-    left: label,
-    right: `${tokens.toLocaleString("en-US")} tokens * ${formatTooltipUnitPrice(nanousdToUSD(rateNanousd), billingDisplay)} / 1M = ${formatTooltipBillingCost(nanousdToUSD(billedNanousd), billingDisplay)}`,
-  };
-}
-
 function formatTokenQuantity(value: number): string {
   if (!Number.isFinite(value) || value <= 0) return "0";
   return value.toLocaleString("en-US");
@@ -692,7 +684,7 @@ function formatTieredRangeLabel(fromTokens: number | null | undefined, upToToken
   return labels.tieredRange(formatTokenQuantity(from), upTo ? formatTokenQuantity(upTo) : null);
 }
 
-function formatTieredTableRow(item: string, tokens: number, rateNanousd: number, billedNanousd: number, billingDisplay: BillingDisplayOptions): BillingTieredTableRow {
+function formatTableRow(item: string, tokens: number, rateNanousd: number, billedNanousd: number, billingDisplay: BillingDisplayOptions): BillingTableRow {
   const safeTokens = Number.isFinite(tokens) && tokens > 0 ? tokens : 0;
   const safeBilled = Number.isFinite(billedNanousd) && billedNanousd > 0 ? billedNanousd : 0;
   return {
@@ -703,12 +695,13 @@ function formatTieredTableRow(item: string, tokens: number, rateNanousd: number,
   };
 }
 
-function formatCountLine(label: string, count: number, unit: string, rateNanousd: number, billedNanousd: number, billingDisplay: BillingDisplayOptions): BillingTooltipLine {
+function formatCountRow(label: string, count: number, unit: string, rateNanousd: number, billedNanousd: number, billingDisplay: BillingDisplayOptions): BillingTableRow {
   const safeCount = Number.isFinite(count) && count > 0 ? count : 0;
   return {
-    type: "row",
-    left: label,
-    right: `${safeCount.toLocaleString("en-US")} ${unit} * ${formatTooltipUnitPrice(nanousdToUSD(rateNanousd), billingDisplay)} / ${unit} = ${formatTooltipBillingCost(nanousdToUSD(billedNanousd), billingDisplay)}`,
+    item: label,
+    tokens: `${safeCount.toLocaleString("en-US")} ${unit}`,
+    unitPrice: `${formatTooltipUnitPrice(nanousdToUSD(rateNanousd), billingDisplay)} / ${unit}`,
+    amount: formatTooltipBillingCost(nanousdToUSD(billedNanousd), billingDisplay),
   };
 }
 
@@ -743,11 +736,7 @@ function billingServiceItemEntries(snapshot: BillingSnapshot): BillingServiceIte
   return entries;
 }
 
-function billingServiceItemLines(entries: BillingServiceItemEntry[], labels: BillingMetaLabels, billingDisplay: BillingDisplayOptions): BillingTooltipLine[] {
-  return entries.map((entry) => entry.tokenPriced ? { type: "row", left: entry.label, right: formatTooltipBillingCost(nanousdToUSD(entry.billedNanousd), billingDisplay) } : formatCountLine(entry.label, entry.callCount, labels.callUnit, entry.rateNanousd, entry.billedNanousd, billingDisplay));
-}
-
-function billingServiceItemTableRows(entries: BillingServiceItemEntry[], labels: BillingMetaLabels, billingDisplay: BillingDisplayOptions): BillingTieredTableRow[] {
+function billingServiceItemTableRows(entries: BillingServiceItemEntry[], labels: BillingMetaLabels, billingDisplay: BillingDisplayOptions): BillingTableRow[] {
   return entries.map((entry) => ({
     item: entry.label,
     tokens: entry.tokenPriced ? "—" : `${entry.callCount.toLocaleString("en-US")} ${labels.callUnit}`,
@@ -756,15 +745,15 @@ function billingServiceItemTableRows(entries: BillingServiceItemEntry[], labels:
   }));
 }
 
-function imageBillingTable(breakdown: ImageBillingBreakdown, title: string, labels: BillingMetaLabels, display: BillingDisplayOptions): BillingTooltipLine {
+function imageBillingTable(breakdown: ImageBillingBreakdown, title: string | undefined, labels: BillingMetaLabels, display: BillingDisplayOptions, showSubtotal = false): BillingTooltipLine {
   return {
-    type: "tiered-table", rangeLabel: title,
+    type: "table", rangeLabel: title,
     rows: breakdown.rows.map((row) => ({
       item: labels.image[row.label], tokens: row.tokens === undefined ? "—" : formatTokenQuantity(row.tokens),
       unitPrice: row.unitUSDPerM === undefined ? "—" : `${formatTooltipUnitPrice(row.unitUSDPerM, display)} / 1M`,
       amount: row.billedNanousd === undefined ? "—" : formatTooltipBillingCost(nanousdToUSD(row.billedNanousd), display),
     })),
-    totalAmount: breakdown.billedNanousd === undefined ? "—" : formatTooltipBillingCost(nanousdToUSD(breakdown.billedNanousd), display),
+    subtotalAmount: showSubtotal ? (breakdown.billedNanousd === undefined ? "—" : formatTooltipBillingCost(nanousdToUSD(breakdown.billedNanousd), display)) : undefined,
   };
 }
 
@@ -776,9 +765,7 @@ function billingTooltipLines(item: ChatMetaMessage, labels: BillingMetaLabels, b
   const snapshot = parseBillingSnapshot(cost.pricingSnapshotJSON);
   const pricingMode = snapshot.pricing_mode === "call" || snapshot.pricing_mode === "duration" || snapshot.pricing_mode === "tiered" ? snapshot.pricing_mode : "token";
   const serviceEntries = billingServiceItemEntries(snapshot);
-  const serviceLines = billingServiceItemLines(serviceEntries, labels, billingDisplay);
-  // Separate tool service items from model billing with a divider.
-  const serviceSection: BillingTooltipLine[] = serviceLines.length > 0 ? [{ type: "divider" }, ...serviceLines] : [];
+  const serviceRows = billingServiceItemTableRows(serviceEntries, labels, billingDisplay);
   // Free models can still incur charges from service items like MCP; only show as free when the whole bill is 0.
   const freeOfCharge = snapshot.is_free_model === true && !(cost.billedNanousd > 0);
   const totalLine = freeOfCharge
@@ -786,19 +773,29 @@ function billingTooltipLines(item: ChatMetaMessage, labels: BillingMetaLabels, b
     : formatTotalLine(formatTooltipBillingCost(nanousdToUSD(cost.billedNanousd), billingDisplay), labels);
   const imageModel = snapshot.imageBilling?.model;
   const imageTool = snapshot.imageBilling?.tool;
-  if (imageTool) serviceSection.push(imageBillingTable(imageTool, labels.image.tool, labels, billingDisplay));
-  if (imageModel) return [imageBillingTable(imageModel, labels.image.model, labels, billingDisplay), ...serviceSection, { type: "divider" }, totalLine];
+  const finish = (lines: BillingTooltipLine[]): BillingTooltipLine[] => [
+    ...lines,
+    ...(imageTool ? [imageBillingTable(imageTool, labels.image.tool, labels, billingDisplay, true)] : []),
+    { type: "divider" }, totalLine,
+  ];
+  if (imageModel) {
+    const mixed = serviceRows.length > 0 || Boolean(imageTool);
+    return finish([
+      imageBillingTable(imageModel, mixed ? labels.image.model : undefined, labels, billingDisplay, mixed),
+      ...(serviceRows.length > 0 ? [{ type: "table" as const, rows: serviceRows }] : []),
+    ]);
+  }
 
   if (pricingMode === "call") {
     const rate = readBillingNumber(snapshot, "call_nanousd_per_call");
     const billed = readBillingNumber(snapshot, "call_billed_nanousd") || rate;
-    return [formatCountLine(labels.perCall, 1, labels.callUnit, rate, billed, billingDisplay), ...serviceSection, { type: "divider" }, totalLine];
+    return finish([{ type: "table", rows: [formatCountRow(labels.perCall, 1, labels.callUnit, rate, billed, billingDisplay), ...serviceRows] }]);
   }
 
   if (pricingMode === "duration") {
     const rate = readBillingNumber(snapshot, "duration_nanousd_per_second");
     const billed = readBillingNumber(snapshot, "duration_billed_nanousd");
-    return [formatCountLine(labels.perSecond, 1, labels.secondUnit, rate, billed, billingDisplay), ...serviceSection, { type: "divider" }, totalLine];
+    return finish([{ type: "table", rows: [formatCountRow(labels.perSecond, 1, labels.secondUnit, rate, billed, billingDisplay), ...serviceRows] }]);
   }
 
   const inputRate = readBillingNumber(snapshot, "input_nanousd_per_m_tokens");
@@ -816,47 +813,21 @@ function billingTooltipLines(item: ChatMetaMessage, labels: BillingMetaLabels, b
   const rateMultiplierNote = billingRateMultiplierNote(snapshot, labels.display);
   const scheduleNote = billingScheduleNote(snapshot, labels.display);
 
-  if (pricingMode === "tiered") {
-    const tieredRows = [
-      formatTieredTableRow(labels.input, inputTokens, inputRate, readBillingNumber(snapshot, "input_billed_nanousd"), billingDisplay),
-      formatTieredTableRow(labels.output, billedOutputTokens, outputRate, readBillingNumber(snapshot, "output_billed_nanousd"), billingDisplay),
-      formatTieredTableRow(labels.cacheRead, cacheReadTokens, cacheReadRate, readBillingNumber(snapshot, "cache_read_billed_nanousd"), billingDisplay),
-      formatTieredTableRow(cacheWriteLabel, cacheWriteTokens, cacheWriteRate, readBillingNumber(snapshot, "cache_write_billed_nanousd"), billingDisplay),
-      ...billingServiceItemTableRows(serviceEntries, labels, billingDisplay),
-    ];
-    const lines: BillingTooltipLine[] = [];
-    if (rateMultiplierNote || scheduleNote || cacheWriteNote) {
-      if (rateMultiplierNote) {
-        lines.push({ type: "row", left: labels.rateNote, right: rateMultiplierNote });
-      }
-      if (scheduleNote) {
-        lines.push({ type: "row", left: labels.rateNote, right: scheduleNote });
-      }
-      if (cacheWriteNote) {
-        lines.push({ type: "row", left: labels.cacheNote, right: cacheWriteNote });
-      }
-      lines.push({ type: "divider" });
-    }
-    if (tieredRows.length > 0) {
-      lines.push({
-        type: "tiered-table",
-        rangeLabel: formatTieredRangeLabel(snapshot.tiered_from_tokens, snapshot.tiered_up_to_tokens, labels),
-        rows: tieredRows,
-        totalAmount: freeOfCharge ? `${formatTooltipBillingCost(0, billingDisplay)} (${labels.freeModelNoBilling})` : formatTooltipBillingCost(nanousdToUSD(cost.billedNanousd), billingDisplay),
-      });
-      if (imageTool) lines.push(imageBillingTable(imageTool, labels.image.tool, labels, billingDisplay));
-      return lines;
-    }
-  }
-
+  // Preserve the historical snapshot fallback; the layout never changes ledger amounts.
+  const billed = (key: keyof BillingSnapshot, tokens: number, rate: number) => pricingMode === "tiered"
+    ? readBillingNumber(snapshot, key)
+    : readBillingNumber(snapshot, key) || calcTokenBilledNanousd(tokens, rate);
   const lines: BillingTooltipLine[] = [
-    formatBillingFormulaLine(labels.input, inputTokens, inputRate, readBillingNumber(snapshot, "input_billed_nanousd") || calcTokenBilledNanousd(inputTokens, inputRate), billingDisplay),
-    formatBillingFormulaLine(labels.output, billedOutputTokens, outputRate, readBillingNumber(snapshot, "output_billed_nanousd") || calcTokenBilledNanousd(billedOutputTokens, outputRate), billingDisplay),
-    formatBillingFormulaLine(labels.cacheRead, cacheReadTokens, cacheReadRate, readBillingNumber(snapshot, "cache_read_billed_nanousd") || calcTokenBilledNanousd(cacheReadTokens, cacheReadRate), billingDisplay),
-    formatBillingFormulaLine(cacheWriteLabel, cacheWriteTokens, cacheWriteRate, readBillingNumber(snapshot, "cache_write_billed_nanousd") || calcTokenBilledNanousd(cacheWriteTokens, cacheWriteRate), billingDisplay),
-    ...serviceSection,
-    { type: "divider" },
-    totalLine,
+    { type: "table",
+      rangeLabel: pricingMode === "tiered" ? formatTieredRangeLabel(snapshot.tiered_from_tokens, snapshot.tiered_up_to_tokens, labels) : undefined,
+      rows: [
+        formatTableRow(labels.input, inputTokens, inputRate, billed("input_billed_nanousd", inputTokens, inputRate), billingDisplay),
+        formatTableRow(labels.output, billedOutputTokens, outputRate, billed("output_billed_nanousd", billedOutputTokens, outputRate), billingDisplay),
+        formatTableRow(labels.cacheRead, cacheReadTokens, cacheReadRate, billed("cache_read_billed_nanousd", cacheReadTokens, cacheReadRate), billingDisplay),
+        formatTableRow(cacheWriteLabel, cacheWriteTokens, cacheWriteRate, billed("cache_write_billed_nanousd", cacheWriteTokens, cacheWriteRate), billingDisplay),
+        ...serviceRows,
+      ],
+    },
   ];
   const noteLines: BillingTooltipLine[] = [];
   if (rateMultiplierNote) {
@@ -869,9 +840,9 @@ function billingTooltipLines(item: ChatMetaMessage, labels: BillingMetaLabels, b
     noteLines.push({ type: "row", left: labels.cacheNote, right: cacheWriteNote });
   }
   if (noteLines.length > 0) {
-    lines.splice(4, 0, ...noteLines);
+    lines.push(...noteLines);
   }
-  return lines;
+  return finish(lines);
 }
 
 function BillingCostBadge({ item, billingDisplay }: { item: ChatMetaMessage; billingDisplay: BillingDisplayOptions }) {
@@ -908,8 +879,8 @@ function BillingCostBadge({ item, billingDisplay }: { item: ChatMetaMessage; bil
           {lines.map((line, index) =>
             line.type === "divider" ? (
               <div key={`divider-${index}`} className="my-1 h-px bg-background/20" />
-            ) : line.type === "tiered-table" ? (
-              <TieredBillingTable key={`tiered-table-${index}`} line={line} />
+            ) : line.type === "table" ? (
+              <BillingTable key={`table-${index}`} line={line} />
             ) : (
               <div key={`${line.left}-${index}`} className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-8">
                 <span className="min-w-0 text-left">{line.left}</span>
@@ -923,11 +894,11 @@ function BillingCostBadge({ item, billingDisplay }: { item: ChatMetaMessage; bil
   );
 }
 
-function TieredBillingTable({ line }: { line: Extract<BillingTooltipLine, { type: "tiered-table" }> }) {
+function BillingTable({ line }: { line: Extract<BillingTooltipLine, { type: "table" }> }) {
   const t = useTranslations("chat.meta.billing.table");
   return (
     <div className="max-w-[min(92vw,34rem)] overflow-x-auto">
-      <div className="mb-1 text-[10px] font-medium text-background/80">{line.rangeLabel}</div>
+      {line.rangeLabel ? <div className="mb-1 text-[10px] font-medium text-background/80">{line.rangeLabel}</div> : null}
       <table className="w-full border-collapse text-left tabular-nums">
         <thead>
           <tr className="border-b border-background/20 text-[10px] text-background/65">
@@ -947,12 +918,12 @@ function TieredBillingTable({ line }: { line: Extract<BillingTooltipLine, { type
             </tr>
           ))}
         </tbody>
-        <tfoot>
+        {line.subtotalAmount !== undefined ? <tfoot>
           <tr className="border-t border-background/20">
-            <td className="px-2 pt-1.5 font-medium first:pl-0" colSpan={3}>{t("total")}</td>
-            <td className="whitespace-nowrap px-2 pt-1.5 text-right font-medium last:pr-0">{line.totalAmount}</td>
+            <td className="px-2 pt-1.5 font-medium first:pl-0" colSpan={3}>{t("subtotal")}</td>
+            <td className="whitespace-nowrap px-2 pt-1.5 text-right font-medium last:pr-0">{line.subtotalAmount}</td>
           </tr>
-        </tfoot>
+        </tfoot> : null}
       </table>
     </div>
   );

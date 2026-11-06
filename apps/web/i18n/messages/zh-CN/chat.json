@@ -489,7 +489,8 @@
         "usage": "用量",
         "unitPrice": "单价",
         "amount": "金额",
-        "total": "总计"
+        "total": "总计",
+        "subtotal": "小计"
       }
     }
   },

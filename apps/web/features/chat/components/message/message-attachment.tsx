@@ -19,8 +19,10 @@ import type { MessageAttachment } from "@/features/chat/types/messages";
 import { useChatFilePreview } from "@/features/chat/context/chat-file-preview-context";
 import {
   type FileContentLoader,
+  FileThumbnail,
   LazyFilePreviewDialog,
   formatBytes,
+  isImageFile,
   resolveFileExtension,
   resolveFileIcon,
 } from "@/entities/file";
@@ -49,16 +51,31 @@ function AttachmentCard({
   grouped = false,
   onDownload,
   downloading = false,
+  loadContent,
 }: {
   att: MessageAttachment;
   onClick: () => void;
   grouped?: boolean;
   onDownload?: () => void;
   downloading?: boolean;
+  loadContent?: FileContentLoader;
 }) {
   const tActions = useTranslations("files.previewDialog");
   const meta = resolveCardMeta(att, !grouped);
   const fileIcon = resolveFileIcon(att);
+
+  if (!grouped && (att.kind === "image" || isImageFile(att))) {
+    return (
+      <Attachment size="sm" className="size-28 min-w-0 overflow-hidden rounded-lg border-border/60 bg-muted/35 sm:size-32">
+        <FileThumbnail file={att} loadContent={loadContent} />
+        <AttachmentTrigger
+          onClick={onClick}
+          aria-label={att.fileName}
+          className="rounded-lg focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        />
+      </Attachment>
+    );
+  }
 
   return (
     <Attachment
@@ -159,13 +176,14 @@ export function MessageAttachmentRow({
       <div
         role={variant === "list" ? "list" : undefined}
         className={variant === "list"
-          ? "w-full max-w-[640px] min-w-0 divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-card"
+          ? "w-full max-w-[440px] min-w-0 divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-card"
           : `flex max-w-full flex-wrap gap-2 sm:max-w-[70%] ${align === "start" ? "justify-start" : "justify-end"}`}
       >
         {attachments.map((att) => (
           <AttachmentCard
             key={att.fileID}
             att={att}
+            loadContent={loadContent}
             grouped={variant === "list"}
             onClick={() => handleClick(att)}
             onDownload={allowDownload && onDownloadAttachment ? () => onDownloadAttachment(att) : undefined}

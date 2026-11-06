@@ -38,6 +38,9 @@ import {
   formatRateMultiplier,
   resolveCacheWritePricingUSD,
   resolveCurrentSchedulePeriod,
+  parseImagePricing,
+  IMAGE_PRICING_DISPLAY_FIELDS,
+  type ImageBillingLabels,
 } from "@/entities/billing";
 import { cn } from "@/lib/utils";
 
@@ -248,6 +251,7 @@ type ModelPricingTooltipContentProps = {
   pricing: NonNullable<ChatModelOption["pricing"]>;
   billingDisplay: BillingDisplayOptions;
   labels: {
+    image: ImageBillingLabels;
     freeModel: string;
     freeModelDescription: string;
     tieredPricing: string;
@@ -349,6 +353,16 @@ function ModelPricingBase({ platformModelName, protocols, pricing, billingDispla
       <div className="flex flex-col gap-1">
         <span className="font-sans text-xs font-medium leading-4 text-background">{labels.durationPricing}</span>
         <PricingTooltipRow label={labels.perSecond} value={`${formatPricingUnitUSD(pricing.durationUSDPerSecond, billingDisplay)} / ${labels.secondUnit}`} />
+      </div>
+    );
+  }
+
+  const imageRows = resolveImagePriceRows(pricing, billingDisplay, labels);
+  if (imageRows) {
+    return (
+      <div className="flex flex-col gap-1">
+        <span className="font-sans text-xs font-medium leading-4 text-background">{labels.tokenPricing}</span>
+        {imageRows.map((row) => <PricingTooltipRow key={row.label} label={row.label} value={`${row.values[0]} / 1M tokens`} />)}
       </div>
     );
   }
@@ -652,6 +666,18 @@ type DetailPriceTable = {
   rows: { label: string; values: string[] }[];
 };
 
+function resolveImagePriceRows(
+  pricing: NonNullable<ChatModelOption["pricing"]>,
+  display: BillingDisplayOptions,
+  labels: ModelPricingTooltipContentProps["labels"],
+): DetailPriceTable["rows"] | null {
+  const image = pricing.mode === "token" ? parseImagePricing(pricing.imagePricingJSON) : null;
+  if (!image) return null;
+  return IMAGE_PRICING_DISPLAY_FIELDS.map(([field, label]) => ({
+    label: labels.image[label], values: [formatPricingUnitUSD(image[field] ?? 0, display)],
+  }));
+}
+
 // Every charge as one table: a column per tier (or one column), a row per charge. Cache rows that
 // are zero in every tier are dropped, and the cache-write row uses the 5m price the note explains.
 function resolveDetailPriceTable(
@@ -667,6 +693,8 @@ function resolveDetailPriceTable(
   if (pricing.mode === "duration") {
     return { tiers: [], rows: [{ label: labels.perSecond, values: [price(pricing.durationUSDPerSecond)] }] };
   }
+  const imageRows = resolveImagePriceRows(pricing, billingDisplay, labels);
+  if (imageRows) return { tiers: [], rows: imageRows };
   const tiered = pricing.mode === "tiered" && pricing.tiers.length > 0;
   const columns = tiered ? pricing.tiers : [pricing];
   const rows: DetailPriceTable["rows"] = [
@@ -739,6 +767,11 @@ function ChatModelDetailPanel({
   const periods = paid?.schedulePeriods ?? [];
   const currentPeriod = paid ? resolveCurrentSchedulePeriod(periods, paid.scheduleUTCOffsetMinutes ?? 0) : null;
   const cacheWriteNote = paid ? cacheWritePricingNote(model.protocols, paid, pricingLabels.billingDisplay) : null;
+  const imageOnly = !model.kinds.includes("chat") && model.kinds.some((kind) => kind === "image_gen" || kind === "image_edit");
+  // Presentation fallback only; file eligibility still uses the declared model capabilities.
+  const inputs: ModelModality[] = model.inputModalities.length > 0 ? model.inputModalities
+    : imageOnly ? (model.kinds.includes("image_edit") ? ["text", "image"] : ["text"]) : [];
+  const outputs: ModelModality[] = model.outputModalities.length > 0 ? model.outputModalities : imageOnly ? ["image"] : [];
 
   return (
     <div
@@ -750,13 +783,13 @@ function ChatModelDetailPanel({
       </div>
       <dl className="shrink-0">
         <ModelDetailLine label={t("modalities")}>
-          {model.inputModalities.length > 0 ? (
+          {inputs.length > 0 ? (
             <>
-              <ModalityIcons modalities={model.inputModalities} labels={inputModalityLabels} />
-              {model.outputModalities.length > 0 ? (
+              <ModalityIcons modalities={inputs} labels={inputModalityLabels} />
+              {outputs.length > 0 ? (
                 <>
                   <ArrowRight className="size-3 text-muted-foreground" strokeWidth={1.6} aria-hidden="true" />
-                  <ModalityIcons modalities={model.outputModalities} labels={inputModalityLabels} />
+                  <ModalityIcons modalities={outputs} labels={inputModalityLabels} />
                 </>
               ) : null}
             </>
@@ -764,13 +797,13 @@ function ChatModelDetailPanel({
             <span className="text-muted-foreground">{t("unknown")}</span>
           )}
         </ModelDetailLine>
-        <ModelDetailLine label={t("context")}>
+        {!imageOnly ? <ModelDetailLine label={t("context")}>
           {model.contextWindow !== null ? (
             formatContextWindow(model.contextWindow)
           ) : (
             <span className="text-muted-foreground">{t("unknown")}</span>
           )}
-        </ModelDetailLine>
+        </ModelDetailLine> : null}
         {billingEnabled && model.personalProviderName !== null ? (
           // Takes the price row: the platform does not charge for a user-key model, the provider does.
           <ModelDetailLine label={t("price")}>{t("chargedByProvider")}</ModelDetailLine>
@@ -888,6 +921,7 @@ export function ChatModelPicker({
   placementPreference,
 }: ChatModelPickerProps) {
   const t = useTranslations("chat.modelPicker");
+  const tImage = useTranslations("adminBilling.imagePricing");
   const isMobile = useIsMobile();
   const mobileShift = useChatPopoverAlignOffset("end");
   const [open, setOpen] = React.useState(false);
@@ -986,6 +1020,7 @@ export function ChatModelPicker({
   );
   const pricingLabels = React.useMemo(
     () => ({
+      image: { model: tImage("modelUsage"), tool: tImage("toolUsage"), textInput: tImage("textInput"), textOutput: tImage("textOutput"), imageInput: tImage("imageInput"), imageOutput: tImage("imageOutput"), cachedTextInput: tImage("cachedTextInput"), cachedImageInput: tImage("cachedImageInput") },
       freeModel: t("freeModel"),
       freeModelDescription: t("freeModelDescription"),
       tieredPricing: t("tieredPricing"),
@@ -1021,7 +1056,7 @@ export function ChatModelPicker({
         cacheWritePricingNote: t("cacheWritePricingNote"),
       },
     }),
-    [t],
+    [t, tImage],
   );
   const billingDisplay = React.useMemo<BillingDisplayOptions>(
     () => ({

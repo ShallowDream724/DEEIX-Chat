@@ -489,7 +489,8 @@
         "usage": "Usage",
         "unitPrice": "Unit price",
         "amount": "Amount",
-        "total": "Total"
+        "total": "Total",
+        "subtotal": "Subtotal"
       }
     }
   },

@@ -196,10 +196,11 @@ export function PreviewMedia({
 
     const updateViewport = () => {
       rememberPosition();
-      setImageViewport({
+      const next = {
         width: Math.max(node.clientWidth, 0),
         height: Math.max(node.clientHeight, 0),
-      });
+      };
+      setImageViewport((current) => current.width === next.width && current.height === next.height ? current : next);
     };
 
     updateViewport();
@@ -491,7 +492,7 @@ export function PreviewMedia({
             <div className="flex shrink-0 items-center justify-end gap-1.5 px-1 py-2">{imageToolbar}</div>
           )}
 
-          <div ref={imageScrollRegionRef} data-file-preview-scroll="" className="min-h-0 flex-1 overflow-auto">
+          <div ref={imageScrollRegionRef} data-file-preview-scroll="" className="min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable]">
             <div
               className="flex min-h-full min-w-full w-max items-center justify-center px-4 pb-6 pt-[calc(var(--file-preview-toolbar-inset,0px)+1.5rem)]"
               style={{ minHeight: imageViewport.height > 0 ? `${imageViewport.height}px` : undefined }}

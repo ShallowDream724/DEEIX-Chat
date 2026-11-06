@@ -2,6 +2,11 @@
 // Unused re-exports are tree-shaken (package.json "sideEffects"), so UI and logic share one entry.
 export { readImageBillingSnapshot, type ImageBillingSnapshot, type ImageBillingBreakdown, type ImageBillingLabels } from "@/entities/billing/model/image-billing-snapshot";
 export {
+  parseImagePricing, IMAGE_PRICING_DISPLAY_FIELDS, IMAGE_PRICING_FIELDS,
+  emptyImagePricingForm, imagePricingFromForm, imagePricingToForm, stringifyImagePricing,
+  type ImagePricing, type ImagePricingField, type ImagePricingForm,
+} from "@/entities/billing/model/image-pricing";
+export {
   type BillingDisplayCurrency,
   type BillingDisplayLabels,
   type BillingDisplayOptions,
