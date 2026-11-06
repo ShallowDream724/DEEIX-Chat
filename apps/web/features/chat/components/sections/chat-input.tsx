@@ -496,13 +496,9 @@ function ChatInputComponent({
     ).filter((control) =>
       !modelOptionPolicy || selectedProtocols.length === 0 || selectedProtocols.some((protocol) =>
         !isModelOptionPathFiltered({ policy: modelOptionPolicy, protocol, path: control.path })));
-    const imageMode = submitTask === "image_generation" || submitTask === "image_edit";
     return modelControlsFromOptionControls([...taskOptionControls, ...inferred], taskDefaultOptions)
-      .filter((control) => isImageOptionVisible(control.id, modelConfigOptions, selectedProtocols, taskDefaultOptions))
-      .map((control) => imageMode && ["output_format", "quality"].includes(control.id)
-        ? { ...control, placement: "toolbar" as const }
-        : control);
-  }, [isMediaMode, modelConfigOptions, modelOptionPolicy, modelOptionPolicyDisabled, selectedProtocols, submitTask, taskDefaultOptions, taskOptionConfig, taskOptionControls]);
+      .filter((control) => isImageOptionVisible(control.id, modelConfigOptions, selectedProtocols, taskDefaultOptions));
+  }, [isMediaMode, modelConfigOptions, modelOptionPolicy, modelOptionPolicyDisabled, selectedProtocols, taskDefaultOptions, taskOptionConfig, taskOptionControls]);
   const mediaControlSelections = React.useMemo(
     () => optionControlSelections(mediaControls, modelConfigOptions),
     [mediaControls, modelConfigOptions],

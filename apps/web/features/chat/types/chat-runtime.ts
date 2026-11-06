@@ -6,7 +6,7 @@ import type {
 } from "@/features/chat/types/messages";
 import type { ConversationOptions } from "@/shared/api/conversation-types";
 import type { PublicModelPricingDTO } from "@/shared/api/model-types";
-import type { ModelControl, ModelNativeToolConfig, ModelReasoningCapability, ReasoningEffortLevel } from "@/entities/model";
+import type { ModelControl, ModelControlPlacement, ModelNativeToolConfig, ModelReasoningCapability, ReasoningEffortLevel } from "@/entities/model";
 
 export type ViewerProfile = {
   name: string;
@@ -70,6 +70,7 @@ export type ModelOptionControl = {
   options?: string[];
   placeholder?: string;
   locked?: boolean;
+  placement?: ModelControlPlacement;
 };
 
 export type PendingAttachment = {

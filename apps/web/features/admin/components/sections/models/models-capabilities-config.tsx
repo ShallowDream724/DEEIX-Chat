@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, ChevronDownIcon, CircleHelp, CopyPlus, Plus, Trash2 } from "lucide-react";
+import { Check, ChevronDownIcon, CircleHelp, CopyPlus, Pin, PinOff, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -38,10 +38,13 @@ import {
   MODEL_CONTROL_ICON_NAMES,
   MODEL_OPTION_POLICY_PROTOCOL_LABELS,
   MODEL_OPTION_POLICY_PROTOCOLS,
+  type ModelControlPlacement,
   type NativeToolDefinition,
   nativeToolPayloadMatchesShape,
   nativeToolPayloadSignature,
   resolveModelOptionPolicyProtocol,
+  resolveOptionControlPlacement,
+  updateOptionControlPlacements,
 } from "@/entities/model";
 import { isOneOf, isRecord } from "@/shared/lib/type-guards";
 
@@ -107,6 +110,8 @@ type ParameterRow = {
   options: string;
   defaultValue: string;
   locked: boolean;
+  placement: ModelControlPlacement;
+  source?: Record<string, unknown>;
 };
 
 type NativeToolOption = {
@@ -375,12 +380,14 @@ function parseOptionControls(value: unknown): ParameterRow[] {
       type: normalizeControlType(item.type),
       options,
       defaultValue: "",
-      locked: false,
+      locked: item.locked === true,
+      placement: item.placement === "toolbar" ? "toolbar" : "menu",
+      source: item,
     }];
   });
 }
 
-function parseParameterRows(defaultOptions: unknown, optionControls: unknown, lockedOptionPaths: unknown): ParameterRow[] {
+function parseParameterRows(defaultOptions: unknown, optionControls: unknown, lockedOptionPaths: unknown, explicitControls: unknown): ParameterRow[] {
   const lockedPaths = parseLockedOptionPaths(lockedOptionPaths);
   const defaultsByPath = new Map<string, { value: string; rawValue: unknown }>();
   flattenDefaultOptions(defaultOptions).forEach((item) => {
@@ -392,7 +399,8 @@ function parseParameterRows(defaultOptions: unknown, optionControls: unknown, lo
     return {
       ...row,
       defaultValue: defaultItem?.value ?? "",
-      locked: lockedPaths.has(row.path),
+      locked: row.locked || lockedPaths.has(row.path),
+      placement: resolveOptionControlPlacement(row.path, row.placement, explicitControls),
     };
   });
   defaultsByPath.forEach((item, path) => {
@@ -405,6 +413,7 @@ function parseParameterRows(defaultOptions: unknown, optionControls: unknown, lo
       options: "",
       defaultValue: item.value,
       locked: lockedPaths.has(path),
+      placement: resolveOptionControlPlacement(path, undefined, explicitControls),
     });
   });
   return rows;
@@ -432,6 +441,7 @@ function buildOptionControls(rows: ParameterRow[]): Record<string, unknown>[] {
       return [];
     }
     const control: Record<string, unknown> = {
+      ...row.source,
       path: path.join("."),
       type: row.type,
     };
@@ -440,12 +450,23 @@ function buildOptionControls(rows: ParameterRow[]): Record<string, unknown>[] {
     const options = parseControlOptions(row.options);
     if (label) {
       control.label = label;
+    } else {
+      delete control.label;
     }
     if (description) {
       control.description = description;
+    } else {
+      delete control.description;
     }
     if (row.type === "select" && options.length > 0) {
       control.options = options;
+    } else {
+      delete control.options;
+    }
+    if (row.placement === "toolbar" || row.source?.placement !== undefined) control.placement = row.placement;
+    if (row.source?.locked !== undefined) {
+      if (row.locked) control.locked = true;
+      else delete control.locked;
     }
     return [control];
   });
@@ -1033,6 +1054,11 @@ function buildCapabilitiesJSON(
   }
   const defaultOptions = buildDefaultOptions(parameterRows);
   const optionControls = buildOptionControls(parameterRows);
+  if (Array.isArray(payload.controls)) {
+    payload.controls = updateOptionControlPlacements(payload.controls, new Map(parameterRows
+      .filter((row) => row.type !== "text")
+      .map((row) => [optionPathSegments(row.path).join("."), row.placement])));
+  }
   const lockedOptionPaths = buildLockedOptionPaths(parameterRows);
   if (Object.keys(defaultOptions).length > 0) {
     payload.defaultOptions = defaultOptions;
@@ -1313,7 +1339,7 @@ export function ModelCapabilitiesQuickConfig({
       toast.error(t("sheet.capabilitiesQuick.invalidJSON"));
       return false;
     }
-    setParameterRows(parseParameterRows(payload.defaultOptions, payload.optionControls, payload.lockedOptionPaths));
+    setParameterRows(parseParameterRows(payload.defaultOptions, payload.optionControls, payload.lockedOptionPaths, payload.controls));
     setPromptCacheConfig(parsePromptCacheConfig(payload.promptCache));
     const nextNativeToolRows = parseNativeToolRows(payload, nativeTools, routeProtocols, modelProvider);
     setNativeToolRows(nextNativeToolRows);
@@ -1346,7 +1372,7 @@ export function ModelCapabilitiesQuickConfig({
       return rest;
     });
     setParameterRows((prev) => prev.map((row) => (
-      row.id === id ? { ...row, type, options: type === "select" ? row.options : "" } : row
+      row.id === id ? { ...row, type, options: type === "select" ? row.options : "", placement: type === "text" ? "menu" : row.placement } : row
     )));
   }
 
@@ -1397,6 +1423,7 @@ export function ModelCapabilitiesQuickConfig({
       options: "",
       defaultValue: "",
       locked: false,
+      placement: "menu",
     }, ...prev]);
   }
 
@@ -1442,7 +1469,7 @@ export function ModelCapabilitiesQuickConfig({
       delete payload._deeixContextWindowMode;
     }
     const sanitizedValue = stringifyCapabilitiesObject(payload);
-    setParameterRows(parseParameterRows(payload.defaultOptions, payload.optionControls, payload.lockedOptionPaths));
+    setParameterRows(parseParameterRows(payload.defaultOptions, payload.optionControls, payload.lockedOptionPaths, payload.controls));
     setPromptCacheConfig(parsePromptCacheConfig(payload.promptCache));
     setNativeToolRows(parseNativeToolRows(payload, nativeTools, routeProtocols, modelProvider));
     setExpandedNativeToolID("");
@@ -1719,22 +1746,36 @@ export function ModelCapabilitiesQuickConfig({
                                 {rowErrors.defaultValue ? <p className="truncate px-1 text-[10px] text-destructive">{rowErrors.defaultValue}</p> : null}
                               </div>
                             </div>
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon"
-                              className="mt-5 size-8 justify-self-end text-muted-foreground hover:text-destructive"
-                              onClick={() => {
-                                setParameterRows((prev) => prev.filter((item) => item.id !== row.id));
-                                setParameterErrors((prev) => {
-                                  const { [row.id]: _rowErrors, ...rest } = prev;
-                                  return rest;
-                                });
-                              }}
-                              aria-label={commonT("actions.delete")}
-                            >
-                              <Trash2 className="size-3.5" />
-                            </Button>
+                            <div className="flex flex-col gap-7 pt-5">
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="size-8 text-muted-foreground hover:text-destructive"
+                                onClick={() => {
+                                  setParameterRows((prev) => prev.filter((item) => item.id !== row.id));
+                                  setParameterErrors((prev) => {
+                                    const { [row.id]: _rowErrors, ...rest } = prev;
+                                    return rest;
+                                  });
+                                }}
+                                aria-label={commonT("actions.delete")}
+                              >
+                                <Trash2 className="size-3.5" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className={cn("size-8 text-muted-foreground", row.placement === "toolbar" && "bg-accent text-foreground")}
+                                disabled={row.type === "text"}
+                                aria-pressed={row.placement === "toolbar"}
+                                aria-label={t(row.placement === "toolbar" ? "sheet.capabilitiesQuick.unpinParameter" : "sheet.capabilitiesQuick.pinParameter")}
+                                onClick={() => updateParameterRow(row.id, { placement: row.placement === "toolbar" ? "menu" : "toolbar" })}
+                              >
+                                {row.placement === "toolbar" ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+                              </Button>
+                            </div>
                           </div>
                         );
                       })}

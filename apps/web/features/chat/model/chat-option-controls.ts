@@ -186,7 +186,7 @@ export function modelControlsFromOptionControls(
       label: source.label?.trim() ?? "",
       description: source.description?.trim() ?? "",
       icon: "",
-      placement: "menu",
+      placement: source.placement === "toolbar" ? "toolbar" : "menu",
       default: (type === "number" ? isNumericText(defaultText) : options.includes(defaultText)) ? defaultText : null,
       locked: source.locked === true,
       options: options.map((value) => ({ value, label: "", description: "" })),

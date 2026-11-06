@@ -57,6 +57,7 @@ export {
   normalizeModelControlValue,
   parseModelControls,
 } from "@/entities/model/lib/model-controls";
+export { resolveOptionControlPlacement, updateOptionControlPlacements } from "@/entities/model/lib/option-control-placement";
 export { parseProtocolsJSON } from "@/entities/model/lib/model-protocols";
 export { localizedNativeToolText } from "@/entities/model/lib/native-tool-i18n";
 export {

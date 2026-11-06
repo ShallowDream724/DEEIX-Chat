@@ -30,6 +30,7 @@ import {
   parseModelReasoningCapability,
   parseProtocolsJSON,
   resolveModelProviderIcon,
+  resolveOptionControlPlacement,
 } from "@/entities/model";
 import { type ChatContentWidth, parseChatContentWidth, useUserSettings } from "@/entities/user-settings";
 import { resolveConversationDefaultModel } from "@/entities/conversation";
@@ -266,7 +267,7 @@ function resolveOptionControls(raw: string): ModelOptionControl[] {
     if (!path) {
       return [];
     }
-    const control: ModelOptionControl = { path };
+    const control: ModelOptionControl = { path, placement: resolveOptionControlPlacement(path, source.placement, parsed?.controls) };
     if (lockedPaths.has(path)) {
       control.locked = true;
     }
@@ -319,6 +320,7 @@ function resolveVideoExtensionConfig(raw: string, protocols: string[]): ChatMode
       label: normalizeOptionControlString(source.label),
       description: normalizeOptionControlString(source.description),
       options: normalizeOptionControlOptions(source.options) ?? ["2", "3", "4", "5", "6", "7", "8", "9", "10"],
+      placement: resolveOptionControlPlacement(path, source.placement, undefined),
     }];
   });
   return { enabled: true, defaultOptions, optionControls: controls };

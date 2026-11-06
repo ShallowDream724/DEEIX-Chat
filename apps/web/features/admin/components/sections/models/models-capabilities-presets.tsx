@@ -1,6 +1,7 @@
 "use client";
 
 import { Check, Copy, Search } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { toast } from "sonner";
 
@@ -216,12 +217,15 @@ const IMAGE_26_OPTION_CONTROLS = [
     ? { ...control, options: ["auto", "low", "medium", "high", "xhigh", "max"] }
     : control.path === "output_format"
       ? { ...control, options: ["png", "jpeg", "webp", "gif"] }
+      : control.path === "n"
+        ? { ...control, type: "select", options: Array.from({ length: 10 }, (_, index) => String(index + 1)) }
       : control),
   { path: "complexity", type: "select", label: "Planning Effort", options: ["low", "medium", "high"] },
   { path: "frame_count", type: "number", label: "Frame Count" },
   { path: "frame_duration_ms", type: "number", label: "Frame Duration (ms)" },
   { path: "output_compression", type: "number", label: "Output Compression" },
   { path: "moderation", type: "select", label: "Moderation", options: ["auto", "low"] },
+  { path: "partial_images", type: "select", label: "Partial Images", options: ["0", "1", "2", "3"] },
 ];
 
 // Values the Gemini image adapter accepts (backend gemini_images.go); gemini-2.5-flash-image ignores imageSize.
@@ -231,10 +235,15 @@ const GOOGLE_IMAGE_SIZES = ["1K", "2K", "4K"];
 const MODEL_CAPABILITY_PRESETS: CapabilityPreset[] = [
   {
     id: "deepseek_responses",
-    label: "DeepSeek Responses",
+    label: "DeepSeek（Responses）",
     provider: "DeepSeek",
     protocol: "openai_responses",
     payload: {
+      reasoning: {
+        format: "openai",
+        levels: ["none", "low", "high", "max"],
+        default: "high",
+      },
       nativeTools: [
         { key: "deepseek.tool_search", provider: "DeepSeek", protocols: ["openai_responses"], type: "web_search", label: "DeepSeek Search", enabled: true, defaultEnabled: true, payload: { type: "web_search" } },
       ],
@@ -351,11 +360,24 @@ const MODEL_CAPABILITY_PRESETS: CapabilityPreset[] = [
   },
   ...(["openai_image_generations", "openai_image_edits"] as const).map((protocol) => ({
     id: `gpt_image_26_${protocol}`,
-    label: `GPT Image 2.6 · ${protocol === "openai_image_edits" ? "Edits" : "Generations"}`,
+    label: `OpenAI（Images ${protocol === "openai_image_edits" ? "Edits" : "Generations"} · GPT Image 2.6）`,
     provider: "OpenAI",
     protocol,
     payload: {
-      defaultOptions: { output_format: "png", quality: "auto" },
+      defaultOptions: {
+        size: "auto",
+        quality: "auto",
+        background: "auto",
+        output_format: "png",
+        n: 1,
+        complexity: "high",
+        frame_count: 9,
+        frame_duration_ms: 200,
+        output_compression: 100,
+        moderation: "auto",
+        partial_images: 0,
+      },
+      image: { stream: true },
       optionControls: IMAGE_26_OPTION_CONTROLS,
     },
   })),
@@ -838,9 +860,10 @@ function capabilityPresetSummary(preset: CapabilityPreset): { defaults: number; 
   const defaultOptions = preset.payload.defaultOptions;
   const optionControls = preset.payload.optionControls;
   const nativeTools = preset.payload.nativeTools;
+  const reasoning = preset.payload.reasoning;
   return {
     defaults: flattenDefaultOptions(defaultOptions).length,
-    controls: Array.isArray(optionControls) ? optionControls.length : 0,
+    controls: (Array.isArray(optionControls) ? optionControls.length : 0) + (reasoning && typeof reasoning === "object" ? 1 : 0),
     tools: Array.isArray(nativeTools) ? nativeTools.length : 0,
   };
 }
@@ -878,6 +901,8 @@ export function ModelCapabilitiesPresetDialog({
   commonT: (key: string) => string;
   onApply: (value: string) => void;
 }) {
+  const optionLabels = useTranslations("chat.optionLabels");
+  const imageDescriptions = useTranslations("chat.image26OptionDescriptions");
   const [activeTab, setActiveTab] = useState<PresetDialogTab>("presets");
   const routeProtocolSet = new Set(routeProtocols.map((protocol) => resolveModelOptionPolicyProtocol(protocol)).filter(Boolean));
   const sortedPresets = [...MODEL_CAPABILITY_PRESETS].sort((left, right) => {
@@ -933,7 +958,15 @@ export function ModelCapabilitiesPresetDialog({
     if (!selectedPreset) {
       return;
     }
-    onApply(formatCapabilitiesJSON(capabilityPresetPayload(selectedPreset)));
+    const payload = capabilityPresetPayload(selectedPreset);
+    onApply(formatCapabilitiesJSON(selectedPreset.id.startsWith("gpt_image_26_") ? {
+      ...payload,
+      optionControls: IMAGE_26_OPTION_CONTROLS.map((control) => ({
+        ...control,
+        label: optionLabels(control.path),
+        description: imageDescriptions(control.path),
+      })),
+    } : payload));
     toast.success(t("sheet.capabilitiesPreset.applied"));
     onOpenChange(false);
   }

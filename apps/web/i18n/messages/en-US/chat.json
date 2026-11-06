@@ -1028,6 +1028,19 @@
     "verbosity": "Verbosity",
     "web_search": "Web search"
   },
+  "image26OptionDescriptions": {
+    "size": "Choose auto or a width×height size.",
+    "quality": "Controls the detail and quality of the finished image.",
+    "background": "Use PNG or WebP for transparent backgrounds.",
+    "output_format": "GIF creates animations; other formats create still images.",
+    "n": "Generate 1–10 images or animations per request.",
+    "complexity": "Controls composition and detail planning. Defaults to high.",
+    "frame_count": "GIF frame count: 2–16. Defaults to 9.",
+    "frame_duration_ms": "GIF frame delay: 20–2000 ms, rounded to 10 ms. Defaults to 200.",
+    "output_compression": "For JPEG/WebP, from 0 to 100. Defaults to 100.",
+    "moderation": "auto uses default filtering; low uses less restrictive filtering.",
+    "partial_images": "Stream 0–3 previews for still images. 0 returns only the final image."
+  },
   "optionDescriptions": {
     "complexity": "Controls image planning effort independently of image quality.",
     "frame_count": "Number of animation frames, from 2 to 16.",

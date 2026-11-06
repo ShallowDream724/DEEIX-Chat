@@ -940,7 +940,7 @@ func parseResponsesPartialImage(parsed map[string]any) (portllm.GeneratedImage, 
 	}
 	return portllm.GeneratedImage{
 		B64JSON:  b64,
-		MIMEType: openAIImageMIMEType(getString(parsed["output_format"])),
+		MIMEType: openAIImageMIMETypeFromBase64(getString(parsed["output_format"]), b64),
 	}, true
 }
 
@@ -954,7 +954,7 @@ func parseResponsesGeneratedImage(item map[string]any) (portllm.GeneratedImage, 
 	if b64 := strings.TrimSpace(getString(item["result"])); b64 != "" {
 		return portllm.GeneratedImage{
 			B64JSON:       b64,
-			MIMEType:      openAIImageMIMEType(outputFormat),
+			MIMEType:      openAIImageMIMETypeFromBase64(outputFormat, b64),
 			RevisedPrompt: revisedPrompt,
 		}, true
 	}

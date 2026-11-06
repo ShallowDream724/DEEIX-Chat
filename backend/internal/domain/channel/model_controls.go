@@ -692,6 +692,9 @@ func compileLegacyModelControls(payload map[string]any, lockedPaths map[string]s
 			Placement:   ModelControlPlacementMenu,
 			Locked:      raw["locked"] == true,
 		}
+		if modelControlString(raw["placement"]) == ModelControlPlacementToolbar {
+			control.Placement = ModelControlPlacementToolbar
+		}
 		if _, locked := lockedPaths[path]; locked {
 			control.Locked = true
 		}

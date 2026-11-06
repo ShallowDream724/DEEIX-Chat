@@ -154,6 +154,49 @@ func TestResolveModelControlsReasoningDefaultsToToolbar(t *testing.T) {
 	}
 }
 
+func TestResolveModelControlsLegacyParameterPlacement(t *testing.T) {
+	raw := `{"defaultOptions":{"quality":"high","enabled":true,"temperature":1},"optionControls":[
+		{"path":"quality","type":"select","options":["low","high"],"placement":"toolbar"},
+		{"path":"enabled","type":"boolean","placement":"toolbar"},
+		{"path":"temperature","type":"number","placement":"toolbar"},
+		{"path":"count","type":"number","placement":"menu"},
+		{"path":"unplaced","type":"number"},
+		{"path":"free_text","type":"text","placement":"toolbar"}
+	]}`
+	for _, protocol := range []string{"openai_chat_completions", "openai_responses", "anthropic_messages", "openai_image_generations"} {
+		controls := ResolveModelControls(raw, []string{protocol}, nil, "")
+		if len(controls) != 5 {
+			t.Fatalf("%s: unexpected controls %#v", protocol, controls)
+		}
+		for index, control := range controls {
+			want := ModelControlPlacementMenu
+			if index < 3 {
+				want = ModelControlPlacementToolbar
+			}
+			if control.Placement != want {
+				t.Fatalf("%s: %s placement = %q, want %q", protocol, control.ID, control.Placement, want)
+			}
+		}
+	}
+}
+
+func TestResolveModelControlsExplicitPlacementWinsOverLegacy(t *testing.T) {
+	raw := `{"controls":[
+		{"id":"quality","type":"select","placement":"menu","options":[{"value":"custom","patch":{"quality":"high"}}]},
+		{"id":"sampling","type":"number","path":"temperature","placement":"toolbar","min":0,"max":2}
+	],"optionControls":[
+		{"path":"quality","type":"select","options":["low","high"],"placement":"toolbar"},
+		{"path":"temperature","type":"number","placement":"menu"}
+	]}`
+	controls := ResolveModelControls(raw, []string{"openai_responses"}, nil, "")
+	if len(controls) != 2 || controls[0].Placement != ModelControlPlacementMenu || controls[1].Placement != ModelControlPlacementToolbar {
+		t.Fatalf("explicit controls should retain precedence: %#v", controls)
+	}
+	if len(controls[0].Options) != 1 || controls[0].Options[0].Value != "custom" || !reflect.DeepEqual(controls[0].Options[0].Patch, map[string]any{"quality": "high"}) {
+		t.Fatalf("explicit options and patches changed: %#v", controls[0])
+	}
+}
+
 // 被思考强度翻译接管的原生参数不再单独展示；其余参数与没有推理能力时的控件不受影响。
 func TestResolveModelControlsHidesReasoningOwnedPaths(t *testing.T) {
 	raw := `{

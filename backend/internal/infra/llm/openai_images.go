@@ -798,6 +798,9 @@ func parseOpenAIImagePayload(payload map[string]any, outputFormat string) (portl
 	// 只在没有字节时才下载 url，避免一次多余且可能失败的下载让已经成功的生成失败。
 	url := strings.TrimSpace(getString(payload["url"]))
 	b64 := strings.TrimSpace(getString(payload["b64_json"]))
+	if strings.TrimSpace(outputFormat) == "" && declaredImageMediaType(payload) == "" {
+		mimeType = openAIImageMIMETypeFromBase64(outputFormat, b64)
+	}
 	if url != "" || b64 != "" {
 		return portllm.GeneratedImage{
 			URL:           url,

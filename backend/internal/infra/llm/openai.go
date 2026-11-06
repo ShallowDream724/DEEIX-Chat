@@ -307,6 +307,11 @@ func buildOpenAIRequestBody(protocol string, model string, endpoint string, inpu
 	if err != nil {
 		return nil, err
 	}
+	if adapter == portllm.AdapterOpenAIResponses && endpoint == portllm.EndpointResponses {
+		if err := validateResponsesGIFImageTools(providerTools); err != nil {
+			return nil, err
+		}
+	}
 	providerStreamOptions, err := providerStreamOptionsFromOptions(input.Options)
 	if err != nil {
 		return nil, err

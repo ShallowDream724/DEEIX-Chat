@@ -1028,6 +1028,19 @@
     "verbosity": "输出详略",
     "web_search": "联网搜索"
   },
+  "image26OptionDescriptions": {
+    "size": "auto 自动选择尺寸，也可指定宽×高。",
+    "quality": "控制成图的细节与质量。",
+    "background": "透明背景使用 PNG 或 WebP。",
+    "output_format": "GIF 生成动图，其余格式生成静态图。",
+    "n": "每次生成 1–10 张图片或动图。",
+    "complexity": "控制构图与细节规划，默认 high。",
+    "frame_count": "GIF 的帧数，2–16，默认 9。",
+    "frame_duration_ms": "GIF 每帧显示 20–2000 毫秒，默认 200，按 10 毫秒取整。",
+    "output_compression": "JPEG/WebP 使用，范围 0–100，默认 100。",
+    "moderation": "auto 默认过滤；low 放宽过滤。",
+    "partial_images": "静态图流式返回 0–3 张预览图，0 只返回成图。"
+  },
   "optionDescriptions": {
     "complexity": "调整图像规划投入，不改变所选画质。",
     "frame_count": "动画帧数，范围为 2–16。",
