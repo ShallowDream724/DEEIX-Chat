@@ -167,7 +167,7 @@ func (s *Service) prepareTemporaryAttachmentContext(
 					return result, attachmentInputErrorWithReason(att, err, attachmentInputReadFailed)
 				}
 			}
-			part := newNativeInputPart(att, data)
+			part := policy.contextPart(newNativeInputPart(att, data))
 			if policy.HTTPS {
 				part.Reference = attachmentReference(att)
 				part.Reference.TemporaryPath = item.file.AbsolutePath

@@ -77,6 +77,16 @@ func estimateNativeMediaTokens(part llm.ContentPart, tokensPerSecond int64, byte
 }
 
 func estimateContentPartTokens(part llm.ContentPart) int64 {
+	if part.WorkspaceFile {
+		switch part.Kind {
+		case llm.ContentPartDocument, llm.ContentPartAudio, llm.ContentPartVideo, llm.ContentPartAttachment:
+			// The upstream Agent decides what to read. Do not borrow another
+			// protocol's per-page/per-second charge for the entire workspace file.
+			// Reported usage calibrates subsequent requests; actual text parts and
+			// images are still estimated normally, and media budgets are separate.
+			return estimateAttachmentManifestTokens(part)
+		}
+	}
 	switch part.Kind {
 	case llm.ContentPartAudio:
 		return estimateNativeMediaTokens(part, nativeAudioTokensPerSecond, nativeAudioBytesPerSecond)
@@ -94,12 +104,16 @@ func estimateContentPartTokens(part llm.ContentPart) int64 {
 		// A workspace file/container is not injected as its decoded full text.
 		// Count its manifest; actual supplied text is counted in separate parts.
 		// Source bytes remain subject to native and mixed attachment budgets.
-		return tokenestimate.Estimate(part.FileName) + tokenestimate.Estimate(part.MimeType) + 8
+		return estimateAttachmentManifestTokens(part)
 	case llm.ContentPartFile:
 		return tokenestimate.Estimate(part.FileName) + tokenestimate.Estimate(part.Text) + 8
 	default:
 		return tokenestimate.Estimate(part.Text)
 	}
+}
+
+func estimateAttachmentManifestTokens(part llm.ContentPart) int64 {
+	return tokenestimate.Estimate(part.FileName) + tokenestimate.Estimate(part.MimeType) + 8
 }
 
 func estimateMessageTokens(message llm.Message) int64 {

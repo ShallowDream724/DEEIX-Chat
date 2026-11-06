@@ -494,7 +494,7 @@ func (s *Service) resolveNativeInputs(ctx context.Context, route *channel.Resolv
 	if result.Policy.HTTPS {
 		result.Parts = make(map[string]llm.ContentPart, len(selected))
 		for _, att := range selected {
-			part := newNativeInputPart(att, nil)
+			part := result.Policy.contextPart(newNativeInputPart(att, nil))
 			part.Reference = attachmentReference(att)
 			result.Parts[strings.TrimSpace(att.FileID)] = part
 		}
@@ -520,7 +520,7 @@ func (s *Service) resolveNativeInputs(ctx context.Context, route *channel.Resolv
 	result.Parts = make(map[string]llm.ContentPart, len(selected))
 	for _, att := range selected {
 		if part := cache.parts[strings.TrimSpace(att.FileID)]; part != nil {
-			result.Parts[strings.TrimSpace(att.FileID)] = *part
+			result.Parts[strings.TrimSpace(att.FileID)] = result.Policy.contextPart(*part)
 		}
 	}
 	return result
@@ -613,6 +613,16 @@ func (s *Service) loadNativeInputParts(ctx context.Context, attachments []Attach
 		parts[strings.TrimSpace(att.FileID)] = newNativeInputPart(att, data)
 	}
 	return parts
+}
+
+// contextPart applies delivery semantics to a value copy, never the shared file
+// cache. A failover to a direct multimodal route must estimate its own input.
+func (p nativeInputPolicy) contextPart(part llm.ContentPart) llm.ContentPart {
+	switch part.Kind {
+	case llm.ContentPartDocument, llm.ContentPartAudio, llm.ContentPartVideo, llm.ContentPartAttachment:
+		part.WorkspaceFile = p.Attachment
+	}
+	return part
 }
 
 func newNativeInputPart(att AttachmentInput, data []byte) llm.ContentPart {

@@ -58,6 +58,7 @@ func describeContextInput(identity string, input llm.GenerateInput, fullMessages
 		Pages                  int
 		Duration               int64
 		Size                   int64
+		Workspace              bool `json:",omitempty"`
 	}
 	media := make([]mediaPart, 0)
 	var system []string
@@ -83,7 +84,7 @@ func describeContextInput(identity string, input llm.GenerateInput, fullMessages
 				if part.Reference != nil {
 					contentHash = part.Reference.SHA256
 				}
-				media = append(media, mediaPart{part.Kind, part.MimeType, part.FileName, contentHash, part.SourceFileIDs, part.PageCount, part.DurationSeconds, part.ByteSize()})
+				media = append(media, mediaPart{part.Kind, part.MimeType, part.FileName, contentHash, part.SourceFileIDs, part.PageCount, part.DurationSeconds, part.ByteSize(), part.WorkspaceFile})
 			}
 		}
 	}

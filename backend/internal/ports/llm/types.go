@@ -88,8 +88,12 @@ type ContentPart struct {
 	MimeType      string              // Kind=image / audio / video / document 时的 MIME 类型（如 "image/jpeg"、"audio/mp3"、"application/pdf"）
 	Data          []byte              // Kind=image / audio / video / document 时的原始字节（发送时 base64 编码）
 	Reference     *InputFileReference `json:"-"`
-	FileName      string              // Kind=file / audio / video / document 时的文件显示名
-	CacheControl  *CacheControl       // 支持块级缓存的 adapter 可读取该提示
+	// WorkspaceFile marks an original file handed to a provider-managed workspace.
+	// Its bytes/pages are not an instruction to inject the whole decoded content
+	// into the prompt. Size/page budgets still use Kind and the source metadata.
+	WorkspaceFile bool          `json:"-"`
+	FileName      string        // Kind=file / audio / video / document 时的文件显示名
+	CacheControl  *CacheControl // 支持块级缓存的 adapter 可读取该提示
 	// PageCount 为 Kind=document 时的页数（未知为 0），用于上下文预算估算。
 	PageCount int
 	// DurationSeconds 为 Kind=audio / video 时的时长（未知为 0），用于上下文预算估算。
