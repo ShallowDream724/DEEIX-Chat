@@ -32,6 +32,7 @@ type AttachmentReadinessIssue struct {
 	Dimension    string
 	Actual       int64
 	Limit        int64
+	FileID       string
 	FileName     string
 	FileCategory string
 	Scope        string
@@ -172,7 +173,7 @@ func previewRouteAttachmentMetadata(attachments []AttachmentInput, policy native
 			scope = "current"
 		}
 		issues = append(issues, AttachmentReadinessIssue{
-			Dimension: dimension, Actual: actual, Limit: limit, FileName: att.FileName,
+			Dimension: dimension, Actual: actual, Limit: limit, FileID: att.FileID, FileName: att.FileName,
 			FileCategory: readinessFileCategory(att), Scope: scope,
 		})
 	}

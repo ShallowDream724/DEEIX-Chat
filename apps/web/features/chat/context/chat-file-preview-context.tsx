@@ -17,9 +17,10 @@ export function useChatFilePreview() {
   return useContext(ChatFilePreviewContext);
 }
 
-export function localAttachmentContentLoader(file: File): FileContentLoader {
+export function localAttachmentContentLoader(source: File | string): FileContentLoader {
   return async (_attachment, signal) => {
     signal.throwIfAborted();
+    const file = typeof source === "string" ? await (await fetch(source, { signal })).blob() : source;
     return {
       blob: file,
       contentType: file.type || "application/octet-stream",

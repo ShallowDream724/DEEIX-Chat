@@ -494,7 +494,9 @@
     }
   },
   "composer": {
-    "inputIssueHint": "{count, plural, =1 {{title}} other {{title} · # issues to review}}",
+    "attachmentUnsupported": "Unsupported by this model",
+    "attachmentUnavailable": "Attachment unavailable",
+    "attachmentSizeExceeded": "Exceeds {limit} limit",
     "uploadFile": "Upload file",
     "screenshot": "Screenshot",
     "openTools": "Menu",

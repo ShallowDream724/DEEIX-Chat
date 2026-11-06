@@ -40,6 +40,7 @@ type AttachmentReadinessIssueResponse struct {
 	Dimension    string `json:"dimension"`
 	Actual       int64  `json:"actual"`
 	Limit        int64  `json:"limit"`
+	FileID       string `json:"fileID,omitempty"`
 	FileName     string `json:"fileName,omitempty"`
 	FileCategory string `json:"fileCategory,omitempty" enums:"image,pdf,document,audio,video,other"`
 	Scope        string `json:"scope,omitempty" enums:"current,history,context"`
@@ -59,7 +60,7 @@ func toNativeReadinessResponse(result *appconversation.NativeReadinessResult) Na
 	for i, issue := range result.Issues {
 		issues[i] = AttachmentReadinessIssueResponse{
 			Dimension: issue.Dimension, Actual: issue.Actual, Limit: issue.Limit,
-			FileName: issue.FileName, FileCategory: issue.FileCategory, Scope: issue.Scope,
+			FileID: issue.FileID, FileName: issue.FileName, FileCategory: issue.FileCategory, Scope: issue.Scope,
 		}
 	}
 	limits := result.Limits

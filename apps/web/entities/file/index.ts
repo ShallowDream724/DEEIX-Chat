@@ -1,6 +1,7 @@
 // Public entry of the file entity; code outside entities/file/ imports only this file.
 // Unused re-exports are tree-shaken (package.json "sideEffects"), so UI and logic share one entry.
 export { DeleteFilesOption } from "@/entities/file/components/delete-files-option";
+export { FileThumbnail } from "@/entities/file/components/file-thumbnail";
 export { LazyFilePreviewDialog } from "@/entities/file/components/file-preview/lazy-file-preview-dialog";
 export { LazyFilePreviewPanel } from "@/entities/file/components/file-preview/lazy-file-preview-panel";
 export type { FilePreviewPanelProps } from "@/entities/file/components/file-preview/preview-panel";

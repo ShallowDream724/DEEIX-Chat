@@ -260,6 +260,7 @@ export interface AttachmentReadinessIssueResponse {
   actual: number;
   dimension: string;
   fileCategory?: "image" | "pdf" | "document" | "audio" | "video" | "other";
+  fileID?: string;
   fileName?: string;
   limit: number;
   scope?: "current" | "history" | "context";

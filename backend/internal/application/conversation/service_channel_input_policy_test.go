@@ -116,13 +116,30 @@ func TestAttachmentReadinessChecksOnlyExplicitOwnedAncestorBranch(t *testing.T) 
 	input.FileIDs = nil
 	routes.routes[0].CatalogInputModalities = []string{"text"}
 	result, err = s.GetNativeReadiness(t.Context(), input)
-	want = []AttachmentReadinessIssue{{Dimension: "unsupported", FileName: "history.png", FileCategory: "image", Scope: "history"}}
+	want = []AttachmentReadinessIssue{{Dimension: "unsupported", FileID: "history", FileName: "history.png", FileCategory: "image", Scope: "history"}}
 	if err != nil || len(result.Files) != 0 || !reflect.DeepEqual(result.Issues, want) {
 		t.Fatalf("model switch without new files must still warn about unsupported files on the selected branch: %+v (%v)", result, err)
 	}
 	input.ParentMessagePublicID = "different-conversation"
 	if _, err := s.GetNativeReadiness(t.Context(), input); !errors.Is(err, ErrInvalidMessageBranch) {
 		t.Fatalf("foreign branch anchor was accepted: %v", err)
+	}
+}
+
+func TestAttachmentReadinessKeepsSameNamedFilesDistinct(t *testing.T) {
+	first := nativePDF("first", 120, 1, true)
+	second := nativePDF("second", 130, 1, true)
+	first.FileName, second.FileName = "report.pdf", "report.pdf"
+	policy := resolveNativeInputPolicy(&channel.ResolvedRoute{Protocol: llm.AdapterGoogleGenerateContent, CatalogInputModalities: []string{"pdf"}}, `{"defaults":{"pdfSingleBytes":100,"pdfBytes":1000,"nativeBytes":1000}}`)
+	_, issues := previewRouteAttachmentMetadata([]AttachmentInput{first, second}, policy, false, false)
+	var ids []string
+	for _, issue := range issues {
+		if issue.Dimension == "pdfSingleBytes" {
+			ids = append(ids, issue.FileID)
+		}
+	}
+	if !reflect.DeepEqual(ids, []string{"first", "second"}) {
+		t.Fatalf("same-named attachments lost their identities: %+v", issues)
 	}
 }
 

@@ -446,7 +446,6 @@ export function AppChatArea() {
     nativeReadinessPending,
     channelMaxFiles,
     maxTemporaryAttachments,
-    maxFilesPerMessage,
     fileMode,
     ragAvailable,
     ragAvailabilityReason,
@@ -608,7 +607,6 @@ export function AppChatArea() {
     onAttachExistingFile,
   } = useChatMediaAttachmentActions({
     attachments,
-    maxFilesPerMessage,
     modelOptions,
     selectedModel,
     selectedPlatformModelName,
@@ -762,8 +760,8 @@ export function AppChatArea() {
     const issues = [...(temporaryMode ? temporaryRuntime.inputIssues : nativeInputIssues)];
     for (const attachment of attachments) {
       if (attachment.processingErrorCode === "file.not_found" && !issues.some((issue) =>
-        issue.dimension === "fileUnavailable" && issue.fileName === attachment.fileName)) {
-        issues.push({ dimension: "fileUnavailable", fileName: attachment.fileName, scope: "current" });
+        issue.dimension === "fileUnavailable" && issue.fileID === attachment.fileID)) {
+        issues.push({ dimension: "fileUnavailable", fileID: attachment.fileID, fileName: attachment.fileName, scope: "current" });
       }
     }
     if (channelMaxFiles !== undefined && channelMaxFiles > 0 && attachments.length > channelMaxFiles
@@ -782,10 +780,11 @@ export function AppChatArea() {
           || (kind !== "image" && localToolsDisabled && selectedModel.inputModalities.includes("attachment"))) continue;
         const matches = (attachment: { fileCategory?: string; mimeType?: string }) =>
           attachment.fileCategory === kind || attachment.mimeType?.startsWith(`${kind}/`);
-        const currentFile = attachments.find(matches);
+        for (const file of attachments.filter(matches)) {
+          issues.push({ dimension: "fileUnsupported", scope: "current", fileCategory: kind, fileID: file.fileID, fileName: file.fileName });
+        }
         const historicalFile = temporaryRuntime.historyAttachments.find(matches);
-        if (currentFile) issues.push({ dimension: "fileUnsupported", scope: "current", fileCategory: kind, fileName: currentFile.fileName });
-        if (historicalFile) issues.push({ dimension: "fileUnsupported", scope: "history", fileCategory: kind, fileName: historicalFile.fileName });
+        if (historicalFile) issues.push({ dimension: "fileUnsupported", scope: "history", fileCategory: kind, fileID: historicalFile.fileID, fileName: historicalFile.fileName });
       }
     }
     return issues;

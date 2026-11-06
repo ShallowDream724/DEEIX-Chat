@@ -236,19 +236,6 @@ export function useChatAttachments({
         return [];
       }
       const targetConversationKey = conversationKey;
-      const targetUploadingCount = uploadingByKey[targetConversationKey]?.length ?? 0;
-      const limitDescription = () => t(channelMaxFiles !== undefined ? "maxUploadFilesInChannel" : "maxUploadFiles", {
-        count: maxFilesPerMessage,
-      });
-      const remainingSlots = maxFilesPerMessage > 0
-        ? maxFilesPerMessage - attachments.length - targetUploadingCount
-        : Infinity;
-      if (remainingSlots <= 0) {
-        toast.error(t("limitReached"), {
-          description: limitDescription(),
-        });
-        return [];
-      }
       const policyAcceptedFiles: File[] = [];
       const policyLabels = {
         mimeNotAllowed: t("policy.mimeNotAllowed"),
@@ -264,12 +251,6 @@ export function useChatAttachments({
           continue;
         }
         policyAcceptedFiles.push(file);
-      }
-      if (policyAcceptedFiles.length > remainingSlots) {
-        toast.error(t("limitReached"), {
-          description: limitDescription(),
-        });
-        return [];
       }
       if (policyAcceptedFiles.length === 0) {
         return [];
@@ -416,17 +397,13 @@ export function useChatAttachments({
     },
     [
       appendAttachmentsForKey,
-      attachments.length,
-      channelMaxFiles,
       chatFilePolicy,
       conversationKey,
-      maxFilesPerMessage,
       releaseAttachments,
       resolveErrorMessage,
       t,
       temporary,
       uploading,
-      uploadingByKey,
     ],
   );
 

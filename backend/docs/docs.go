@@ -19200,6 +19200,9 @@ const docTemplate = `{
                         "other"
                     ]
                 },
+                "fileID": {
+                    "type": "string"
+                },
                 "fileName": {
                     "type": "string"
                 },

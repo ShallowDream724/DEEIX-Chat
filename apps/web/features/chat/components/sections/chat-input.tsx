@@ -1,12 +1,10 @@
 "use client";
 
-import { Box, CircleAlert, CornerDownRight, Eye, EyeOff, HatGlasses, LoaderCircle, PencilLine, TextQuote, Trash2 } from "lucide-react";
+import { Box, CircleAlert, CornerDownRight, Eye, EyeOff, HatGlasses, LoaderCircle, PencilLine, Trash2 } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useLocale, useTranslations } from "next-intl";
 import * as React from "react";
 import { toast } from "sonner";
-import { normalizeAppLocale } from "@/i18n/config";
-import { resolveInputLimitPresentation } from "@/i18n/resolve-error-message";
 import type { InputLimitReason } from "@/shared/lib/input-limit";
 
 import { AudioLines } from "@/components/animate-ui/icons/audio-lines";
@@ -17,14 +15,11 @@ import { Send } from "@/components/animate-ui/icons/send";
 import { X as XIcon } from "@/components/animate-ui/icons/x";
 import {
   Attachment,
-  AttachmentAction,
-  AttachmentActions,
   AttachmentContent,
   AttachmentDescription,
   AttachmentGroup,
   AttachmentMedia,
   AttachmentTitle,
-  AttachmentTrigger,
 } from "@/components/ui/attachment";
 import {
   DropdownMenu,
@@ -41,6 +36,7 @@ import {
 import { PlusIcon } from "@/components/ui/plus";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChatKnowledgeBases } from "@/features/chat/components/sections/chat-knowledge-bases";
+import { ChatComposerAttachment } from "@/features/chat/components/sections/chat-composer-attachment";
 import { ChatMCP } from "@/features/chat/components/sections/chat-mcp";
 import { ChatUIComponents } from "@/features/chat/components/sections/chat-ui-components";
 import { usesChat01Protocol } from "@/entities/model";
@@ -97,10 +93,6 @@ import type { BillingDisplayCurrency } from "@/entities/billing";
 import {
   LazyFilePreviewDialog,
   formatBytes,
-  isFileProcessing,
-  resolveFileExtension,
-  resolveFileIcon,
-  resolveFileProcessingBadge,
 } from "@/entities/file";
 import { isModelOptionPathFiltered, type ModelControlValue, type ModelOptionPolicy } from "@/entities/model";
 import { isImeComposingKeyEvent, isSendShortcutEvent } from "@/shared/lib/platform-shortcuts";
@@ -210,14 +202,6 @@ function clipboardFilesFromPaste(event: React.ClipboardEvent<HTMLTextAreaElement
   });
 }
 
-function formatAttachmentFileType(fileName: string) {
-  return resolveFileExtension(fileName).toUpperCase() || "FILE";
-}
-
-function formatAttachmentMeta(fileName: string, sizeBytes: number) {
-  return `${formatAttachmentFileType(fileName)} · ${formatBytes(sizeBytes)}`;
-}
-
 function ChatInputComponent({
   draft,
   loading,
@@ -288,7 +272,6 @@ function ChatInputComponent({
   const tChat = useTranslations("chat");
   const tComposer = useTranslations("chat.composer");
   const { knowledgeBaseEnabled } = useFeaturePolicy();
-  const tFileStatus = useTranslations("files.status");
   const locale = useLocale();
   const [isVoiceHovered, setIsVoiceHovered] = React.useState(false);
   const [toolsMenuHovered, setToolsMenuHovered] = React.useState(false);
@@ -315,14 +298,16 @@ function ChatInputComponent({
   const [previewAttachment, setPreviewAttachment] = React.useState<PendingAttachment | null>(null);
   const [markdownPreview, setMarkdownPreview] = React.useState(false);
   const stablePreviewAttachment = useDialogSnapshot(previewAttachment);
-  const previewLocalFile = stablePreviewAttachment?.localFile;
+  const previewLocalFile = stablePreviewAttachment?.localFile
+    ?? (stablePreviewAttachment?.previewURL?.startsWith("blob:") ? stablePreviewAttachment.previewURL : undefined);
   const openFilePreview = useChatFilePreview();
   const previewLoader = React.useMemo(() => previewLocalFile ? localAttachmentContentLoader(previewLocalFile) : undefined, [previewLocalFile]);
   const openAttachmentPreview = React.useCallback((attachment: PendingAttachment) => {
+    const localSource = attachment.localFile ?? (attachment.previewURL?.startsWith("blob:") ? attachment.previewURL : undefined);
     if (openFilePreview) {
       openFilePreview({
         file: attachment,
-        loadContent: attachment.localFile ? localAttachmentContentLoader(attachment.localFile) : undefined,
+        loadContent: localSource ? localAttachmentContentLoader(localSource) : undefined,
       });
     } else {
       setPreviewAttachment(attachment);
@@ -341,11 +326,14 @@ function ChatInputComponent({
   const [inputGroupHeight, setInputGroupHeight] = React.useState<number | null>(null);
   const hasDraftText = draft.trim().length > 0;
   const inputIssueHintID = React.useId();
-  const inputIssueLocale = normalizeAppLocale(locale);
   const primaryInputIssue = inputIssues?.[0];
-  const inputIssueTitle = primaryInputIssue
-    ? resolveInputLimitPresentation(primaryInputIssue, inputIssueLocale).title
-    : "";
+  const attachmentIssues = React.useMemo(() => {
+    const result = new Map<string, InputLimitReason>();
+    for (const issue of inputIssues ?? []) {
+      if (issue.fileID && issue.scope !== "history" && !result.has(issue.fileID)) result.set(issue.fileID, issue);
+    }
+    return result;
+  }, [inputIssues]);
   const hasSubmitContent = hasDraftText || attachments.length > 0;
   const waitingForAttachments = Boolean(processingAttachments && !primaryInputIssue);
   const canSend = hasSubmitContent && !loading && !uploading && !waitingForAttachments;
@@ -904,115 +892,26 @@ function ChatInputComponent({
               ) : null}
               <AttachmentGroup
                 ref={attachmentScrollFadeRef}
-                className="max-h-[196px] w-full flex-col gap-2 overflow-y-auto scroll-fade-12 px-1.5 pb-1 pt-1 [-ms-overflow-style:none] [scrollbar-width:none] max-sm:scroll-fade-none sm:max-h-none sm:flex-row sm:scroll-fade-x sm:overflow-x-auto sm:overflow-y-visible sm:pr-1.5 [&::-webkit-scrollbar]:hidden"
+                className="w-full flex-row items-center gap-2 overflow-x-auto scroll-fade-12 scroll-fade-x px-1.5 pb-1 pt-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
               >
-                {attachments.map((item) => {
-                  const badge = resolveFileProcessingBadge(item, (key, values) => tFileStatus(key, values));
-                  const FileIcon = resolveFileIcon(item);
-                  const nativeReady = item.fileCategory !== "image"
-                    && !(item.detectedMime || item.mimeType).startsWith("image/")
-                    && ((!temporaryMode && nativeBadgeFileIDs?.has(item.fileID))
-                      || (temporaryMode && localToolsDisabled && selectedModel?.inputModalities.includes("attachment")));
-                  const failed = !nativeReady && (badge.tone === "danger" || badge.tone === "warning");
-                  const backgroundProcessing = !nativeReady && !failed && isFileProcessing(item);
-                  const meta = formatAttachmentMeta(item.fileName, item.sizeBytes);
-                  const statusDetail = failed || backgroundProcessing ? badge.detail : undefined;
-                  const trigger = (
-                    <AttachmentTrigger
-                      onClick={() => openAttachmentPreview(item)}
-                      aria-label={tComposer("previewAttachment", { name: item.fileName })}
-                    />
-                  );
-                  return (
-                    <Attachment
-                      key={item.fileID}
-                      state={failed ? "error" : "done"}
-                      aria-busy={backgroundProcessing}
-                      size="sm"
-                      className="h-12 w-full border-0 bg-muted/35 px-2 text-left hover:bg-muted/50 dark:bg-white/[0.06] dark:hover:bg-white/[0.09] sm:w-[228px] sm:px-2.5"
-                    >
-                      <AttachmentMedia className="size-8 bg-transparent text-muted-foreground">
-                        <FileIcon className="size-5" strokeWidth={1.6} />
-                      </AttachmentMedia>
-                      <AttachmentContent className="flex min-w-0 flex-1 flex-col justify-center px-0 py-0">
-                        <AttachmentTitle className="text-[12px] leading-4 text-foreground/90" title={item.fileName}>
-                          {item.fileName}
-                        </AttachmentTitle>
-                        <AttachmentDescription className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] font-normal leading-none">
-                          {nativeReady ? (
-                            <span className="inline-flex h-3 shrink-0 items-center justify-center rounded bg-emerald-500/10 px-1 text-[10px] font-normal leading-none text-emerald-700 dark:bg-emerald-400/10 dark:text-emerald-400">
-                              {tComposer("nativeAttachment")}
-                            </span>
-                          ) : backgroundProcessing ? (
-                            <LoaderCircle className="size-3 shrink-0 animate-spin" strokeWidth={1.8} />
-                          ) : null}
-                          <span className="min-w-0 shrink truncate">
-                            {nativeReady ? `· ${meta}` : failed || backgroundProcessing ? `${badge.label} · ${meta}` : meta}
-                          </span>
-                          {item.ragOptOut && item.fileCategory !== "image" ? (
-                            <span
-                              className="shrink-0 rounded-md bg-muted/60 px-1.5 py-0.5 text-[10px] font-medium leading-none text-muted-foreground/65"
-                              title={tComposer("ragDisabledTitle")}
-                            >
-                              {tComposer("ragOff")}
-                            </span>
-                          ) : null}
-                        </AttachmentDescription>
-                      </AttachmentContent>
-                      {statusDetail ? (
-                        // The trigger covers the whole chip, so the status reason is anchored to it.
-                        <Tooltip>
-                          <TooltipTrigger asChild>{trigger}</TooltipTrigger>
-                          <TooltipContent side="top" className="max-w-72 leading-5 text-pretty">
-                            {statusDetail}
-                          </TooltipContent>
-                        </Tooltip>
-                      ) : (
-                        trigger
-                      )}
-                      <AttachmentActions>
-                        {pastedTexts.has(item.fileID) ? (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <AttachmentAction
-                                type="button"
-                                className="size-8 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground sm:size-7"
-                                onClick={() => restorePastedText(item.fileID)}
-                                aria-label={tComposer("insertPastedText", { name: item.fileName })}
-                              >
-                                <TextQuote size={15} strokeWidth={1.8} />
-                              </AttachmentAction>
-                            </TooltipTrigger>
-                            <TooltipContent side="top" className="text-xs">
-                              {tComposer("insertPastedTextTooltip")}
-                            </TooltipContent>
-                          </Tooltip>
-                        ) : null}
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <AttachmentAction
-                              type="button"
-                              className="size-8 rounded-md text-muted-foreground hover:bg-accent hover:text-foreground sm:size-7"
-                              onClick={() => onRemoveAttachment(item.fileID)}
-                              aria-label={tComposer("removeAttachment", { name: item.fileName })}
-                            >
-                              <XIcon size={15} strokeWidth={1.8} animateOnHover="default" />
-                            </AttachmentAction>
-                          </TooltipTrigger>
-                          <TooltipContent side="top" className="text-xs">
-                            {tComposer("removeAttachmentTooltip")}
-                          </TooltipContent>
-                        </Tooltip>
-                      </AttachmentActions>
-                    </Attachment>
-                  );
-                })}
+                {attachments.map((item) => (
+                  <ChatComposerAttachment
+                    key={item.fileID}
+                    file={item}
+                    nativeReady={Boolean((!temporaryMode && nativeBadgeFileIDs?.has(item.fileID))
+                      || (temporaryMode && localToolsDisabled && selectedModel?.inputModalities.includes("attachment")))}
+                    issue={attachmentIssues.get(item.fileID)}
+                    onPreview={openAttachmentPreview}
+                    onRemove={onRemoveAttachment}
+                    onRestoreText={pastedTexts.has(item.fileID) ? restorePastedText : undefined}
+                  />
+                ))}
                 {uploadingAttachments.map((item) => (
                   <Attachment
                     key={item.tempID}
                     state="uploading"
                     size="sm"
-                    className="h-12 w-full border-0 bg-muted/35 px-2.5 dark:bg-white/[0.06] sm:w-[228px]"
+                    className="h-12 w-[168px] flex-nowrap border-0 bg-muted/35 px-2.5 dark:bg-white/[0.06] sm:w-[228px]"
                     aria-label={tComposer("uploadingAttachment", { name: item.fileName })}
                   >
                     <AttachmentMedia className="size-8 bg-transparent text-muted-foreground">
@@ -1057,19 +956,14 @@ function ChatInputComponent({
             onSelectTab={selectMentionTab}
           />
 
-          {primaryInputIssue ? (
-            <div id={inputIssueHintID} role="status" className="flex items-center gap-1.5 px-3 pt-2 text-xs text-muted-foreground">
-              <CircleAlert aria-hidden="true" className="size-3.5 shrink-0" />
-              <span>{tChat("composer.inputIssueHint", { title: inputIssueTitle, count: inputIssues?.length ?? 1 })}</span>
-            </div>
-          ) : waitingForAttachments ? (
+          {waitingForAttachments ? (
             <div id={inputIssueHintID} role="status" className="flex items-center gap-1.5 px-3 pt-2 text-xs text-muted-foreground">
               <LoaderCircle aria-hidden="true" className="size-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
               <span>{tChat("submit.processingAttachments")}</span>
             </div>
           ) : null}
           <InputGroupTextarea
-            aria-describedby={primaryInputIssue || waitingForAttachments ? inputIssueHintID : undefined}
+            aria-describedby={waitingForAttachments ? inputIssueHintID : undefined}
             ref={textareaRef}
             value={draft}
             disabled={loading}

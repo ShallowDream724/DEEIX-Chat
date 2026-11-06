@@ -617,6 +617,8 @@ definitions:
         - video
         - other
         type: string
+      fileID:
+        type: string
       fileName:
         type: string
       limit:

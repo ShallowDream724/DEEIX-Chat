@@ -10,11 +10,10 @@ import type { FileObjectDTO } from "@/shared/api/file-types";
 
 /**
  * Reusing generated media: attach generated images back to the composer, auto-switching to a capable model if the current one can't edit images;
- * set a generated video as extension input and switch to a model that supports video extension; attach history files (with count limit checks).
+ * set a generated video as extension input and switch to a model that supports video extension; attach history files. Input budgets are checked on send.
  */
 export function useChatMediaAttachmentActions({
   attachments,
-  maxFilesPerMessage,
   modelOptions,
   selectedModel,
   selectedPlatformModelName,
@@ -23,7 +22,6 @@ export function useChatMediaAttachmentActions({
   releaseAttachments,
 }: {
   attachments: PendingAttachment[];
-  maxFilesPerMessage: number;
   modelOptions: ChatModelOption[];
   selectedModel: ChatModelOption | null;
   selectedPlatformModelName: string;
@@ -35,14 +33,6 @@ export function useChatMediaAttachmentActions({
 
   const onEditGeneratedImageAttachment = React.useCallback(
     (attachment: MessageAttachment, sourceModelName?: string) => {
-      const alreadyAttached = attachments.some((item) => item.fileID === attachment.fileID);
-      if (!alreadyAttached && maxFilesPerMessage > 0 && attachments.length >= maxFilesPerMessage) {
-        toast.error(t("attachments.limitReached"), {
-          description: t("attachments.maxUploadFiles", { count: maxFilesPerMessage }),
-        });
-        return;
-      }
-
       const pendingAttachment = toPendingAttachment(attachment);
       setAttachments((previous) => {
         if (previous.some((item) => item.fileID === pendingAttachment.fileID)) {
@@ -65,13 +55,10 @@ export function useChatMediaAttachmentActions({
 
     },
     [
-      attachments,
-      maxFilesPerMessage,
       modelOptions,
       selectedModel,
       setAttachments,
       setSelectedPlatformModelName,
-      t,
     ],
   );
 
@@ -117,12 +104,6 @@ export function useChatMediaAttachmentActions({
       if (alreadyAttached) {
         return;
       }
-      if (maxFilesPerMessage > 0 && attachments.length >= maxFilesPerMessage) {
-        toast.error(t("attachments.limitReached"), {
-          description: t("attachments.maxUploadFiles", { count: maxFilesPerMessage }),
-        });
-        return;
-      }
       setAttachments((previous) => {
         if (previous.some((item) => item.fileID === file.fileID)) {
           return previous;
@@ -150,7 +131,7 @@ export function useChatMediaAttachmentActions({
         ];
       });
     },
-    [attachments, maxFilesPerMessage, setAttachments, t],
+    [attachments, setAttachments],
   );
 
   return {

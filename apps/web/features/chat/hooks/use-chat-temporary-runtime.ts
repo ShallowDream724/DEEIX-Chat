@@ -223,6 +223,7 @@ function getTemporaryHistoryIssues(
       if (!(attachment.localFile instanceof File)) {
         issues.push({
           dimension: "fileUnavailable",
+          fileID: attachment.fileID,
           fileName: attachment.fileName,
           scope: message === current ? "current" : "history",
         });

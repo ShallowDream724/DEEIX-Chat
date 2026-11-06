@@ -17,6 +17,7 @@ export type InputLimitReason = {
   dimension: InputLimitDimension;
   actual?: number;
   limit?: number;
+  fileID?: string;
   fileName?: string;
   // Local task restrictions use the existing operation-specific explanation.
   description?: string;
@@ -47,6 +48,7 @@ export function readInputLimitReason(value: unknown): InputLimitReason | undefin
     dimension,
     actual: value.actual === -1 ? -1 : numeric(value.actual),
     limit: numeric(value.limit),
+    fileID: typeof value.fileID === "string" ? value.fileID.trim() || undefined : undefined,
     fileName: typeof value.fileName === "string" ? value.fileName.trim() || undefined : undefined,
     fileCategory,
     scope: value.scope === "context" ? "mixed" : scope,
