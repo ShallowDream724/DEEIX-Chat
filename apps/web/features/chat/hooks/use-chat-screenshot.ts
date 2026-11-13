@@ -2,6 +2,8 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { materializeChatHistory } from "@/features/chat/model/chat-history-window";
+import { materializeMarkdownForCapture } from "@/shared/components/markdown/long-markdown-render";
 
 import {
   ConversationScreenshotTooLargeError,
@@ -55,6 +57,11 @@ type PreparedScreenshotDom = {
   restore: () => void;
 };
 
+function screenshotMessageRows(target: HTMLElement, selectedOnly: boolean, selectedIDs: ReadonlySet<string>): HTMLElement[] {
+  const rows = Array.from(target.querySelectorAll<HTMLElement>("[data-screenshot-message-row='true']"));
+  return (selectedOnly ? rows.filter((row) => selectedIDs.has(row.dataset.messagePublicId ?? "")) : rows).slice(-MAX_SCREENSHOT_MESSAGES);
+}
+
 function forEachElementInRoots(
   roots: HTMLElement[],
   selector: string,
@@ -87,9 +94,7 @@ function prepareConversationScreenshotDom(
   const restoreScreenshotOnlyDisplays: Array<{ element: HTMLElement; display: string }> = [];
   target.dataset.screenshotCapturing = "true";
   const rows = Array.from(target.querySelectorAll<HTMLElement>("[data-screenshot-message-row='true']"));
-  const includedRows = selectedOnly
-    ? rows.filter((row) => selectedIDs.has(row.dataset.messagePublicId ?? "")).slice(-MAX_SCREENSHOT_MESSAGES)
-    : rows.slice(-MAX_SCREENSHOT_MESSAGES);
+  const includedRows = screenshotMessageRows(target, selectedOnly, selectedIDs);
   const includedRowSet = new Set(includedRows);
 
   rows.forEach((row) => {
@@ -296,6 +301,8 @@ export function useChatScreenshot({
       setCapturing(true);
       const loadingToast = toast.loading(messagesRef.current.generating);
       let preparedDom: PreparedScreenshotDom | null = null;
+      let releaseHistory: (() => void) | undefined;
+      let releaseMarkdown: (() => void) | undefined;
       try {
         const target = messageContentRef.current;
         if (!target) {
@@ -303,6 +310,12 @@ export function useChatScreenshot({
         }
 
         const rendererReady = loadConversationScreenshotRenderer();
+        releaseHistory = await materializeChatHistory(target, selectedOnly ? selected : null, controller.signal);
+        const markdownReleases = await Promise.all(
+          screenshotMessageRows(target, selectedOnly, selected).map((row) => materializeMarkdownForCapture(row, controller.signal)),
+        );
+        releaseMarkdown = () => { markdownReleases.forEach((release) => { release(); }); };
+        controller.signal.throwIfAborted();
         preparedDom = prepareConversationScreenshotDom(target, {
           selectedOnly,
           selectedIDs: selected,
@@ -334,6 +347,8 @@ export function useChatScreenshot({
         }
       } finally {
         preparedDom?.restore();
+        releaseMarkdown?.();
+        releaseHistory?.();
         if (captureControllerRef.current === controller) {
           captureControllerRef.current = null;
           setCapturing(false);

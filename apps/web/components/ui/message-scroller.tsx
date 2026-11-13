@@ -3,7 +3,7 @@
 import * as React from "react";
 import {
   MessageScroller as MessageScrollerPrimitive,
-  useMessageScroller,
+  useMessageScroller as useMessageScrollerPrimitive,
   useMessageScrollerScrollable,
   useMessageScrollerVisibility,
 } from "@shadcn/react/message-scroller";
@@ -25,13 +25,48 @@ const FollowContext = React.createContext<{ autoScroll: boolean; threshold: numb
   threshold: MESSAGE_SCROLLER_EDGE_THRESHOLD_PX,
 });
 
+type ScrollerControls = ReturnType<typeof useMessageScrollerPrimitive>;
+type MessageNavigationRequest = {
+  messageId: Parameters<ScrollerControls["scrollToMessage"]>[0];
+  options: Parameters<ScrollerControls["scrollToMessage"]>[1];
+  scrollToMessage: ScrollerControls["scrollToMessage"];
+};
+type MessageNavigationHandler = (request: MessageNavigationRequest) => boolean;
+const NavigationContext = React.createContext<Set<MessageNavigationHandler> | null>(null);
+
+// A content window can materialize a registered shell before the primitive
+// computes its final destination. The primitive remains the only scroll API.
+function useMessageScrollerNavigation() {
+  const handlers = React.useContext(NavigationContext);
+  return React.useCallback((handler: MessageNavigationHandler) => {
+    handlers?.add(handler);
+    return () => { handlers?.delete(handler); };
+  }, [handlers]);
+}
+
+function useMessageScroller(): ScrollerControls {
+  const controls = useMessageScrollerPrimitive();
+  const handlers = React.useContext(NavigationContext);
+  return React.useMemo(() => ({
+    ...controls,
+    scrollToMessage: (messageId, options) => {
+      for (const handler of handlers ?? []) {
+        if (handler({ messageId, options, scrollToMessage: controls.scrollToMessage })) return true;
+      }
+      return controls.scrollToMessage(messageId, options);
+    },
+  }), [controls, handlers]);
+}
+
 function MessageScrollerProvider({
   autoScroll = true,
   scrollEdgeThreshold = MESSAGE_SCROLLER_EDGE_THRESHOLD_PX,
   ...props
 }: React.ComponentProps<typeof MessageScrollerPrimitive.Provider>) {
   const follow = React.useMemo(() => ({ autoScroll, threshold: scrollEdgeThreshold }), [autoScroll, scrollEdgeThreshold]);
+  const [navigationHandlers] = React.useState(() => new Set<MessageNavigationHandler>());
   return (
+    <NavigationContext.Provider value={navigationHandlers}>
     <FollowContext.Provider value={follow}>
       <MessageScrollerPrimitive.Provider
         autoScroll={autoScroll}
@@ -39,6 +74,7 @@ function MessageScrollerProvider({
         {...props}
       />
     </FollowContext.Provider>
+    </NavigationContext.Provider>
   );
 }
 
@@ -219,4 +255,5 @@ export {
   useMessageScroller,
   useMessageScrollerScrollable,
   useMessageScrollerVisibility,
+  useMessageScrollerNavigation,
 };

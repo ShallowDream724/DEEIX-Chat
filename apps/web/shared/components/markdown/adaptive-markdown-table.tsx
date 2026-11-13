@@ -3,9 +3,11 @@
 import { useTranslations } from "next-intl";
 import * as React from "react";
 import { toast } from "sonner";
-import { TableDownloadDropdown } from "streamdown";
+import { TableDownloadDropdown, tableDataToCSV } from "streamdown";
+import { DownloadIcon } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { useScrollFadeFallbackRef } from "@/shared/hooks/use-scroll-fade-fallback-ref";
 import { isRecord, readString } from "@/shared/lib/type-guards";
 import {
@@ -14,6 +16,7 @@ import {
   classifyTableColumns,
   mergeColumnType,
 } from "./markdown-table-analyzer";
+import { markdownTableSourceData, type MarkdownTableSource } from "./long-markdown-model";
 
 const INITIAL_STREAMING_ROWS = 3;
 const INITIAL_ANALYSIS_DELAY_MS = 120;
@@ -21,6 +24,7 @@ const REANALYSIS_DEBOUNCE_MS = 420;
 
 export const MarkdownTableStreamingContext = React.createContext(false);
 export const MarkdownTableAnalyzerOptionsContext = React.createContext<ColumnAnalyzerOptions | undefined>(undefined);
+export const MarkdownTableSourceContext = React.createContext<MarkdownTableSource | null>(null);
 const MarkdownTableScopeContext = React.createContext(false);
 
 type MarkdownTableProps = React.TableHTMLAttributes<HTMLTableElement> & {
@@ -50,6 +54,7 @@ function isElementWithChildren(node: React.ReactNode): node is ElementWithChildr
 export function AdaptiveMarkdownTable({ children, className, node: _node, ...props }: MarkdownTableProps) {
   const t = useTranslations("chat.markdown");
   const streaming = React.useContext(MarkdownTableStreamingContext);
+  const source = React.useContext(MarkdownTableSourceContext);
   const analyzerOptions = React.useContext(MarkdownTableAnalyzerOptionsContext);
   const columnTypes = useStableColumnTypes(children, analyzerOptions, streaming);
   const contentColumnCount = columnTypes.filter((type) => type === "content").length;
@@ -121,16 +126,50 @@ export function AdaptiveMarkdownTable({ children, className, node: _node, ...pro
           </MarkdownTableScopeContext.Provider>
         </div>
         <div className="mt-3 shrink-0" data-streamdown="table-download-actions">
-          <TableDownloadDropdown
+          {source ? <SourceTableDownload source={source} /> : <TableDownloadDropdown
             className="inline-flex size-5 items-center justify-center rounded-none p-1 align-middle outline-none hover:bg-foreground/[0.04] focus-visible:bg-foreground/[0.04] focus-visible:ring-0"
             onError={() => toast.error(t("table.downloadFailed"))}
-          />
+          />}
         </div>
       </div>
       <span id={hintID} className="sr-only">
         {t("scrollableTableHint")}
       </span>
     </div>
+  );
+}
+
+function SourceTableDownload({ source }: { source: MarkdownTableSource }) {
+  const t = useTranslations("chat.markdown.table");
+  const download = (format: "csv" | "markdown") => {
+    try {
+      const content = format === "csv" ? tableDataToCSV(markdownTableSourceData(source)) : source.source;
+      const blob = new Blob([format === "csv" ? "\uFEFF" : "", content], {
+        type: format === "csv" ? "text/csv;charset=utf-8" : "text/markdown;charset=utf-8",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `table.${format === "csv" ? "csv" : "md"}`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch {
+      toast.error(t("downloadFailed"));
+    }
+  };
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <button type="button" title={t("download")} aria-label={t("download")}
+          className="inline-flex size-5 items-center justify-center rounded-none p-1 align-middle outline-none hover:bg-foreground/[0.04] focus-visible:bg-foreground/[0.04]">
+          <DownloadIcon className="size-3" />
+        </button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem onClick={() => download("csv")}>{t("downloadAsCsv")}</DropdownMenuItem>
+        <DropdownMenuItem onClick={() => download("markdown")}>{t("downloadAsMarkdown")}</DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

@@ -238,3 +238,28 @@ export function extractArtifactsFromContent(
 export function extractArtifactsFromMessages(messages: ChatAreaMessage[]): ChatArtifact[] {
   return messages.flatMap((message) => (message.role === "assistant" ? extractArtifactsFromContent(message) : []));
 }
+
+// A streaming update replaces the message array but normally changes only its
+// last entry. Keep parsed artifacts for unchanged sources, including empty
+// results, and release messages as soon as they leave this conversation scope.
+export function createMessageArtifactSelector() {
+  type Entry = { message: ChatAreaMessage; artifacts: ChatArtifact[] };
+  let cache = new Map<string, Entry>();
+  return (messages: ChatAreaMessage[]): ChatArtifact[] => {
+    const nextCache = new Map<string, Entry>();
+    const result: ChatArtifact[] = [];
+    for (const message of messages) {
+      if (message.role !== "assistant") continue;
+      const entry = cache.get(message.key);
+      const previous = entry?.message;
+      const unchanged = previous && previous.content === message.content &&
+        previous.publicID === message.publicID && previous.runID === message.runID &&
+        previous.isStreaming === message.isStreaming && previous.updatedAt === message.updatedAt;
+      const artifacts = unchanged ? entry.artifacts : extractArtifactsFromContent(message);
+      nextCache.set(message.key, { message, artifacts });
+      for (const artifact of artifacts) result.push(artifact);
+    }
+    cache = nextCache;
+    return result;
+  };
+}

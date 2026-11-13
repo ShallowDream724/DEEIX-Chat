@@ -19,6 +19,7 @@ import {
 import { useImageDisplaySource } from "@/shared/hooks/use-image-display-source";
 import { downloadMarkdownImageSource, resolveMarkdownImageDownloadName } from "@/shared/lib/markdown-image-source";
 import { MarkdownTableStreamingContext } from "./adaptive-markdown-table";
+import { exceedsCodeBlockHighlightBudget } from "./code-block-budget";
 import { MarkdownFootnotesContext } from "./streamdown-html";
 import { StreamdownCheckIcon, StreamdownCopyIcon } from "./streamdown-icons";
 import { MarkdownMermaidLoading, MarkdownMermaidPendingContext } from "./streamdown-mermaid";
@@ -557,7 +558,24 @@ export function MarkdownCodePre({ children, node: _node, "data-markdown-source-l
   return (
     <div className="relative w-full" data-markdown-source-line={sourceLine}>
       {!mermaid ? <CodeBlockActions code={codeContent} language={language} previewable={artifactPreviewable} /> : null}
-      {codeBlock}
+      {!mermaid && exceedsCodeBlockHighlightBudget(codeContent) ? (
+        <div className="relative my-4 flex w-full flex-col" data-streamdown="code-block" data-language={language}>
+          <div className="flex h-8 items-center" data-streamdown="code-block-header" data-language={language}>
+            <span className="ml-1 font-mono lowercase">{language}</span>
+          </div>
+          <div>
+            <div
+              className="overflow-auto"
+              data-streamdown="code-block-body"
+              data-language={language}
+              data-code-block-plain="true"
+              style={{ maxHeight: "22rem" }}
+            >
+              <pre><code>{codeContent}</code></pre>
+            </div>
+          </div>
+        </div>
+      ) : codeBlock}
     </div>
   );
 }

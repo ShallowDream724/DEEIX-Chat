@@ -28,13 +28,15 @@ import {
   chatMessageScrollerID,
 } from "@/features/chat/components/sections/chat-message-position-rail";
 import { ChatResponseOutlineRail } from "@/features/chat/components/sections/chat-response-outline-rail";
+import { ChatHistoryWindow, ChatHistoryWindowItem } from "@/features/chat/components/sections/chat-history-window";
 import { ChatScreenshotSelectionBar } from "@/features/chat/components/sections/chat-screenshot-selection-bar";
 import { useChatMessageFeedback } from "@/features/chat/hooks/use-chat-message-feedback";
 import { useChatUIBlockStateBinding } from "@/features/chat/hooks/use-chat-ui-block-state";
 import type { OpenCodeArtifactInput } from "@/features/chat/model/chat-artifacts";
-import type { ChatUIBlockStateStore } from "@/features/chat/model/chat-ui-block-state-store";
+import { createChatUIBlockStateStore, type ChatUIBlockStateStore } from "@/features/chat/model/chat-ui-block-state-store";
 import { areChatAreaMessagesRenderEqual } from "@/features/chat/model/chat-message-render";
 import { MAX_SCREENSHOT_MESSAGES } from "@/features/chat/model/conversation-screenshot";
+import { chatHistoryShouldStartMounted } from "@/features/chat/model/chat-history-window";
 import type { ChatModelOption } from "@/features/chat/types/chat-runtime";
 import type { ChatAreaMessage, MessageAttachment, UserMessageEditMode } from "@/features/chat/types/messages";
 import { cn } from "@/lib/utils";
@@ -580,6 +582,7 @@ export function ChatArea({
   screenshot,
 }: ChatAreaProps) {
   const t = useTranslations("chat");
+  const [localUIBlockStateStore] = React.useState(() => createChatUIBlockStateStore({ persist: async () => undefined }));
   const { getReaction, onReactAssistantMessage } = useChatMessageFeedback(messages, {
     persist: persistMessageFeedback,
   });
@@ -703,6 +706,7 @@ export function ChatArea({
             <LiveMessageFollower activeKey={liveUserScrollKey} />
             <MessageScrollerViewport
               ref={messageViewportBoundaryRef}
+              preserveScrollOnPrepend={false}
               className="px-3 pt-2 has-data-[screenshot-capturing=true]:pb-8 md:px-6"
               onScroll={onScroll}
             >
@@ -712,6 +716,7 @@ export function ChatArea({
                 style={{ fontFamily: "var(--font-chat)", fontWeight: "var(--font-chat-weight)" }}
               >
                 <ChatScreenshotBrandMark placement="top" />
+                <ChatHistoryWindow viewportRef={messageViewportBoundaryRef} contentRef={messageContentRef}>
                 {messages.map((item, index) => {
                   const previousItem = index > 0 ? messages[index - 1] : null;
                   const spacingClass =
@@ -731,7 +736,7 @@ export function ChatArea({
                   const row = (
                     <ChatMessageRow
                       item={item}
-                      uiBlockStateStore={uiBlockState?.store}
+                      uiBlockStateStore={uiBlockState?.store ?? localUIBlockStateStore}
                       uiBlockStateConversationID={uiBlockState?.conversationPublicID ?? null}
                       busy={busy}
                       readOnly={messagesReadOnly}
@@ -834,13 +839,18 @@ export function ChatArea({
                       data-chat-message-role={item.role}
                       data-message-public-id={publicID || undefined}
                     >
-                      <div>
+                      <ChatHistoryWindowItem
+                        message={item}
+                        initiallyMounted={chatHistoryShouldStartMounted(index, messages.length)}
+                        forceMounted={Boolean(item.isPending || item.isStreaming || item.status === "pending" || isSelected)}
+                      >
                         {compactDivider}
                         {rowContent}
-                      </div>
+                      </ChatHistoryWindowItem>
                     </MessageScrollerItem>
                   );
                 })}
+                </ChatHistoryWindow>
                 <ChatScreenshotBrandMark placement="bottom" />
               </MessageScrollerContent>
             </MessageScrollerViewport>

@@ -5,7 +5,7 @@ import * as React from "react";
 import {
   type ChatArtifact,
   extractArtifactsFromContent,
-  extractArtifactsFromMessages,
+  createMessageArtifactSelector,
   type OpenCodeArtifactInput,
 } from "@/features/chat/model/chat-artifacts";
 import type { ChatAreaMessage } from "@/features/chat/types/messages";
@@ -119,7 +119,11 @@ function findReplacementArtifact(artifacts: ChatArtifact[], previous: ChatArtifa
 
 export function useChatArtifacts({ scopeKey, transient = false, messages }: UseChatArtifactsParams) {
   const { isInline, inlineLayout } = useArtifactViewport();
-  const artifacts = React.useMemo(() => extractArtifactsFromMessages(messages), [messages]);
+  const artifactScope = React.useMemo(
+    () => ({ scopeKey, transient, select: createMessageArtifactSelector() }),
+    [scopeKey, transient],
+  );
+  const artifacts = React.useMemo(() => artifactScope.select(messages), [messages, artifactScope]);
   const latestArtifact = artifacts.at(-1) ?? null;
   const [activeArtifactID, setActiveArtifactID] = React.useState<string | null>(null);
   const [dismissedArtifactID, setDismissedArtifactID] = React.useState<string | null>(null);

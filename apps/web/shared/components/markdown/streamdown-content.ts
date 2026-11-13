@@ -51,12 +51,14 @@ export function normalizeContent(input: unknown): string {
 }
 
 const MARKDOWN_LITERAL_FRAGMENT_RE = /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)/g;
-const HTML_VISUAL_MARKDOWN_FENCE_RE = /(^|\n)([ \t]{0,3})(```|~~~)[ \t]*(?:(?:markdown|md)[^\n]*)?\n([\s\S]*?)\n[ \t]*\3[ \t]*(?=\n|$)/gi;
+const HTML_VISUAL_MARKDOWN_FENCE_START_RE = /(^|\n)([ \t]{0,3})(```|~~~)[ \t]*(?:(?:markdown|md)[^\n]*)?\n/gi;
+const HTML_VISUAL_MARKDOWN_FENCE_END_RE = /\n[ \t]*(```|~~~)[ \t]*(?=\n|$)/g;
 const HTML_VISUAL_FRAGMENT_RE = /^\s*<(?:div|section|article|aside|main|details|table)\b[\s\S]*<\/(?:div|section|article|aside|main|details|table)>\s*$/i;
 const HTML_VISUAL_STYLE_RE = /\sstyle\s*=\s*["'][^"']{8,}["']/i;
 const HTML_TAG_RE = /<\/?[A-Za-z][^>\n]*>/g;
 const HTML_BLOCK_ROOT_RE = /(^|\n)([ \t]{0,3})<(article|aside|details|div|main|section|table)\b/gi;
-const HTML_STRUCTURE_TAG_RE = /<!--[\s\S]*?-->|<\/?([A-Za-z][A-Za-z0-9-]*)\b(?:[^>"']|"[^"]*"|'[^']*')*>/g;
+const HTML_BLOCK_ROOT_TAGS = new Set(["article", "aside", "details", "div", "main", "section", "table"]);
+const HTML_STRUCTURE_START_RE = /<!--|<\/?([A-Za-z][A-Za-z0-9-]*)\b/g;
 const HTML_BLANK_LINE_RE = /(\r?\n)[ \t]*(?=\r?\n)/g;
 const INLINE_DOLLAR_MATH_RE = /(^|[^\\$])\$([^$\n]{1,800})\$/g;
 const DISPLAY_DOLLAR_MATH_RE = /(\${2,})([\s\S]*?)(\1)/g;
@@ -344,10 +346,27 @@ function normalizeEscapedDollarDelimiters(source: string): string {
   return consumedUntil ? normalizedSource + source.slice(consumedUntil) : source;
 }
 
+function normalizePairedLatexDelimiters(source: string, opening: string, closing: string, display: boolean): string {
+  const parts: string[] = [];
+  let consumedUntil = 0;
+  for (let start = source.indexOf(opening); start >= 0; start = source.indexOf(opening, consumedUntil)) {
+    const end = source.indexOf(closing, start + opening.length);
+    // No later opener can have a closer either. Do not repeatedly scan the
+    // suffix when a streamed formula contains many unfinished delimiters.
+    if (end < 0) break;
+    const mathContent = source.slice(start + opening.length, end).trim();
+    parts.push(source.slice(consumedUntil, start), display ? `$$\n${mathContent}\n$$` : `$${mathContent}$`);
+    consumedUntil = end + closing.length;
+  }
+  if (!consumedUntil) return source;
+  parts.push(source.slice(consumedUntil));
+  return parts.join("");
+}
+
 function normalizeLatexDelimitersInText(source: string): string {
-  const normalizedSource = source
-    .replace(/\\\[\s*\n?([\s\S]*?)\n?\s*\\\]/g, (_, mathContent: string) => `$$\n${mathContent.trim()}\n$$`)
-    .replace(/\\\(([\s\S]*?)\\\)/g, (_, mathContent: string) => `$${mathContent.trim()}$`);
+  const normalizedSource = normalizePairedLatexDelimiters(
+    normalizePairedLatexDelimiters(source, "\\[", "\\]", true), "\\(", "\\)", false,
+  );
   return normalizedSource.includes("\\$") ? normalizeEscapedDollarDelimiters(normalizedSource) : normalizedSource;
 }
 
@@ -498,16 +517,40 @@ export function normalizeHTMLVisualMarkdownFences(source: string): string {
     return source;
   }
 
-  return source.replace(
-    HTML_VISUAL_MARKDOWN_FENCE_RE,
-    (match: string, prefix: string, _indent: string, _fence: string, code: string) => {
-      const trimmedCode = code.trim();
-      if (!HTML_VISUAL_FRAGMENT_RE.test(trimmedCode) || !HTML_VISUAL_STYLE_RE.test(trimmedCode)) {
-        return match;
-      }
-      return `${prefix}${trimmedCode}`;
-    },
-  );
+  const closers = new Map<string, Array<{ start: number; end: number }>>();
+  for (const match of source.matchAll(HTML_VISUAL_MARKDOWN_FENCE_END_RE)) {
+    const matching = closers.get(match[1]) ?? [];
+    matching.push({ start: match.index, end: match.index + match[0].length });
+    closers.set(match[1], matching);
+  }
+  const closerCursors = new Map<string, number>();
+  const openingPattern = new RegExp(HTML_VISUAL_MARKDOWN_FENCE_START_RE.source, HTML_VISUAL_MARKDOWN_FENCE_START_RE.flags);
+  const parts: string[] = [];
+  let consumedUntil = 0;
+  for (let match = openingPattern.exec(source); match; match = openingPattern.exec(source)) {
+    const matching = closers.get(match[3]) ?? [];
+    let cursor = closerCursors.get(match[3]) ?? 0;
+    while (cursor < matching.length && matching[cursor].start < openingPattern.lastIndex) cursor += 1;
+    closerCursors.set(match[3], cursor);
+    const closing = matching[cursor];
+    if (!closing) {
+      // The next line may open the other marker kind. Let that search reuse
+      // this opener's final newline, as the full fenced-block regex did.
+      openingPattern.lastIndex -= 1;
+      continue;
+    }
+    const trimmedCode = source.slice(openingPattern.lastIndex, closing.start).trim();
+    if (HTML_VISUAL_FRAGMENT_RE.test(trimmedCode) && HTML_VISUAL_STYLE_RE.test(trimmedCode)) {
+      parts.push(source.slice(consumedUntil, match.index), match[1], trimmedCode);
+      consumedUntil = closing.end;
+    }
+    // Match the same nonoverlapping fenced blocks as the original replacement,
+    // including ordinary code blocks which are left unchanged.
+    openingPattern.lastIndex = closing.end;
+  }
+  if (!consumedUntil) return source;
+  parts.push(source.slice(consumedUntil));
+  return parts.join("");
 }
 
 type CodeFenceEvent = {
@@ -515,6 +558,8 @@ type CodeFenceEvent = {
   fenceEnd: number;
   marker: string;
   info: string;
+  tagged: boolean;
+  canOpen: boolean;
 };
 
 type CodeFenceUpgrade = {
@@ -524,6 +569,11 @@ type CodeFenceUpgrade = {
 };
 
 const CODE_FENCE_EVENT_RE = /(^|\n)([ \t]{0,3})(`{3,}|~{3,})([^\n]*)/g;
+
+// Fence repair is a heuristic. Ambiguous documents can make every tagged fence
+// inspect the same suffix, so limit total inspections rather than source length.
+// Exhausting this linear budget leaves the complete original document intact.
+const NESTED_FENCE_INSPECTIONS_PER_EVENT = 16;
 
 // A tagged fence (e.g. ```markdown) cannot contain another same-char tagged fence
 // (e.g. ```text): CommonMark closes the outer block at the first bare fence, so
@@ -540,20 +590,23 @@ export function normalizeNestedCodeFences(source: string): string {
   CODE_FENCE_EVENT_RE.lastIndex = 0;
   const events: CodeFenceEvent[] = [];
   for (let match = CODE_FENCE_EVENT_RE.exec(source); match; match = CODE_FENCE_EVENT_RE.exec(source)) {
+    const trimmedInfo = (match[4] ?? "").trim();
     events.push({
       fenceStart: match.index + match[1].length + match[2].length,
       fenceEnd: match.index + match[0].length,
       marker: match[3],
       info: match[4] ?? "",
+      tagged: trimmedInfo !== "",
+      canOpen: trimmedInfo !== "" && !trimmedInfo.startsWith("`"),
     });
   }
 
   const upgrades: CodeFenceUpgrade[] = [];
+  let remainingInspections = events.length * NESTED_FENCE_INSPECTIONS_PER_EVENT;
   let index = 0;
   while (index < events.length) {
     const open = events[index];
-    const openInfo = open.info.trim();
-    if (openInfo === "" || openInfo.startsWith("`")) {
+    if (!open.canOpen) {
       index += 1;
       continue;
     }
@@ -564,11 +617,14 @@ export function normalizeNestedCodeFences(source: string): string {
     let hasLongerInnerMarker = false;
     let maxInnerMarker = open.marker.length;
     for (let cursor = index + 1; cursor < events.length; cursor += 1) {
+      if (remainingInspections-- <= 0) {
+        return source;
+      }
       const event = events[cursor];
       if (event.marker[0] !== open.marker[0] || event.marker.length < open.marker.length) {
         continue;
       }
-      if (event.info.trim() === "") {
+      if (!event.tagged) {
         if (depth === 0) {
           closer = cursor;
           break;
@@ -614,67 +670,87 @@ export function normalizeNestedCodeFences(source: string): string {
   return parts.join("");
 }
 
-function findHTMLBlockEnd(
-  source: string,
-  start: number,
-  rootTagName: string,
-  streaming: boolean,
-): number | null {
-  const tagPattern = new RegExp(HTML_STRUCTURE_TAG_RE.source, HTML_STRUCTURE_TAG_RE.flags);
-  tagPattern.lastIndex = start;
-  const openingTag = tagPattern.exec(source);
-  if (
-    !openingTag ||
-    openingTag.index !== start ||
-    openingTag[0].startsWith("</") ||
-    openingTag[1]?.toLowerCase() !== rootTagName
-  ) {
-    return null;
-  }
-
-  let depth = /\/\s*>$/.test(openingTag[0]) ? 0 : 1;
-  if (depth === 0) {
-    return tagPattern.lastIndex;
-  }
-
+// Index each opening tag once. Separate stacks retain the existing same-tag
+// nesting semantics, even for HTML that crosses other element boundaries.
+// Scan quoted attributes explicitly: a regex retry at every '<' in an unfinished
+// quoted attribute can itself scan a quadratic number of characters.
+function indexHTMLBlockEnds(source: string, streaming: boolean): Map<number, number> | null {
+  const ends = new Map<number, number>();
+  const stacks = new Map<string, number[]>();
+  const tagPattern = new RegExp(HTML_STRUCTURE_START_RE.source, HTML_STRUCTURE_START_RE.flags);
   for (let match = tagPattern.exec(source); match; match = tagPattern.exec(source)) {
-    if (!match[1] || match[1].toLowerCase() !== rootTagName) {
+    let end = tagPattern.lastIndex;
+    if (!match[1]) {
+      const commentEnd = source.indexOf("-->", end);
+      if (commentEnd < 0) {
+        return null;
+      }
+      tagPattern.lastIndex = commentEnd + 3;
       continue;
     }
-
-    if (match[0].startsWith("</")) {
-      depth -= 1;
-      if (depth === 0) {
-        return tagPattern.lastIndex;
+    let quote = "";
+    for (; end < source.length; end += 1) {
+      const character = source[end];
+      if (quote) {
+        if (character === quote) quote = "";
+      } else if (character === '"' || character === "'") {
+        quote = character;
+      } else if (character === ">") {
+        break;
       }
-    } else if (!/\/\s*>$/.test(match[0])) {
-      depth += 1;
+    }
+    // This repair is optional; incomplete lexical syntax stays untouched.
+    if (end === source.length) {
+      return null;
+    }
+    end += 1;
+    tagPattern.lastIndex = end;
+    const name = match[1].toLowerCase();
+    if (!HTML_BLOCK_ROOT_TAGS.has(name)) continue;
+    let stack = stacks.get(name);
+    if (!stack) {
+      stack = [];
+      stacks.set(name, stack);
+    }
+    if (source[match.index + 1] === "/") {
+      const opening = stack.pop();
+      if (opening != null) ends.set(opening, end);
+    } else if (/\/\s*>$/.test(source.slice(match.index, end))) {
+      ends.set(match.index, end);
+    } else {
+      stack.push(match.index);
     }
   }
-
-  return streaming && depth > 0 ? source.length : null;
+  if (streaming) {
+    for (const stack of stacks.values()) {
+      for (const opening of stack) ends.set(opening, source.length);
+    }
+  }
+  return ends;
 }
 
-function isInsideOpenMarkdownFence(source: string, index: number): boolean {
-  const fencePattern = /(^|\n)[ \t]{0,3}(`{3,}|~{3,})([^\n]*)/g;
-  let opening: { character: string; length: number } | null = null;
-
-  for (const match of source.slice(0, index).matchAll(fencePattern)) {
-    const marker = match[2];
+function findMarkdownFenceRanges(source: string): Array<readonly [number, number]> {
+  const ranges: Array<readonly [number, number]> = [];
+  const fencePattern = new RegExp(CODE_FENCE_EVENT_RE.source, CODE_FENCE_EVENT_RE.flags);
+  let opening: { character: string; length: number; start: number } | null = null;
+  for (const match of source.matchAll(fencePattern)) {
+    const marker = match[3];
     if (!opening) {
-      opening = { character: marker[0], length: marker.length };
+      opening = { character: marker[0], length: marker.length, start: match.index + match[1].length };
       continue;
     }
     if (
       marker[0] === opening.character &&
       marker.length >= opening.length &&
-      match[3].trim() === ""
+      match[4].trim() === ""
     ) {
+      ranges.push([opening.start, match.index + match[0].length]);
       opening = null;
     }
   }
 
-  return opening != null;
+  if (opening) ranges.push([opening.start, source.length]);
+  return ranges;
 }
 
 export function normalizeHTMLBlockBlankLines(source: string, streaming = false): string {
@@ -685,17 +761,20 @@ export function normalizeHTMLBlockBlankLines(source: string, streaming = false):
   HTML_BLANK_LINE_RE.lastIndex = 0;
 
   return mapMarkdownTextFragments(source, (fragment) => {
+    const blockEnds = indexHTMLBlockEnds(fragment, streaming);
+    if (!blockEnds) return fragment;
+    const insideFence = createRangeMembership(findMarkdownFenceRanges(fragment));
     const rootPattern = new RegExp(HTML_BLOCK_ROOT_RE.source, HTML_BLOCK_ROOT_RE.flags);
     const output: string[] = [];
     let cursor = 0;
 
     for (let match = rootPattern.exec(fragment); match; match = rootPattern.exec(fragment)) {
       const blockStart = match.index + match[1].length + match[2].length;
-      if (blockStart < cursor || isInsideOpenMarkdownFence(fragment, blockStart)) {
+      if (blockStart < cursor || insideFence(blockStart)) {
         continue;
       }
 
-      const blockEnd = findHTMLBlockEnd(fragment, blockStart, match[3].toLowerCase(), streaming);
+      const blockEnd = blockEnds.get(blockStart);
       if (blockEnd == null) {
         continue;
       }

@@ -156,6 +156,18 @@ function renderInlineStrongChildren(children: React.ReactNode): React.ReactNode 
     if (!React.isValidElement<{ children?: React.ReactNode }>(child) || !("children" in child.props)) {
       return child;
     }
+    // These adapters normalize their own children. Walking through them here
+    // would clone every descendant once per ancestor in deeply nested HTML.
+    if (
+      child.type === MarkdownHTMLDiv ||
+      child.type === MarkdownHTMLSection ||
+      child.type === MarkdownHTMLArticle ||
+      child.type === MarkdownHTMLAside ||
+      child.type === MarkdownHTMLMain ||
+      child.type === MarkdownHTMLDetails
+    ) {
+      return child;
+    }
     return React.cloneElement(child, undefined, renderInlineStrongChildren(child.props.children));
   });
 }

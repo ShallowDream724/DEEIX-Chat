@@ -89,6 +89,7 @@ import { UIWidgetCompletionProvider } from "./ui-blocks";
 import { UIBlockOpenProvider } from "./ui-blocks/ui-block-actions";
 import { type UIBlockStateBinding, UIBlockStateProvider, useMessageUIBlockStateBinding } from "./ui-blocks/ui-block-state";
 import { useMarkdownCopy } from "./use-markdown-copy";
+import { LongMarkdownStreamdown } from "./long-markdown-render";
 
 type StreamdownRenderProps = {
   content: unknown;
@@ -671,7 +672,8 @@ function ThinkingSegmentBlock({
             components={THINKING_STREAMDOWN_COMPONENTS}
             plugins={plugins}
           >
-            <Streamdown
+            <LongMarkdownStreamdown
+              viewKey="thinking"
               className={cn(THINKING_MARKDOWN_CLASSNAME, "text-[12px] leading-6 text-muted-foreground/84")}
               codeBlockMaxHeight={STREAMDOWN_CODE_BLOCK_MAX_HEIGHT}
               components={THINKING_STREAMDOWN_COMPONENTS}
@@ -690,7 +692,7 @@ function ThinkingSegmentBlock({
               translations={translations}
             >
               {content}
-            </Streamdown>
+            </LongMarkdownStreamdown>
           </HTMLInlineMarkdownProvider>
         </AccordionContent>
       </AccordionItem>
@@ -862,7 +864,9 @@ export const StreamdownRender = React.memo(function StreamdownRender({
                     components={components}
                     plugins={plugins}
                   >
-                    <Streamdown
+                    <LongMarkdownStreamdown
+                      viewKey={`markdown-${index}`}
+                      sourcePositions={sourcePositions}
                       className={activeMarkdownClassName}
                       codeBlockMaxHeight={STREAMDOWN_CODE_BLOCK_MAX_HEIGHT}
                       components={components}
@@ -883,7 +887,7 @@ export const StreamdownRender = React.memo(function StreamdownRender({
                       translations={translations}
                     >
                       {segment.content}
-                    </Streamdown>
+                    </LongMarkdownStreamdown>
                   </HTMLInlineMarkdownProvider>
                 </UIBlockStateHost>
                 </UIBlockOpenProvider>
