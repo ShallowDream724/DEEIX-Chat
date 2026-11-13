@@ -1,8 +1,11 @@
 package processing
 
 import (
+	"bytes"
 	"context"
-	"strings"
+	"image"
+	"image/color"
+	"image/png"
 	"sync/atomic"
 	"testing"
 
@@ -21,9 +24,6 @@ import (
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 )
-
-// onePixelPNG 是最小的合法 PNG，供按原图向量化的图片场景读取。
-const onePixelPNG = "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00\rIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
 
 // countingExtractor 模拟提取引擎（例如付费 OCR），记录调用次数用于核对重新处理不会重复付费。
 type countingExtractor struct {
@@ -103,7 +103,18 @@ func newReprocessFixtureWith(t *testing.T, dbName string, extractedText string, 
 	repo := persistenceconversation.NewRepo(db)
 
 	store := objectstorage.NewLocal(t.TempDir())
-	if _, err := store.Put(ctx, "uploads/"+seed.fileName, strings.NewReader(onePixelPNG), portobjectstorage.PutOptions{}); err != nil {
+	// PDF extraction is mocked; image embedding consumes the actual stored pixels.
+	source := []byte("%PDF-1.7\nfixture\n")
+	if seed.category == "image" {
+		im := image.NewNRGBA(image.Rect(0, 0, 1, 1))
+		im.SetNRGBA(0, 0, color.NRGBA{R: 120, G: 80, B: 40, A: 255})
+		var encoded bytes.Buffer
+		if err := png.Encode(&encoded, im); err != nil {
+			t.Fatalf("encode image fixture: %v", err)
+		}
+		source = encoded.Bytes()
+	}
+	if _, err := store.Put(ctx, "uploads/"+seed.fileName, bytes.NewReader(source), portobjectstorage.PutOptions{}); err != nil {
 		t.Fatalf("seed file: %v", err)
 	}
 	// 默认场景：上传时提取结果为空（例如旧 OCR 引擎认不出），自动向量化也已关闭。

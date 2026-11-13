@@ -736,7 +736,7 @@ func (s *Service) readMediaImageEditFile(ctx context.Context, userID uint, fileI
 	if mimeType == "" {
 		mimeType = strings.TrimSpace(content.File.DetectedMIME)
 	}
-	data, mimeType, err = normalizeMediaImageEditInput(data, mimeType)
+	data, mimeType, err = normalizeMediaImageEditInputContext(ctx, data, mimeType, userID)
 	if err != nil {
 		return llm.ContentPart{}, ErrMediaImageEditInputInvalid
 	}

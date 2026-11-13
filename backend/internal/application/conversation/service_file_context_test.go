@@ -164,8 +164,8 @@ func TestConversationImageRefsKeepsAllBranchImages(t *testing.T) {
 func TestInjectConversationImageContextKeepsOwnershipAndUsesCache(t *testing.T) {
 	store := objectstorage.NewLocal(t.TempDir())
 	for key, data := range map[string][]byte{
-		"images/one": []byte("image-one"),
-		"images/two": []byte("image-two"),
+		"images/one": conversationImageFixture(t, "image-one"),
+		"images/two": conversationImageFixture(t, "image-two"),
 	} {
 		if _, err := store.Put(t.Context(), key, bytes.NewReader(data), objectstorage.PutOptions{ContentType: "image/png"}); err != nil {
 			t.Fatalf("put test image %s: %v", key, err)
@@ -193,10 +193,10 @@ func TestInjectConversationImageContextKeepsOwnershipAndUsesCache(t *testing.T) 
 		t.Fatalf("inject historical images: %v", err)
 	}
 	// 图片排在所属轮次的原文之前，与本轮组装时的顺序一致。
-	if len(got[0].Parts) != 2 || string(got[0].Parts[0].Data) != "image-one" || got[0].Parts[1].Text != "描述第一张图片" {
+	if len(got[0].Parts) != 2 || !bytes.Equal(got[0].Parts[0].Data, conversationImageFixture(t, "image-one")) || got[0].Parts[1].Text != "描述第一张图片" {
 		t.Fatalf("expected first image before the first question, got %#v", got[0])
 	}
-	if len(got[2].Parts) != 2 || string(got[2].Parts[0].Data) != "image-two" || got[2].Parts[1].Text != "第二张和第一张有什么不同" {
+	if len(got[2].Parts) != 2 || !bytes.Equal(got[2].Parts[0].Data, conversationImageFixture(t, "image-two")) || got[2].Parts[1].Text != "第二张和第一张有什么不同" {
 		t.Fatalf("expected second image before the second question, got %#v", got[2])
 	}
 	if _, err = service.injectConversationImageContext(t.Context(), history, domainMessages, attachments, cfg); err != nil {
@@ -248,7 +248,7 @@ func TestInjectConversationImageContextRejectsMissingAndOversizedContext(t *test
 	}
 }
 
-func TestResizeImageIfNeededReturnsActualMIME(t *testing.T) {
+func TestPrepareImageDataReturnsActualMIME(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 4, 4))
 	for y := 0; y < 4; y++ {
 		for x := 0; x < 4; x++ {
@@ -259,12 +259,16 @@ func TestResizeImageIfNeededReturnsActualMIME(t *testing.T) {
 	if err := png.Encode(&source, img); err != nil {
 		t.Fatalf("encode source image: %v", err)
 	}
-	resized, mimeType := resizeImageIfNeeded(source.Bytes(), "image/webp", 2)
-	if mimeType != "image/jpeg" {
-		t.Fatalf("expected resized non-PNG image to report JPEG, got %q", mimeType)
+	prepared, err := prepareImageData(t.Context(), source.Bytes(), "image/webp", 2, 1)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, format, err := image.Decode(bytes.NewReader(resized)); err != nil || format != "jpeg" {
-		t.Fatalf("expected JPEG bytes, format=%q err=%v", format, err)
+	resized, mimeType := prepared.data, prepared.mimeType
+	if mimeType != "image/png" {
+		t.Fatalf("expected actual PNG encoding to remain PNG despite the declared MIME, got %q", mimeType)
+	}
+	if _, format, err := image.Decode(bytes.NewReader(resized)); err != nil || format != "png" {
+		t.Fatalf("expected PNG bytes, format=%q err=%v", format, err)
 	}
 }
 

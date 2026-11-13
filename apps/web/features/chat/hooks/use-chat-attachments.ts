@@ -17,14 +17,18 @@ import { resolveMaxFilesPerMessage } from "@/features/chat/utils/chat-runtime";
 import { useLocalizedErrorMessage } from "@/i18n/use-localized-error";
 import {
   getChatFilePolicy,
-  uploadFile,
 } from "@/shared/api/file";
 import type { ChatFilePolicyDTO, FileProcessingStatusDTO } from "@/shared/api/file-types";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
+import { useOptionalAuthSession } from "@/shared/auth/auth-session-context";
+import { readSessionID } from "@/shared/auth/session";
 import {
   type FileStatusPollingResult,
   isFileProcessing,
   useFileProcessingStatusPolling,
+  uploadPreparedFile,
+  prepareLocalImageFile,
+  thumbnailScopeForUser,
 } from "@/entities/file";
 import { firstSettledFailureReason, runSettledItemsWithConcurrency } from "@/shared/lib/bulk-action";
 import { createSecureUUID } from "@/shared/lib/secure-id";
@@ -60,12 +64,15 @@ export function useChatAttachments({
 }) {
   const t = useTranslations("chat.attachments");
   const resolveErrorMessage = useLocalizedErrorMessage();
+  const authSession = useOptionalAuthSession();
+  const thumbnailScope = authSession?.user ? thumbnailScopeForUser(authSession.user.id) : undefined;
   const [uploadingByKey, setUploadingByKey] = React.useState<Record<string, UploadingAttachment[]>>({});
   const [chatFilePolicy, setChatFilePolicy] = React.useState<ChatFilePolicyDTO | null>(null);
   const attachmentsRef = React.useRef<PendingAttachment[]>(attachments);
   const previousAttachmentsRef = React.useRef<PendingAttachment[]>(attachments);
   const transferredPreviewURLsRef = React.useRef(new Set<string>());
   const uploadControllersRef = React.useRef(new Set<AbortController>());
+  const activeUploadKeysRef = React.useRef(new Set<string>());
   const mountedRef = React.useRef(true);
   const currentConversationKeyRef = React.useRef(conversationKey);
   const uploadingAttachments = uploadingByKey[conversationKey] ?? [];
@@ -181,11 +188,11 @@ export function useChatAttachments({
     return () => controller.abort();
   }, []);
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     attachmentsRef.current = attachments;
   }, [attachments]);
 
-  React.useEffect(() => {
+  React.useLayoutEffect(() => {
     currentConversationKeyRef.current = conversationKey;
   }, [conversationKey]);
 
@@ -229,10 +236,11 @@ export function useChatAttachments({
     setAttachments((current) => current.filter((item) => item.fileID !== fileID));
   }, [setAttachments]);
 
-  // Resolves with the attachments that reached the composer (empty when skipped, rejected or failed).
+  // Successful files include existing attachments, so replacing A with an
+  // already attached B can remove A without appending B a second time.
   const onUploadFiles = React.useCallback(
     async (files: File[]): Promise<PendingAttachment[]> => {
-      if (files.length === 0 || uploading) {
+      if (files.length === 0 || activeUploadKeysRef.current.has(conversationKey)) {
         return [];
       }
       const targetConversationKey = conversationKey;
@@ -243,7 +251,7 @@ export function useChatAttachments({
         sizeLimitExceeded: (limit: string) => t("policy.sizeLimitExceeded", { limit }),
       };
       for (const file of files) {
-        const rejection = resolveUploadPolicyRejection(file, chatFilePolicy, policyLabels);
+        const rejection = resolveUploadPolicyRejection(file, chatFilePolicy, policyLabels, { deferImageSizeCheck: true });
         if (rejection) {
           toast.error(t("policyRejected"), {
             description: t("fileRejected", { name: file.name, reason: rejection }),
@@ -255,30 +263,7 @@ export function useChatAttachments({
       if (policyAcceptedFiles.length === 0) {
         return [];
       }
-
-      if (temporary) {
-        const localAttachments = policyAcceptedFiles.map((file): PendingAttachment => {
-          const category = inferUploadCategory(file);
-          return {
-            fileID: `temporary_${createSecureUUID()}`,
-            fileName: file.name,
-            mimeType: file.type || "application/octet-stream",
-            detectedMime: file.type || "application/octet-stream",
-            fileCategory: category,
-            sizeBytes: file.size,
-            previewURL: category === "image" ? URL.createObjectURL(file) : undefined,
-            processingStatus: "ready",
-            processingReady: true,
-            extractStatus: "none",
-            embedStatus: "none",
-            ragReady: false,
-            ragOptOut: false,
-            localFile: file,
-          };
-        });
-        appendAttachmentsForKey(targetConversationKey, localAttachments);
-        return localAttachments;
-      }
+      activeUploadKeysRef.current.add(targetConversationKey);
 
       const batchPrefix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const placeholders = policyAcceptedFiles.map((file, index) => ({
@@ -292,6 +277,7 @@ export function useChatAttachments({
       }));
 
       const controller = new AbortController();
+      const uploadSessionID = readSessionID();
       uploadControllersRef.current.add(controller);
       try {
         const token = await resolveAccessToken();
@@ -303,54 +289,76 @@ export function useChatAttachments({
           return [];
         }
 
+        const policy = chatFilePolicy ?? await getChatFilePolicy(token, controller.signal);
         const results = await runSettledItemsWithConcurrency({
           items: policyAcceptedFiles,
+          // CPU work has its own two-worker/memory governor. Network waits
+          // should not hold those workers idle while more files await prep.
+          concurrency: 4,
           signal: controller.signal,
-          runItem: (file) => uploadFile(token, file, {
-            purpose: "conversation_attachment",
-            signal: controller.signal,
-          }),
+          runItem: async (sourceFile): Promise<{ attachment: PendingAttachment; reused: boolean }> => {
+            if (temporary) {
+              const prepared = inferUploadCategory(sourceFile) === "image"
+                ? await prepareLocalImageFile(sourceFile, { policy, signal: controller.signal, scope: thumbnailScope })
+                : { file: sourceFile, assetID: undefined, contentVersion: undefined };
+              const file = prepared.file;
+              const rejection = resolveUploadPolicyRejection(file, policy, policyLabels);
+              if (rejection) throw new Error(rejection);
+              const category = inferUploadCategory(file);
+              return { reused: false, attachment: {
+                fileID: `temporary_${createSecureUUID()}`,
+                assetID: prepared.assetID,
+                contentVersion: prepared.contentVersion,
+                fileName: file.name,
+                mimeType: file.type || "application/octet-stream",
+                detectedMime: file.type || "application/octet-stream",
+                fileCategory: category,
+                sizeBytes: file.size,
+                previewURL: category === "image" ? URL.createObjectURL(file) : undefined,
+                processingStatus: "ready", processingReady: true, extractStatus: "none", embedStatus: "none",
+                ragReady: false, ragOptOut: false, localFile: file,
+              } };
+            }
+            const result = await uploadPreparedFile(token, sourceFile, {
+              purpose: "conversation_attachment", signal: controller.signal, policy, scope: thumbnailScope,
+            });
+            return { reused: Boolean(result.reused), attachment: {
+              fileID: result.file.fileID,
+              assetID: result.assetID,
+              contentVersion: result.contentVersion,
+              fileName: result.file.fileName,
+              mimeType: result.file.mimeType,
+              detectedMime: result.file.detectedMIME,
+              fileCategory: result.file.fileCategory,
+              sizeBytes: result.file.sizeBytes,
+              previewURL: result.preparedFile?.type.startsWith("image/") ? URL.createObjectURL(result.preparedFile) : undefined,
+              processingStatus: result.file.processingStatus,
+              processingReady: result.file.processingReady,
+              processingErrorCode: result.file.processingErrorCode,
+              processingErrorMessage: result.file.processingErrorMessage,
+              extractStatus: result.file.extractStatus,
+              embedStatus: result.file.embedStatus,
+              ragReady: false, ragReason: "", ocrUsed: false, ragOptOut: result.file.ragOptOut,
+            } };
+          },
         });
-        if (controller.signal.aborted || !mountedRef.current) {
+        if (controller.signal.aborted || !mountedRef.current || readSessionID() !== uploadSessionID) {
+          for (const result of results) {
+            if (result.status === "fulfilled") revokeAttachmentPreview(result.value.attachment);
+          }
           return [];
         }
         const reusedCount = results.filter((result) => result.status === "fulfilled" && result.value.reused).length;
 
-        const uploaded = results.flatMap((result) => {
-          if (result.status !== "fulfilled") {
-            return [];
-          }
-          const sourceFile = result.item;
-          const previewURL = sourceFile.type.startsWith("image/") ? URL.createObjectURL(sourceFile) : undefined;
-          return [
-            {
-              fileID: result.value.file.fileID,
-              fileName: result.value.file.fileName,
-              mimeType: result.value.file.mimeType,
-              detectedMime: result.value.file.detectedMIME,
-              fileCategory: result.value.file.fileCategory,
-              sizeBytes: result.value.file.sizeBytes,
-              previewURL,
-              processingStatus: result.value.file.processingStatus,
-              processingReady: result.value.file.processingReady,
-              processingErrorCode: result.value.file.processingErrorCode,
-              processingErrorMessage: result.value.file.processingErrorMessage,
-              extractStatus: result.value.file.extractStatus,
-              embedStatus: result.value.file.embedStatus,
-              ragReady: false,
-              ragReason: "",
-              ocrUsed: false,
-              ragOptOut: result.value.file.ragOptOut,
-            },
-          ];
-        });
+        const uploaded = results.flatMap((result) => result.status === "fulfilled" ? [result.value.attachment] : []);
+        let accepted: PendingAttachment[] = [];
         if (uploaded.length > 0) {
           const existingIDs = new Set(
             currentConversationKeyRef.current === targetConversationKey
               ? attachmentsRef.current.map((item) => item.fileID)
               : [],
           );
-          const nextUploaded = uploaded.filter((item) => {
+          accepted = uploaded.filter((item) => {
             if (existingIDs.has(item.fileID)) {
               revokeAttachmentPreview(item);
               return false;
@@ -358,19 +366,25 @@ export function useChatAttachments({
             existingIDs.add(item.fileID);
             return true;
           });
-          appendAttachmentsForKey(targetConversationKey, nextUploaded);
+          appendAttachmentsForKey(targetConversationKey, accepted);
           if (currentConversationKeyRef.current !== targetConversationKey) {
-            releaseAttachments(uploaded);
+            releaseAttachments(accepted);
+            accepted = accepted.map((item) => ({ ...item, previewURL: undefined }));
           }
         }
         if (reusedCount > 0) {
           toast.success(t("duplicateReused"));
         }
         if (uploaded.length < policyAcceptedFiles.length) {
-          const description = resolveErrorMessage(firstSettledFailureReason(results), t("retryFailedFiles"));
+          const failure = firstSettledFailureReason(results);
+          const description = resolveErrorMessage(failure, t("retryFailedFiles"));
           toast.error(uploaded.length === 0 ? t("uploadFailed") : t("partialUploadFailed"), { description });
         }
-        return uploaded;
+        const delivered = new Map(accepted.map((item) => [item.fileID, item]));
+        if (currentConversationKeyRef.current === targetConversationKey) {
+          for (const item of attachmentsRef.current) delivered.set(item.fileID, item);
+        }
+        return [...new Map(uploaded.map((item) => [item.fileID, delivered.get(item.fileID) ?? { ...item, previewURL: undefined }])).values()];
       } catch (error) {
         if (!controller.signal.aborted && mountedRef.current) {
           const description = resolveErrorMessage(error, t("retryLater"));
@@ -378,6 +392,7 @@ export function useChatAttachments({
         }
         return [];
       } finally {
+        activeUploadKeysRef.current.delete(targetConversationKey);
         uploadControllersRef.current.delete(controller);
         if (mountedRef.current) {
           setUploadingByKey((prev) => {
@@ -403,7 +418,7 @@ export function useChatAttachments({
       resolveErrorMessage,
       t,
       temporary,
-      uploading,
+      thumbnailScope,
     ],
   );
 

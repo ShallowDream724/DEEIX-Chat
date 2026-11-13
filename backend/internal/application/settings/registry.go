@@ -190,7 +190,7 @@ var settingSpecs = []settingSpec{
 	// 文件处理配置
 	{Namespace: "file", Key: "input_limits", ValueType: "json", Default: inputlimits.DefaultConfigJSON(), Description: "系统默认与每渠道覆盖的原生图片、文件及编码请求预算；0不施加该项额外上限，null或省略继承",
 		Validate: func(value, _ string) error { return inputlimits.Validate(value) }, Apply: applyField(func(c *config.Config) *string { return &c.InputLimitsJSON }, rawText)},
-	{Namespace: "file", Key: "image_max_dimension", ValueType: "int", Default: "1024", Description: "图片发送前缩放最大边长(px)，0=不缩放",
+	{Namespace: "file", Key: "image_max_dimension", ValueType: "int", Default: "1024", Description: "图片最大边长(px)，新上传保存处理后的图片，历史图片发送时处理；0=不缩放",
 		Validate: intRange(0, 8192), Apply: applyField(func(c *config.Config) *int { return &c.ImageMaxDimension }, toInt)},
 	{Namespace: "file", Key: "full_context_limit_enabled", ValueType: "bool", Default: "true", Description: "是否启用全文注入文字大小和Token限制",
 		Validate: boolValue(), Apply: applyField(func(c *config.Config) *bool { return &c.FileFullContextLimitEnabled }, toBool)},

@@ -33,6 +33,8 @@ import type {
 import type { FileContentLoader } from "@/entities/file";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import { createSecureUUID } from "@/shared/lib/secure-id";
+import { messageAttachmentIDsEqual } from "@/features/chat/model/message-edit-draft";
+import { TemporaryMessageBranches } from "@/features/chat/model/temporary-message-branches";
 
 type TemporaryMessage = TemporaryChatHistoryMessage & {
   id: string;
@@ -94,6 +96,8 @@ type SubmitTemporaryTurnInput = {
 
 function toMessageAttachment(item: PendingAttachment): MessageAttachment {
   return {
+    assetID: item.assetID,
+    contentVersion: item.contentVersion,
     fileID: item.fileID,
     fileName: item.fileName,
     mimeType: item.mimeType,
@@ -261,6 +265,8 @@ export function useChatTemporaryRuntime({
   const messagesRef = React.useRef<TemporaryMessage[]>([]);
   const historyRef = React.useRef<TemporaryHistoryMessage[]>([]);
   const [history, setHistory] = React.useState<TemporaryHistoryMessage[]>([]);
+  const branchesRef = React.useRef(new TemporaryMessageBranches<TemporaryMessage, TemporaryHistoryMessage>());
+  const [branchRevision, setBranchRevision] = React.useState(0);
   const replaceHistory = React.useCallback((next: TemporaryHistoryMessage[]) => {
     historyRef.current = next;
     setHistory(next);
@@ -311,6 +317,7 @@ export function useChatTemporaryRuntime({
         liveRunIDsRef.current.delete(message.runID);
       }
       for (const attachment of message.localAttachments ?? []) {
+        if (branchesRef.current.retainsAttachment(attachment.fileID)) continue;
         if (preservedAttachmentIDs.has(attachment.fileID)) {
           continue;
         }
@@ -341,6 +348,7 @@ export function useChatTemporaryRuntime({
     abortControllerRef.current = null;
     sendingRef.current = false;
     sessionIDRef.current = "";
+    branchesRef.current.clear();
     replaceHistory([]);
     clearRetainedAttachments();
     clearLiveTraces();
@@ -745,17 +753,23 @@ export function useChatTemporaryRuntime({
     });
   }, [resolveUserTurn, submitTurn, t]);
 
-  const editUserMessage = React.useCallback(async (message: ChatAreaMessage, content: string, mode: UserMessageEditMode) => {
+  const resolveEditAttachments = React.useCallback((message: ChatAreaMessage) => resolveUserTurn(message)?.message.localAttachments ?? [], [resolveUserTurn]);
+
+  const editUserMessage = React.useCallback(async (message: ChatAreaMessage, content: string, mode: UserMessageEditMode, editedAttachments?: PendingAttachment[]) => {
     const turn = resolveUserTurn(message);
     if (!turn) {
       toast.error(t("failed"));
       return false;
     }
-    if (mode === "save") {
+    const nextAttachments = editedAttachments ?? turn.message.localAttachments ?? [];
+    const attachmentsChanged = !messageAttachmentIDsEqual(nextAttachments, turn.message.localAttachments ?? []);
+    if ((!content.trim() && nextAttachments.length === 0) || sendingRef.current) return false;
+    const archive = (rootID: string) => {
+      branchesRef.current.archive(turn.message.parentID, rootID, messagesRef.current, historyRef.current);
+      setBranchRevision((value) => value + 1);
+    };
+    if (mode === "save" && !attachmentsChanged) {
       const nextContent = content.trim();
-      if (!nextContent || sendingRef.current) {
-        return false;
-      }
       updateMessage(turn.message.id, (current) => ({ ...current, content: nextContent }));
       const historyEntry = historyRef.current[turn.message.historyOffset];
       if (historyEntry?.role === "user") {
@@ -765,14 +779,42 @@ export function useChatTemporaryRuntime({
       }
       return true;
     }
-    return submitTurn({
+    const ownedAttachments = nextAttachments.map((attachment) => {
+      const retained = retainedAttachmentsRef.current.get(attachment.fileID);
+      if (retained) return retained;
+      const owned = { ...attachment, previewURL: attachment.localFile && isImageAttachment(attachment) ? URL.createObjectURL(attachment.localFile) : undefined };
+      retainedAttachmentsRef.current.set(owned.fileID, owned);
+      return owned;
+    });
+    archive(turn.message.id);
+    if (mode === "save") {
+      const revised: TemporaryMessage = { ...turn.message, id: createSecureUUID(), content: content.trim(), localAttachments: ownedAttachments, attachments: ownedAttachments.map(toMessageAttachment) };
+      replaceMessages([...messagesRef.current.slice(0, turn.index), revised]);
+      replaceHistory([...historyRef.current.slice(0, turn.message.historyOffset), { role: "user", content: revised.content, attachments: ownedAttachments }]);
+      archive(revised.id);
+      return true;
+    }
+    const ok = await submitTurn({
       content,
-      localAttachments: turn.message.localAttachments ?? [],
+      localAttachments: ownedAttachments,
       baseHistory: historyRef.current.slice(0, turn.message.historyOffset),
       replaceFromIndex: turn.index,
       consumeComposer: false,
     });
-  }, [replaceHistory, resolveUserTurn, submitTurn, t, updateMessage]);
+    if (ok) {
+      const revised = messagesRef.current[turn.index];
+      if (revised?.role === "user") archive(revised.id);
+    }
+    return ok;
+  }, [replaceHistory, replaceMessages, resolveUserTurn, submitTurn, t, updateMessage]);
+
+  const cycleMessageBranch = React.useCallback((parentID: string | null, direction: "previous" | "next") => {
+    if (sendingRef.current) return;
+    const next = branchesRef.current.cycle(parentID, direction, messagesRef.current, historyRef.current);
+    if (!next) return;
+    replaceMessages(next.messages);
+    replaceHistory(next.history);
+  }, [replaceHistory, replaceMessages]);
 
   const editAssistantMessage = React.useCallback(async (message: ChatAreaMessage, content: string) => {
     const nextContent = content.trim();
@@ -809,7 +851,11 @@ export function useChatTemporaryRuntime({
     return true;
   }, [replaceHistory, replaceMessageTail, resolveUserTurn, t, updateMessage]);
 
-  const areaMessages = React.useMemo<ChatAreaMessage[]>(() => messages.map(toAreaMessage), [messages]);
+  const areaMessages = React.useMemo<ChatAreaMessage[]>(() => messages.map((message) => {
+    const mapped = toAreaMessage(message);
+    mapped.branchNavigator = branchesRef.current.navigator(message);
+    return mapped;
+  }), [messages, branchRevision]);
 
   const inputIssues = React.useMemo(() => active
     ? getTemporaryHistoryIssues(history, { role: "user", content: draft.trim(), attachments }, maxTemporaryAttachments)
@@ -833,6 +879,8 @@ export function useChatTemporaryRuntime({
     onRetryUserMessage: retryMessage,
     onRetryAssistantMessage: retryMessage,
     onEditUserMessage: editUserMessage,
+    resolveEditAttachments,
+    onCycleMessageBranch: cycleMessageBranch,
     onEditAssistantMessage: editAssistantMessage,
   };
 }

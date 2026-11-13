@@ -202,6 +202,12 @@ type FileObject struct {
 	FileCategory           string     `gorm:"size:32;not null;default:'unknown';index:idx_file_objects_file_category;comment:文件分类(image/pdf/word/presentation/excel/text/unknown)"`
 	SizeBytes              int64      `gorm:"not null;default:0;comment:文件大小(Byte)"`
 	SHA256                 string     `gorm:"size:64;not null;default:'';index:idx_file_objects_sha256;comment:文件SHA256"`
+	ImageWidth             int        `gorm:"not null;default:0"`
+	ImageHeight            int        `gorm:"not null;default:0"`
+	ImageOrientation       int        `gorm:"not null;default:0"`
+	ImageBitDepth          int        `gorm:"not null;default:0"`
+	ImageAnimated          bool       `gorm:"not null;default:false"`
+	ImageAnimationKnown    bool       `gorm:"not null;default:false"`
 	StoragePath            string     `gorm:"size:512;not null;default:'';comment:存储路径"`
 	Status                 string     `gorm:"size:32;not null;default:'active';index:idx_file_objects_status;comment:文件状态"`
 	LastAccessedAt         *time.Time `gorm:"index:idx_file_objects_last_accessed_at;comment:最近使用时间"`

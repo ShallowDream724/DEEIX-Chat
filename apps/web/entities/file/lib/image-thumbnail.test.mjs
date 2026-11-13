@@ -44,3 +44,14 @@ test("thumbnails serialize decoding, skip removed queued files and release decod
   assert.equal(await result.text(), "preview");
   assert.equal(closed, 2);
 });
+
+test("decoded pixels are released when a canvas cannot be created", async (t) => {
+  const oldBitmap = globalThis.createImageBitmap;
+  const oldDocument = globalThis.document;
+  let closed = 0;
+  t.after(() => { globalThis.createImageBitmap = oldBitmap; globalThis.document = oldDocument; });
+  globalThis.createImageBitmap = async () => ({ width: 100, height: 100, close: () => { closed++; } });
+  globalThis.document = undefined;
+  await assert.rejects(createImageThumbnail(async () => new Blob(), new AbortController().signal));
+  assert.equal(closed, 1);
+});

@@ -453,6 +453,12 @@ type FileObjectResponse struct {
 	FileCategory           string     `json:"fileCategory"`
 	SizeBytes              int64      `json:"sizeBytes"`
 	SHA256                 string     `json:"sha256"`
+	ImageWidth             int        `json:"imageWidth"`
+	ImageHeight            int        `json:"imageHeight"`
+	ImageOrientation       int        `json:"imageOrientation"`
+	ImageBitDepth          int        `json:"imageBitDepth"`
+	ImageAnimated          bool       `json:"imageAnimated"`
+	ImageAnimationKnown    bool       `json:"imageAnimationKnown"`
 	Status                 string     `json:"status"`
 	ProcessingStatus       string     `json:"processingStatus"`
 	ProcessingReady        bool       `json:"processingReady"`
@@ -481,6 +487,12 @@ func toFileObjectResponse(item *model.FileObject, capability appembedding.FileVe
 		FileCategory:           item.FileCategory,
 		SizeBytes:              item.SizeBytes,
 		SHA256:                 item.SHA256,
+		ImageWidth:             item.ImageWidth,
+		ImageHeight:            item.ImageHeight,
+		ImageOrientation:       item.ImageOrientation,
+		ImageBitDepth:          item.ImageBitDepth,
+		ImageAnimated:          item.ImageAnimated,
+		ImageAnimationKnown:    item.ImageAnimationKnown,
 		Status:                 item.Status,
 		ProcessingStatus:       item.ProcessingStatus,
 		ProcessingReady:        item.ProcessingReady,
@@ -774,9 +786,9 @@ type ConversationToolCallDetailResponse struct {
 
 func toConversationToolCallDetailResponse(item *model.ToolCallDetail) ConversationToolCallDetailResponse {
 	return ConversationToolCallDetailResponse{
-		InputJSON: item.InputJSON,
-		InputSizeBytes: item.InputSizeBytes,
-		InputOmitted: item.InputOmitted,
+		InputJSON:       item.InputJSON,
+		InputSizeBytes:  item.InputSizeBytes,
+		InputOmitted:    item.InputOmitted,
 		RunID:           item.RunID,
 		ToolCallID:      item.ToolCallID,
 		ToolName:        item.ToolName,
@@ -1528,6 +1540,8 @@ type ChatFilePolicyResponse struct {
 	MaxUploadFileBytes           int64    `json:"maxUploadFileBytes"`
 	AllowedMIMETypes             []string `json:"allowedMIMETypes"`
 	ImageMaxBytes                int64    `json:"imageMaxBytes"`
+	ImageMaxDimension            int      `json:"imageMaxDimension"`
+	ImagePolicyVersion           string   `json:"imagePolicyVersion"`
 	DocMaxBytes                  int64    `json:"docMaxBytes"`
 	AudioMaxBytes                int64    `json:"audioMaxBytes"`
 	VideoMaxBytes                int64    `json:"videoMaxBytes"`
@@ -1552,6 +1566,8 @@ func toChatFilePolicyResponse(d *appconversation.ChatFilePolicyDTO) ChatFilePoli
 		MaxUploadFileBytes:           d.MaxUploadFileBytes,
 		AllowedMIMETypes:             d.AllowedMIMETypes,
 		ImageMaxBytes:                d.ImageMaxBytes,
+		ImageMaxDimension:            d.ImageMaxDimension,
+		ImagePolicyVersion:           d.ImagePolicyVersion,
 		DocMaxBytes:                  d.DocMaxBytes,
 		AudioMaxBytes:                d.AudioMaxBytes,
 		VideoMaxBytes:                d.VideoMaxBytes,

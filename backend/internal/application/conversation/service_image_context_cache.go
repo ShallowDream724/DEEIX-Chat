@@ -2,11 +2,13 @@ package conversation
 
 import (
 	"container/list"
+	"context"
 	"fmt"
 	"strings"
 	"sync"
 
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/imageutil"
 )
 
 const (
@@ -31,6 +33,15 @@ type preparedConversationImageCache struct {
 	totalBytes int
 	maxEntries int
 	maxBytes   int
+	inflight   map[string]*preparedImageFlight
+}
+
+type preparedImageFlight struct {
+	done    chan struct{}
+	cancel  context.CancelFunc
+	waiters int
+	image   preparedConversationImage
+	err     error
 }
 
 func newPreparedConversationImageCache(maxEntries int, maxBytes int) *preparedConversationImageCache {
@@ -39,6 +50,7 @@ func newPreparedConversationImageCache(maxEntries int, maxBytes int) *preparedCo
 		recency:    list.New(),
 		maxEntries: maxEntries,
 		maxBytes:   maxBytes,
+		inflight:   make(map[string]*preparedImageFlight),
 	}
 }
 
@@ -89,7 +101,64 @@ func preparedConversationImageCacheKey(att AttachmentInput, maxDim int, mimeType
 	if identity == "" {
 		return ""
 	}
-	return fmt.Sprintf("%s:%d:%s", identity, maxDim, resolveImageMimeType(mimeType))
+	return fmt.Sprintf("%s:%s:%d:%s:pixels=%d:static", imageutil.ProcessingVersion, identity, maxDim, resolveImageMimeType(mimeType), imageutil.DefaultMaxPixels)
+}
+
+// load shares work without letting one canceled request abort other waiters.
+// No cache lock is held while reading, decoding or encoding an image.
+func (c *preparedConversationImageCache) load(ctx context.Context, key string, load func(context.Context) (preparedConversationImage, error)) (preparedConversationImage, error) {
+	if err := ctx.Err(); err != nil {
+		return preparedConversationImage{}, err
+	}
+	if c == nil || key == "" {
+		return load(ctx)
+	}
+	c.mu.Lock()
+	if el, ok := c.entries[key]; ok {
+		c.recency.MoveToFront(el)
+		result := el.Value.(preparedConversationImageCacheEntry).image
+		c.mu.Unlock()
+		return result, nil
+	}
+	f := c.inflight[key]
+	if f == nil {
+		workCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		f = &preparedImageFlight{done: make(chan struct{}), cancel: cancel}
+		c.inflight[key] = f
+		go func() {
+			result, err := load(workCtx)
+			if err == nil && workCtx.Err() == nil {
+				c.put(key, result)
+			}
+			c.mu.Lock()
+			f.image, f.err = result, err
+			if c.inflight[key] == f {
+				delete(c.inflight, key)
+			}
+			close(f.done)
+			c.mu.Unlock()
+			cancel()
+		}()
+	}
+	f.waiters++
+	c.mu.Unlock()
+	defer func() {
+		c.mu.Lock()
+		f.waiters--
+		if f.waiters == 0 {
+			f.cancel()
+			if c.inflight[key] == f {
+				delete(c.inflight, key)
+			}
+		}
+		c.mu.Unlock()
+	}()
+	select {
+	case <-ctx.Done():
+		return preparedConversationImage{}, ctx.Err()
+	case <-f.done:
+		return f.image, f.err
+	}
 }
 
 func (c *preparedConversationImageCache) get(key string) (preparedConversationImage, bool) {

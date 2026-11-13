@@ -282,6 +282,12 @@ type FileObject struct {
 	FileCategory           string
 	SizeBytes              int64
 	SHA256                 string
+	ImageWidth             int
+	ImageHeight            int
+	ImageOrientation       int
+	ImageBitDepth          int
+	ImageAnimated          bool
+	ImageAnimationKnown    bool
 	StoragePath            string
 	Status                 string
 	LastAccessedAt         *time.Time

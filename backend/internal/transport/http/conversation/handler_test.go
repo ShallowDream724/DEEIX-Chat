@@ -36,6 +36,41 @@ func TestInputBudgetErrorCarriesSafeDetailsInHTTPAndStream(t *testing.T) {
 	}
 }
 
+func TestImagePreparationErrorsCarrySafeDetailsInHTTPAndStream(t *testing.T) {
+	for _, test := range []struct {
+		err                     error
+		code, reason, dimension string
+	}{
+		{appconversation.ErrImageProcessingFailed, "file.image_processing_failed", "image_processing_failed", "imageProcessingFailed"},
+		{appconversation.ErrUnsupportedImageAnimation, "file.animation_unsupported", "unsupported_animation", "imageAnimationUnsupported"},
+	} {
+		err := errors.Join(test.err, &appconversation.AttachmentInputError{FileName: "photo.png", Scope: "history", Reason: test.reason})
+		description := describeSendMessageError(err)
+		if description.Status != http.StatusBadRequest || description.Code != test.code {
+			t.Fatalf("image error mapped to generic error: %#v", description)
+		}
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		response.ErrorDescribed(ctx, description)
+		for _, encoded := range []string{recorder.Body.String(), mustJSONImageError(t, streamErrorPayload(nil, err))} {
+			for _, fragment := range []string{`"errorCode":"` + test.code + `"`, `"dimension":"` + test.dimension + `"`, `"reason":"` + test.reason + `"`, `"fileName":"photo.png"`, `"scope":"history"`} {
+				if !strings.Contains(encoded, fragment) {
+					t.Fatalf("missing %s in %s", fragment, encoded)
+				}
+			}
+		}
+	}
+}
+
+func mustJSONImageError(t *testing.T, value any) string {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
+}
+
 func TestStreamErrorPayloadWithResultPreservesPersistedResult(t *testing.T) {
 	result := &appconversation.SendMessageResult{}
 	payload := streamErrorPayloadWithResult(nil, errors.New("store generated video"), result)

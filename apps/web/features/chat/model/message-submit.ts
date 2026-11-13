@@ -14,6 +14,8 @@ export function toPendingAttachments(message: ChatAreaMessage | null | undefined
 
 export function toPendingAttachment(item: MessageAttachment): PendingAttachment {
   return {
+    assetID: item.assetID,
+    contentVersion: item.contentVersion,
     fileID: item.fileID,
     fileName: item.fileName,
     mimeType: item.mimeType,

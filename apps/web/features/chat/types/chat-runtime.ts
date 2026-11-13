@@ -75,6 +75,8 @@ export type ModelOptionControl = {
 
 export type PendingAttachment = {
   fileID: string;
+  assetID?: string;
+  contentVersion?: string;
   fileName: string;
   mimeType: string;
   detectedMime?: string;

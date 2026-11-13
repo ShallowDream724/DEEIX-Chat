@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"image"
+	"image/color"
 	"image/png"
 	"io"
 	"testing"
@@ -19,13 +20,26 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/inputlimits"
 )
 
+func conversationImageFixture(t *testing.T, key string) []byte {
+	t.Helper()
+	im := image.NewNRGBA(image.Rect(0, 0, max(len(key), 1), 1))
+	for x, value := range []byte(key) {
+		im.SetNRGBA(x, 0, color.NRGBA{R: value, A: 255})
+	}
+	var out bytes.Buffer
+	if err := png.Encode(&out, im); err != nil {
+		t.Fatal(err)
+	}
+	return out.Bytes()
+}
+
 func TestConversationImageContextSendsAllTwelveImagesAndTraceIdentities(t *testing.T) {
 	store := objectstorage.NewLocal(t.TempDir())
 	messages := make([]model.Message, 0, 12)
 	attachments := make([]AttachmentInput, 0, 12)
 	for i := 0; i < 12; i++ {
 		id := fmt.Sprintf("image-%d", i)
-		data := []byte(id)
+		data := conversationImageFixture(t, id)
 		if _, err := store.Put(t.Context(), id, bytes.NewReader(data), storageport.PutOptions{}); err != nil {
 			t.Fatal(err)
 		}
@@ -38,7 +52,7 @@ func TestConversationImageContextSendsAllTwelveImagesAndTraceIdentities(t *testi
 		t.Fatal(err)
 	}
 	for i, message := range got {
-		if len(message.Parts) != 1 || string(message.Parts[0].Data) != fmt.Sprintf("image-%d", i) {
+		if len(message.Parts) != 1 || !bytes.Equal(message.Parts[0].Data, conversationImageFixture(t, fmt.Sprintf("image-%d", i))) {
 			t.Fatalf("image %d missing or moved: %#v", i, message)
 		}
 	}
@@ -81,7 +95,7 @@ func TestInputLimitWrappingPreservesPublicIdentityAndTypedReason(t *testing.T) {
 func TestRouteImageBudgetSharesHistoryAndCurrentImages(t *testing.T) {
 	store := objectstorage.NewLocal(t.TempDir())
 	for _, id := range []string{"old", "current"} {
-		if _, err := store.Put(t.Context(), id, bytes.NewReader([]byte(id)), storageport.PutOptions{}); err != nil {
+		if _, err := store.Put(t.Context(), id, bytes.NewReader(conversationImageFixture(t, id)), storageport.PutOptions{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -97,7 +111,7 @@ func TestRouteImageBudgetSharesHistoryAndCurrentImages(t *testing.T) {
 	if _, err := service.buildMessageRoutePrompt(t.Context(), route, input); !errors.Is(err, llm.ErrInputTooLarge) {
 		t.Fatalf("expected combined request image budget failure, got %v", err)
 	}
-	cfg.InputLimitsJSON = `{"defaults":{"imageCount":2,"imageBytes":10}}`
+	cfg.InputLimitsJSON = fmt.Sprintf(`{"defaults":{"imageCount":2,"imageBytes":%d}}`, len(conversationImageFixture(t, "old"))+len(conversationImageFixture(t, "current")))
 	service.cfg = config.NewRuntime(cfg)
 	input.Config = cfg
 	plan, err := service.buildMessageRoutePrompt(t.Context(), route, input)
@@ -112,7 +126,7 @@ func TestRouteImageBudgetSharesHistoryAndCurrentImages(t *testing.T) {
 			}
 		}
 	}
-	if len(images) != 2 || string(images[0].Data) != "old" || string(images[1].Data) != "current" {
+	if len(images) != 2 || !bytes.Equal(images[0].Data, conversationImageFixture(t, "old")) || !bytes.Equal(images[1].Data, conversationImageFixture(t, "current")) {
 		t.Fatalf("expected both images at exact count/byte boundary, got %#v", images)
 	}
 	if err := store.Delete(t.Context(), "current"); err != nil {
@@ -125,7 +139,7 @@ func TestRouteImageBudgetSharesHistoryAndCurrentImages(t *testing.T) {
 
 func TestConversationImageContextRetainsSummaryCoveredBranchImages(t *testing.T) {
 	store := objectstorage.NewLocal(t.TempDir())
-	if _, err := store.Put(t.Context(), "covered", bytes.NewReader([]byte("original-image")), storageport.PutOptions{}); err != nil {
+	if _, err := store.Put(t.Context(), "covered", bytes.NewReader(conversationImageFixture(t, "original-image")), storageport.PutOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	service := &Service{storeProvider: &conversationTestStoreProvider{store: store}}
@@ -135,7 +149,7 @@ func TestConversationImageContextRetainsSummaryCoveredBranchImages(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got[1].Parts) != 2 || got[1].Parts[0].Kind != llm.ContentPartImage || string(got[1].Parts[0].Data) != "original-image" || got[1].Parts[0].FileName != "earlier.png" {
+	if len(got[1].Parts) != 2 || got[1].Parts[0].Kind != llm.ContentPartImage || !bytes.Equal(got[1].Parts[0].Data, conversationImageFixture(t, "original-image")) || got[1].Parts[0].FileName != "earlier.png" {
 		t.Fatalf("summary must retain the original branch image: %#v", got)
 	}
 }

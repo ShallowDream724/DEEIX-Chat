@@ -83,6 +83,7 @@ func (s *Service) prepareTemporaryAttachmentContext(
 		}
 		stagedFiles = append(stagedFiles, file)
 		att := AttachmentInput{
+			UserID: input.UserID,
 			FileID: file.FileID, FileName: file.FileName, MimeType: file.MimeType, DetectedMIME: file.DetectedMIME,
 			FileCategory: file.FileCategory, FileSize: file.SizeBytes, StoragePath: file.AbsolutePath, SHA256: file.SHA256,
 			Current: item.MessageIndex == len(messages)-1, MessageRole: "user",
@@ -141,11 +142,25 @@ func (s *Service) prepareTemporaryAttachmentContext(
 		att.FileID = temporaryAttachmentContextID(att.SHA256)
 		switch {
 		case att.FileCategory == fileCategoryImage:
-			data, err := readTemporaryAttachment(item.file)
-			if err != nil {
-				return result, attachmentInputErrorWithReason(att, err, attachmentInputReadFailed)
+			cache := s.conversationImageCache(cfg)
+			mime := resolveImageMimeType(att.DetectedMIME)
+			key := preparedConversationImageCacheKey(att, cfg.ImageMaxDimension, mime)
+			prepared, cached := cache.get(key)
+			if !cached {
+				// Close the staging file before starting shared work. A canceled
+				// request can then clean up its file while another waiter continues.
+				data, err := readTemporaryAttachment(item.file)
+				if err != nil {
+					return result, attachmentImagePreparationError(att, err)
+				}
+				prepared, err = cache.load(ctx, key, func(workCtx context.Context) (preparedConversationImage, error) {
+					return prepareImageData(workCtx, data, mime, cfg.ImageMaxDimension, input.UserID)
+				})
+				if err != nil {
+					return result, attachmentImagePreparationError(att, err)
+				}
 			}
-			resized, mimeType := resizeImageIfNeeded(data, resolveImageMimeType(att.DetectedMIME), cfg.ImageMaxDimension)
+			resized, mimeType := prepared.data, prepared.mimeType
 			if limits.ImageSingleBytes > 0 && int64(len(resized)) > limits.ImageSingleBytes {
 				return result, attachmentInputError(att, llm.NewInputLimitError("imageSingleBytes", int64(len(resized)), limits.ImageSingleBytes))
 			}

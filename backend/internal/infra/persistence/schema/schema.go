@@ -40,6 +40,7 @@ func Models() []any {
 		&models.ConversationMessageUIState{},
 		&models.Attachment{},
 		&models.FileObject{},
+		&models.ImageSourceAlias{},
 		&models.UserStorageQuota{},
 		&models.ConversationRun{},
 		&models.ContentModerationEvent{},

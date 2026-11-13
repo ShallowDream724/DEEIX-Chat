@@ -171,6 +171,7 @@ func (s *Service) llmAttribution() (string, string) {
 
 // AttachmentInput 是消息附件入参（应用层内部传递，无序列化标签）。
 type AttachmentInput struct {
+	UserID                 uint // Legacy image decoding is scheduled per requesting user.
 	FileObjID              uint
 	FileID                 string
 	Kind                   string

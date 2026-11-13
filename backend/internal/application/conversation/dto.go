@@ -27,6 +27,8 @@ type ChatFilePolicyDTO struct {
 	MaxUploadFileBytes           int64
 	AllowedMIMETypes             []string
 	ImageMaxBytes                int64
+	ImageMaxDimension            int
+	ImagePolicyVersion           string
 	DocMaxBytes                  int64
 	AudioMaxBytes                int64
 	VideoMaxBytes                int64

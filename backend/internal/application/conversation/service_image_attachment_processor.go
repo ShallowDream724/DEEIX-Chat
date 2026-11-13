@@ -13,6 +13,7 @@ import (
 	domainconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	domainmcp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/mcp"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/objectstorage"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/inputlimits"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/toolresult"
 )
 
@@ -80,10 +81,12 @@ func (s *Service) processImageAttachments(
 	var totalImageBytes int64
 	preparedImages := make([]preparedImageAttachment, 0, len(images))
 	for _, attachment := range images {
-		prepared, prepareErr := prepareImageAttachmentForProcessor(ctx, store, attachment, cfg.ImageMaxDimension)
+		attachment.UserID = input.UserID
+		part, prepareErr := s.prepareConversationImage(ctx, &store, s.conversationImageCache(cfg), attachment, cfg.ImageMaxDimension, inputlimits.Limits{})
 		if prepareErr != nil {
-			return result, prepareErr
+			return result, attachmentImagePreparationError(attachment, prepareErr)
 		}
+		prepared := preparedImageAttachment{data: part.Data, mimeType: part.MimeType}
 		totalImageBytes += int64(len(prepared.data))
 		if cfg.ImageAttachmentProcessorMaxBytes > 0 && totalImageBytes > cfg.ImageAttachmentProcessorMaxBytes {
 			return result, fmt.Errorf("%w: image processor input exceeds %d bytes", ErrFileTooLarge, cfg.ImageAttachmentProcessorMaxBytes)
@@ -226,8 +229,11 @@ func prepareImageAttachmentForProcessor(
 		return preparedImageAttachment{}, err
 	}
 	mimeType := resolveImageMimeType(textutil.FirstNonEmpty(attachment.DetectedMIME, attachment.MimeType))
-	resized, actualMIME := resizeImageIfNeeded(data, mimeType, maxDimension)
-	return preparedImageAttachment{data: resized, mimeType: actualMIME}, nil
+	prepared, err := prepareImageData(ctx, data, mimeType, maxDimension, attachment.UserID)
+	if err != nil {
+		return preparedImageAttachment{}, err
+	}
+	return preparedImageAttachment{data: prepared.data, mimeType: prepared.mimeType}, nil
 }
 
 func currentImageAttachments(attachments []AttachmentInput) []AttachmentInput {

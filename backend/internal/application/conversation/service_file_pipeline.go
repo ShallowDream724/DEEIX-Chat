@@ -9,6 +9,7 @@ import (
 	"time"
 
 	appprocessing "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/processing"
+	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
@@ -90,6 +91,8 @@ func (s *Service) GetChatFilePolicy(ctx context.Context, userID uint) (*ChatFile
 		MaxUploadFileBytes:           cfg.MaxUploadFileBytes,
 		AllowedMIMETypes:             sortedAllowedMIMETypes(cfg.FileAllowedMIMETypes),
 		ImageMaxBytes:                cfg.FileImageMaxBytes,
+		ImageMaxDimension:            cfg.ImageMaxDimension,
+		ImagePolicyVersion:           appupload.ImagePolicyVersion(cfg.ImageMaxDimension),
 		DocMaxBytes:                  cfg.FileDocMaxBytes,
 		AudioMaxBytes:                cfg.FileAudioMaxBytes,
 		VideoMaxBytes:                cfg.FileVideoMaxBytes,
@@ -147,6 +150,7 @@ func (s *Service) resolveAttachments(
 			}
 			resolved = append(resolved, AttachmentInput{
 				FileObjID:              fileItem.ID,
+				UserID:                 userID,
 				FileID:                 fileItem.FileID,
 				Kind:                   inferAttachmentKind(fileItem.DetectedMIME),
 				FileName:               fileItem.FileName,
@@ -241,6 +245,7 @@ func (s *Service) resolveConversationFileContext(
 		_, isCurrent := current[fileID]
 		resolved = append(resolved, AttachmentInput{
 			FileObjID:              fileItem.ID,
+			UserID:                 userID,
 			FileID:                 fileItem.FileID,
 			Kind:                   inferAttachmentKind(fileItem.DetectedMIME),
 			FileName:               fileItem.FileName,

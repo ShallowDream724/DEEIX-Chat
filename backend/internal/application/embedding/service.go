@@ -762,7 +762,7 @@ func (s *Service) buildFileChunks(
 	return fileChunks, embeddings, nil
 }
 
-// loadImageForEmbedding 读取图片原图，过大时缩放到 maxImageEmbeddingBytes 以内。
+// loadImageForEmbedding 先按共享静图策略准备，再满足嵌入服务的独立字节上限。
 func (s *Service) loadImageForEmbedding(ctx context.Context, fileObj domainconversation.FileObject) ([]byte, string, error) {
 	if s.extractSvc == nil {
 		return nil, "", fmt.Errorf("extract service not configured")
@@ -775,13 +775,24 @@ func (s *Service) loadImageForEmbedding(ctx context.Context, fileObj domainconve
 	if err != nil {
 		return nil, "", err
 	}
-	mimeType := imageutil.ResolveMimeType(declaredMIME)
-	// 逐级缩小长边直到体积达标；ResizeIfNeeded 只在尺寸超过长边时才重新编码。
+	cfg := s.cfg.Snapshot()
+	data, mimeType, err := imageutil.Prepare(ctx, data, declaredMIME, imageutil.ProcessingPolicy{MaxDimension: cfg.ImageMaxDimension}, fileObj.UserID)
+	if err != nil {
+		return nil, "", fmt.Errorf("prepare embedding image: %w", err)
+	}
+	// The embedding provider has a separate hard byte limit. Preserve its existing
+	// progressive fallback after the shared static-image and resource checks.
 	for _, maxEdge := range imageEmbeddingResizeEdges {
 		if len(data) <= maxImageEmbeddingBytes {
 			break
 		}
-		data, mimeType = imageutil.ResizeIfNeeded(data, mimeType, maxEdge)
+		data, mimeType, err = imageutil.Prepare(ctx, data, mimeType, imageutil.ProcessingPolicy{MaxDimension: maxEdge}, fileObj.UserID)
+		if err != nil {
+			return nil, "", fmt.Errorf("resize embedding image: %w", err)
+		}
+	}
+	if len(data) == 0 {
+		return nil, "", fmt.Errorf("embedding image preparation returned no data")
 	}
 	if len(data) > maxImageEmbeddingBytes {
 		return nil, "", errImageTooLarge

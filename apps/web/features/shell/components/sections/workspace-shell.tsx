@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import dynamic from "next/dynamic";
+import { FileResourceLifecycle } from "@/entities/file";
 
 import { AuthGuard } from "@/shared/auth/auth-guard";
 import { AuthSessionProvider } from "@/shared/auth/auth-session-context";
@@ -20,6 +21,7 @@ export function ProjectWorkspace({
 }) {
   return (
     <AuthGuard>
+      <FileResourceLifecycle />
       <ProjectLayout>{children}</ProjectLayout>
     </AuthGuard>
   );
@@ -71,6 +73,7 @@ export function ShareWorkspace({
 
   return (
     <AuthSessionProvider accessToken={accessToken}>
+      <FileResourceLifecycle />
       <ProjectLayout defaultSidebarOpen={false}>{children}</ProjectLayout>
     </AuthSessionProvider>
   );

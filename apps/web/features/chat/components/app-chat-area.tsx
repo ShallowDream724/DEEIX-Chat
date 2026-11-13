@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { ConversationShareDialog, sharePatchFromDTO, useSidebarConversationField } from "@/entities/conversation";
 import { ChatArea, ChatAreaLoadError, ChatAreaSkeleton } from "@/features/chat/components/sections/chat-area";
+import { MessageEditAttachmentProvider } from "@/features/chat/context/message-edit-attachment-context";
 import { ChatArtifactWorkspace } from "@/features/chat/components/sections/chat-artifact";
 import { ChatFilePreview } from "@/features/chat/components/sections/chat-file-preview";
 import { ChatUIBlockPanel } from "@/features/chat/components/sections/chat-ui-block-panel";
@@ -1039,6 +1040,7 @@ export function AppChatArea() {
               ) : isConversationLoadFailed ? (
                 <ChatAreaLoadError onRefresh={reload} onNewConversation={onNewConversationFromLoadError} />
               ) : (
+                <MessageEditAttachmentProvider value={{ conversationID, temporary: temporaryMode, selectedToolIDs: localToolsDisabled ? EMPTY_LIST : selectedToolIDs, resolveAttachments: temporaryMode ? temporaryRuntime.resolveEditAttachments : undefined }}>
                 <ChatArea
                   title={temporaryMode ? t("temporary.title") : activeConversationTitle}
                   starred={activeConversationStarred}
@@ -1066,7 +1068,7 @@ export function AppChatArea() {
                   onExtendVideoAttachment={onExtendGeneratedVideoAttachment}
                   onOpenCodeArtifact={artifactWorkspace.openArtifact}
                   onOpenUIBlock={artifactWorkspace.openBlock}
-                  onCycleMessageBranch={onCycleMessageBranch}
+                  onCycleMessageBranch={temporaryMode ? temporaryRuntime.onCycleMessageBranch : onCycleMessageBranch}
                   onToggleStar={temporaryMode ? undefined : onToggleActiveConversationStar}
                   onRename={temporaryMode ? undefined : onRenameActiveConversation}
                   onAutoRename={temporaryMode ? undefined : onAutoRenameActiveConversation}
@@ -1111,6 +1113,7 @@ export function AppChatArea() {
                     onExit: screenshot.exitSelectionMode,
                   }}
                 />
+                </MessageEditAttachmentProvider>
               )}
             </div>
 

@@ -694,6 +694,8 @@ export interface ChatFilePolicyResponse {
   fullContextMaxTokens: number;
   fullContextPDFMaxPages: number;
   imageMaxBytes: number;
+  imageMaxDimension: number;
+  imagePolicyVersion: string;
   maxMessageFiles: number;
   maxUploadFileBytes: number;
   ragAvailabilityReason: string;
@@ -1812,6 +1814,12 @@ export interface FileObjectResponse {
   fileCategory: string;
   fileID: string;
   fileName: string;
+  imageAnimated: boolean;
+  imageAnimationKnown: boolean;
+  imageBitDepth: number;
+  imageHeight: number;
+  imageOrientation: number;
+  imageWidth: number;
   lastAccessedAt: string | null;
   mimeType: string;
   processingErrorCode: string;
@@ -1972,6 +1980,19 @@ export interface IdentityProviderResponse {
 export interface IdentityProviderResponseDoc {
   data: IdentityProviderResponse;
   errorMsg: string;
+}
+
+export interface ImageReuseItemResponse {
+  sourceSha256: string;
+  file: FileObjectResponse | null;
+  imagePolicyVersion: string;
+  sourceSizeBytes: number;
+}
+
+export interface ImageSourceFingerprintRequest {
+  sourceSha256: string;
+  imagePolicyVersion: string;
+  sourceSizeBytes: number;
 }
 
 export interface ImportOpenWebUIUsersRequest {
@@ -2246,6 +2267,22 @@ export interface LogoutResponseDoc {
   errorMsg: string;
 }
 
+export interface LookupImageReuseRequest {
+  /** @maxItems 100 */
+  items: ImageSourceFingerprintRequest[];
+}
+
+export interface LookupImageReuseResponse {
+  imagePolicyVersion: string;
+  items: ImageReuseItemResponse[];
+  quota: StorageQuotaResponse;
+}
+
+export interface LookupImageReuseResponseDoc {
+  data: LookupImageReuseResponse;
+  errorMsg: string;
+}
+
 export interface McpErrorDoc {
   errorMsg: string;
 }
@@ -2485,6 +2522,17 @@ export interface MessageResponse {
 export interface MessageResponseDoc {
   data: MessageResponse;
   errorMsg: string;
+}
+
+export interface MessageRevisionResponse {
+  message: MessageResponse;
+  selectedLeafMessagePublicID: string;
+}
+
+export interface MessageRevisionResponseDoc {
+  code: number;
+  data: MessageRevisionResponse;
+  message: string;
 }
 
 export interface MessageTraceBlockResponse {
@@ -4106,6 +4154,14 @@ export interface RunResponse {
   upstreamModelID: number;
   upstreamModelName: string;
   userID: number;
+}
+
+export interface SaveMessageRevisionRequest {
+  content: string;
+  expectedUpdatedAt: string;
+  /** @maxItems 100 */
+  fileIDs: string[];
+  revisionID: string;
 }
 
 export interface SecurityVerificationStartRequest {
@@ -10525,6 +10581,22 @@ export namespace Files {
   /**
    * No description
    * @tags chat
+   * @name ImageReuseLookupCreate
+   * @summary 按当前用户原始图片指纹批量查找可复用文件
+   * @request POST:/files/image-reuse/lookup
+   * @secure
+   */
+  export namespace ImageReuseLookupCreate {
+    export type RequestParams = {};
+    export type RequestQuery = {};
+    export type RequestBody = LookupImageReuseRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = LookupImageReuseResponseDoc;
+  }
+
+  /**
+   * No description
+   * @tags chat
    * @name NativeReadinessCreate
    * @summary 查询所选模型的附件输入限制与当前分支附件状态
    * @request POST:/files/native-readiness
@@ -11561,6 +11633,25 @@ export namespace Messages {
     export type RequestBody = SetMessageFeedbackRequest;
     export type RequestHeaders = {};
     export type ResponseBody = MessageFeedbackResponseDoc;
+  }
+
+  /**
+   * @description 新建包含完整附件集合的用户消息分支，不请求模型，保留原消息与后续回答
+   * @tags chat
+   * @name RevisionsCreate
+   * @summary 保存用户消息的新版本
+   * @request POST:/messages/{id}/revisions
+   * @secure
+   */
+  export namespace RevisionsCreate {
+    export type RequestParams = {
+      /** 原用户消息 public_id */
+      id: string;
+    };
+    export type RequestQuery = {};
+    export type RequestBody = SaveMessageRevisionRequest;
+    export type RequestHeaders = {};
+    export type ResponseBody = MessageRevisionResponseDoc;
   }
 
   /**

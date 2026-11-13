@@ -328,7 +328,7 @@
       },
       "image_max_dimension": {
         "label": "Maximum image edge for sending",
-        "description": "Limits the longest edge of sent images, scaling larger images proportionally; set 0 for no resizing.",
+        "description": "Scales larger images proportionally. New uploads keep only the prepared image; existing images are prepared when sent. Set 0 for no resizing.",
         "placeholder": "1024"
       },
       "prepared_image_cache_max_entries": {

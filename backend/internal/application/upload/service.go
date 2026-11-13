@@ -21,6 +21,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/conv"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/filetype"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/imageutil"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/objectstorage"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/pagination"
@@ -68,13 +69,16 @@ type uploadContentGate struct {
 
 // UploadFileInput 定义文件上传请求。
 type UploadFileInput struct {
-	UserID       uint
-	Ownership    FileOwnership
-	Purpose      string
-	FileName     string
-	MimeType     string
-	DeclaredSize int64
-	Reader       io.Reader
+	UserID             uint
+	Ownership          FileOwnership
+	Purpose            string
+	FileName           string
+	MimeType           string
+	DeclaredSize       int64
+	Reader             io.Reader
+	SourceSHA256       string
+	SourceSizeBytes    int64
+	ImagePolicyVersion string
 	// MaxBytes 非零时替代管理员配置的上传上限与按类型上限。
 	// 只用于平台生成的制品：上传上限约束的是用户提交的文件，不应限制模型输出。
 	MaxBytes int64
@@ -129,6 +133,7 @@ type saveUploadedFileInput struct {
 	MaxUploadBytes   int64
 	DeclaredMIME     string
 	DetectedMaxBytes func(string) int64
+	ImageMetadata    *imageutil.Metadata
 }
 
 // FileContentResult 定义文件内容读取结果。
@@ -198,6 +203,10 @@ func (s *Service) UploadFile(ctx context.Context, input UploadFileInput) (*Uploa
 	if input.Reader == nil {
 		return nil, s.errInvalidFileReference()
 	}
+	source, sourceErr := s.acceptedImageSource(input)
+	if sourceErr != nil {
+		return nil, sourceErr
+	}
 	normalizedName := sanitizeFileName(input.FileName)
 	if normalizedName == "" {
 		return nil, s.errInvalidFileReference()
@@ -247,6 +256,20 @@ func (s *Service) UploadFile(ctx context.Context, input UploadFileInput) (*Uploa
 	if err != nil {
 		return nil, err
 	}
+	if source != nil {
+		files, lookupErr := s.LookupImageSources(ctx, input.UserID, []repository.ImageSourceFingerprint{*source})
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if existing, ok := files[*source]; ok {
+			quota, quotaErr := s.repo.GetOrInitUserStorageQuota(ctx, input.UserID, quotaBytes)
+			if quotaErr != nil {
+				return nil, quotaErr
+			}
+			return &UploadFileResult{File: existing, Quota: *quota, Reused: true}, nil
+		}
+	}
+	var metadata imageutil.Metadata
 	relativePath, detectedMIME, shaValue, sizeBytes, err := saveUploadedFile(ctx, saveUploadedFileInput{
 		Store:            store,
 		Reader:           input.Reader,
@@ -256,6 +279,7 @@ func (s *Service) UploadFile(ctx context.Context, input UploadFileInput) (*Uploa
 		MaxUploadBytes:   maxUploadBytes,
 		DeclaredMIME:     normalizedMIME,
 		DetectedMaxBytes: detectedMaxBytes,
+		ImageMetadata:    &metadata,
 	})
 	if err != nil {
 		if errors.Is(err, errLocalFileTooLarge) {
@@ -264,6 +288,9 @@ func (s *Service) UploadFile(ctx context.Context, input UploadFileInput) (*Uploa
 		return nil, err
 	}
 	category := inferFileCategory(detectedMIME, normalizedName)
+	if category != fileCategoryImage || !canonicalSourceMetadata(detectedMIME, metadata, cfg.ImageMaxDimension) {
+		source = nil
+	}
 	removeUploadedObject := func(path string) {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
@@ -296,40 +323,84 @@ func (s *Service) UploadFile(ctx context.Context, input UploadFileInput) (*Uploa
 		removeUploadedObject(relativePath)
 		return nil, reuseErr
 	} else if reused {
+		if source != nil {
+			canonical, bindErr := s.bindCanonicalImageSource(ctx, store, *source, result.File, quotaBytes)
+			if bindErr != nil {
+				removeUploadedObject(relativePath)
+				return nil, bindErr
+			}
+			result.File = *canonical
+			currentQuota, quotaErr := s.repo.GetOrInitUserStorageQuota(ctx, ownerUserID, quotaBytes)
+			if quotaErr != nil {
+				removeUploadedObject(relativePath)
+				return nil, quotaErr
+			}
+			result.Quota = *currentQuota
+		}
 		removeUploadedObject(relativePath)
 		return result, nil
 	}
 
 	fileItem := &domainconversation.FileObject{
-		FileID:           fileID,
-		UserID:           ownerUserID,
-		Purpose:          normalizePurpose(input.Purpose),
-		FileName:         normalizedName,
-		MimeType:         normalizedMIME,
-		DetectedMIME:     detectedMIME,
-		FileCategory:     category,
-		SizeBytes:        sizeBytes,
-		SHA256:           shaValue,
-		StoragePath:      relativePath,
-		Status:           "active",
-		ProcessingStatus: "uploaded",
-		ProcessingReady:  category == fileCategoryVideo || category == fileCategoryAudio || (category == fileCategoryImage && !cfg.ExtractImageOCREnabled),
-		ExtractStatus:    "none",
-		EmbedStatus:      "none",
-		ExtractorVersion: s.resolveExtractorVersion(),
-		ExpiresAt:        nil,
+		FileID:              fileID,
+		UserID:              ownerUserID,
+		Purpose:             normalizePurpose(input.Purpose),
+		FileName:            normalizedName,
+		MimeType:            normalizedMIME,
+		DetectedMIME:        detectedMIME,
+		FileCategory:        category,
+		SizeBytes:           sizeBytes,
+		SHA256:              shaValue,
+		ImageWidth:          metadata.Width,
+		ImageHeight:         metadata.Height,
+		ImageOrientation:    metadata.Orientation,
+		ImageBitDepth:       metadata.BitDepth,
+		ImageAnimated:       metadata.Animated,
+		ImageAnimationKnown: metadata.AnimationKnown,
+		StoragePath:         relativePath,
+		Status:              "active",
+		ProcessingStatus:    "uploaded",
+		ProcessingReady:     category == fileCategoryVideo || category == fileCategoryAudio || (category == fileCategoryImage && !cfg.ExtractImageOCREnabled),
+		ExtractStatus:       "none",
+		EmbedStatus:         "none",
+		ExtractorVersion:    s.resolveExtractorVersion(),
+		ExpiresAt:           nil,
 	}
 
-	quota, err := s.repo.CreateFileObjectAndConsumeQuota(ctx, fileItem, quotaBytes)
+	var quota *domainconversation.StorageQuota
+	var sourceReused bool
+	if source != nil {
+		quota, sourceReused, err = s.createCanonicalImageSource(ctx, store, fileItem, *source, quotaBytes)
+	} else {
+		quota, err = s.repo.CreateFileObjectAndConsumeQuota(ctx, fileItem, quotaBytes)
+	}
 	if err != nil && errors.Is(err, repository.ErrDuplicate) {
 		if result, reused, reuseErr := s.tryReuseExistingFile(ctx, store, ownerUserID, shaValue, sizeBytes, quotaBytes); reuseErr != nil {
 			removeUploadedObject(relativePath)
 			return nil, reuseErr
 		} else if reused {
+			if source != nil {
+				canonical, bindErr := s.bindCanonicalImageSource(ctx, store, *source, result.File, quotaBytes)
+				if bindErr != nil {
+					removeUploadedObject(relativePath)
+					return nil, bindErr
+				}
+				result.File = *canonical
+				currentQuota, quotaErr := s.repo.GetOrInitUserStorageQuota(ctx, ownerUserID, quotaBytes)
+				if quotaErr != nil {
+					removeUploadedObject(relativePath)
+					return nil, quotaErr
+				}
+				result.Quota = *currentQuota
+			}
 			removeUploadedObject(relativePath)
 			return result, nil
 		}
-		quota, err = s.repo.CreateFileObjectAndConsumeQuota(ctx, fileItem, quotaBytes)
+		if source != nil {
+			quota, sourceReused, err = s.createCanonicalImageSource(ctx, store, fileItem, *source, quotaBytes)
+		} else {
+			quota, err = s.repo.CreateFileObjectAndConsumeQuota(ctx, fileItem, quotaBytes)
+		}
 	}
 	if err != nil {
 		if errors.Is(err, repository.ErrDuplicate) {
@@ -341,6 +412,10 @@ func (s *Service) UploadFile(ctx context.Context, input UploadFileInput) (*Uploa
 			return nil, s.errStorageQuotaExceeded()
 		}
 		return nil, err
+	}
+	if sourceReused {
+		removeUploadedObject(relativePath)
+		return &UploadFileResult{File: *fileItem, Quota: *quota, Reused: true}, nil
 	}
 	initializeCtx, cancelInitialize := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	initErr := s.initializeUploadedFile(initializeCtx, fileItem)
@@ -1027,6 +1102,14 @@ func saveUploadedFile(ctx context.Context, input saveUploadedFileInput) (string,
 		return "", "", "", 0, err
 	}
 	defer tmpFile.Close() //nolint:errcheck
+	if input.ImageMetadata != nil && strings.HasPrefix(staged.detectedMIME, "image/") {
+		if parsed, parseErr := imageutil.ReadMetadata(tmpFile); parseErr == nil {
+			*input.ImageMetadata = parsed
+		}
+		if _, err = tmpFile.Seek(0, io.SeekStart); err != nil {
+			return "", "", "", 0, err
+		}
+	}
 	if _, err = input.Store.Put(ctx, relativePath, tmpFile, objectstorage.PutOptions{
 		SizeBytes:   staged.sizeBytes,
 		ContentType: staged.detectedMIME,

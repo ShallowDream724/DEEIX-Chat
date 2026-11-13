@@ -99,6 +99,7 @@ export function resolveUploadPolicyRejection(
   file: File,
   policy: ChatFilePolicyDTO | null,
   labels: UploadPolicyRejectionLabels = DEFAULT_UPLOAD_POLICY_REJECTION_LABELS,
+  options: { deferImageSizeCheck?: boolean } = {},
 ): string | null {
   if (!policy) {
     return null;
@@ -106,12 +107,13 @@ export function resolveUploadPolicyRejection(
 
   const category = inferUploadCategory(file);
 
-  if (!isAllowedUploadMime(file, policy)) {
+  // Images are validated using their encoded output MIME and bytes after prep.
+  if (!(category === "image" && options.deferImageSizeCheck) && !isAllowedUploadMime(file, policy)) {
     return labels.mimeNotAllowed;
   }
 
   const limit = resolveEffectiveUploadLimit(policy, category);
-  if (limit > 0 && file.size > limit) {
+  if (limit > 0 && file.size > limit && !(category === "image" && options.deferImageSizeCheck)) {
     const formattedLimit = formatBytes(limit);
     if (policy.capabilityMode === "full_context_only" && category !== "image" && category !== "audio" && category !== "video") {
       return labels.fullContextLimitExceeded(formattedLimit);

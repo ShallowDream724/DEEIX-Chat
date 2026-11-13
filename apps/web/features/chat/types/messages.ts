@@ -3,6 +3,8 @@ import type { UIBlockState } from "@/shared/components/markdown/ui-blocks/ui-blo
 import type { ReasoningEffortLevel } from "@/entities/model";
 
 export type MessageAttachment = {
+  assetID?: string;
+  contentVersion?: string;
   fileID: string;
   fileName: string;
   mimeType: string;
@@ -136,10 +138,12 @@ export type ImageLoadingAspectRatio = "wide" | "portrait" | "square";
 
 /**
  * How an edited user message is applied: "regenerate" starts a new branch and
- * asks the model again; "save" rewrites the message in place and keeps every
- * later message untouched.
+ * asks the model again; "save" keeps text-only edits in place and creates a
+ * standalone branch when the attachment collection changes.
  */
 export type UserMessageEditMode = "regenerate" | "save";
+
+export type EditUserMessage = (message: ChatAreaMessage, content: string, mode: UserMessageEditMode, attachments?: import("@/features/chat/types/chat-runtime").PendingAttachment[], revisionID?: string) => Promise<boolean> | boolean;
 
 export type ChatAreaMessage = {
   key: string;

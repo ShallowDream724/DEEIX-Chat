@@ -1,4 +1,13 @@
 {
+  "imagePreparation": {
+    "IMAGE_INVALID": "This image could not be read. Check that the file is complete.",
+    "IMAGE_UNSUPPORTED": "This image format is unsupported or is not allowed by the administrator.",
+    "IMAGE_ANIMATED": "The current model route cannot read the full animation. Remove this attachment or use a still image.",
+    "IMAGE_COLOR_UNSUPPORTED": "This image color format is not supported yet. Export it as an SDR image first.",
+    "IMAGE_MEMORY_LIMIT": "This image exceeds the processing or per-image size limit. Reduce its size and try again.",
+    "IMAGE_CAPABILITY_UNAVAILABLE": "This browser cannot process the image. Update your browser or export it as JPEG or PNG first.",
+    "IMAGE_TIMEOUT": "Image processing timed out. Try again or reduce the image size."
+  },
   "inputLimit": {
     "title": "Couldn’t send",
     "close": "Back to editing",
@@ -34,6 +43,10 @@
     "unavailableCurrent": "{file} is no longer available. Upload it again.",
     "unavailableHistory": "{file} in the chat history is no longer available. Upload it again in a new chat.",
     "readFailed": "Couldn’t read {file}. Try again later.",
+    "animationUnsupportedCurrent": "The current model route cannot read the full animation in {file}. Remove it or use a still image.",
+    "animationUnsupportedHistory": "The current model route cannot read the full animation in {file} from chat history. Edit that message’s attachments and resend, or start a new chat.",
+    "imageProcessingFailedCurrent": "Couldn’t process {file}. Check the image, or reduce its size and upload it again.",
+    "imageProcessingFailedHistory": "Couldn’t process {file} in chat history. Edit that message, upload the image again, and resend.",
     "parseFailed": "Couldn’t extract the text from {file}. Check the file and try again.",
     "image": "this image",
     "audio": "this audio file",
@@ -61,6 +74,8 @@
       "fileUnsupported": "The selected model cannot read an attachment",
       "fileUnavailable": "Attachment unavailable",
       "fileReadFailed": "Attachment could not be read",
+      "imageProcessingFailed": "Image processing failed",
+      "imageAnimationUnsupported": "Full animation cannot be read",
       "fileParseFailed": "Attachment could not be parsed",
       "temporaryMessageCount": "Too many temporary chat messages"
     },
@@ -281,6 +296,8 @@
     "tooManyFiles": "You can submit up to 100 files for vectorization at a time."
   },
   "file": {
+    "imageProcessingFailed": "Image processing failed. Check the image, or reduce its size and upload it again.",
+    "animationUnsupported": "The current model route cannot read the full animation. Use a still image.",
     "generatedDownloadFailed": "Generated files could not be saved. Please retry generation.",
     "embeddingUnavailable": "Embedding is unavailable for this file.",
     "extractNotReady": "File extraction is not ready.",

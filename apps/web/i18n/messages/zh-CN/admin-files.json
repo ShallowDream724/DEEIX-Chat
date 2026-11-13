@@ -328,7 +328,7 @@
       },
       "image_max_dimension": {
         "label": "发送图片最大边长",
-        "description": "用于限制发送图片的最长边，超出时等比例缩小；设置为 0 表示不缩放。",
+        "description": "图片超出最长边时等比例缩小。新上传图片只保存处理后的版本，历史图片在发送时处理；0 表示不缩放。",
         "placeholder": "1024"
       },
       "prepared_image_cache_max_entries": {

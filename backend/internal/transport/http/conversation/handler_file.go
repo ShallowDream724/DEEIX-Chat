@@ -3,6 +3,7 @@ package conversation
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	appconversation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/conversation"
@@ -52,14 +53,26 @@ func (h *Handler) UploadFile(c *gin.Context) {
 		return
 	}
 	defer fileReader.Close() //nolint:errcheck
+	sourceSize := int64(0)
+	if raw := strings.TrimSpace(c.PostForm("source_size_bytes")); raw != "" {
+		var parseErr error
+		sourceSize, parseErr = strconv.ParseInt(raw, 10, 64)
+		if parseErr != nil {
+			response.ErrorFrom(c, http.StatusBadRequest, errInvalidFile)
+			return
+		}
+	}
 
 	result, err := h.uploads.UploadFile(c.Request.Context(), appupload.UploadFileInput{
-		UserID:       userID,
-		Purpose:      c.PostForm("purpose"),
-		FileName:     fileHeader.Filename,
-		MimeType:     fileHeader.Header.Get("Content-Type"),
-		DeclaredSize: fileHeader.Size,
-		Reader:       fileReader,
+		UserID:             userID,
+		Purpose:            c.PostForm("purpose"),
+		FileName:           fileHeader.Filename,
+		MimeType:           fileHeader.Header.Get("Content-Type"),
+		DeclaredSize:       fileHeader.Size,
+		Reader:             fileReader,
+		SourceSHA256:       c.PostForm("source_sha256"),
+		SourceSizeBytes:    sourceSize,
+		ImagePolicyVersion: c.PostForm("image_policy_version"),
 	})
 	if err != nil {
 		switch {

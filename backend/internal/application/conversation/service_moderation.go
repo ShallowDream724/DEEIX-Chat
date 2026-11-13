@@ -322,8 +322,11 @@ func moderationOutputText(parts ...string) string {
 func (s *Service) loadImageForModeration(ctx context.Context, userID uint, fileID string) (appcm.PreparedImage, error) {
 	empty := appcm.PreparedImage{}
 	file, err := s.repo.GetActiveFileObjectByID(ctx, userID, strings.TrimSpace(fileID))
-	if err != nil || file == nil {
+	if err != nil {
 		return empty, err
+	}
+	if file == nil {
+		return empty, ErrFileNotFound
 	}
 	declaredMIME := textutil.FirstNonEmpty(file.DetectedMIME, file.MimeType)
 	if normalizeAttachmentKind("", declaredMIME) != "image" {
@@ -361,12 +364,18 @@ func (s *Service) loadImageForModeration(ctx context.Context, userID uint, fileI
 	if maxDim <= 0 {
 		maxDim = 1024
 	}
-	resized, actualMIME := resizeImageIfNeeded(data, detectedMIME, maxDim)
+	prepared, err := prepareImageData(ctx, data, detectedMIME, maxDim, userID)
+	if err != nil {
+		return empty, err
+	}
+	if len(prepared.data) == 0 {
+		return empty, errEmptyModerationImage
+	}
 	return appcm.PreparedImage{
-		Data:   resized,
+		Data:   prepared.data,
 		SHA256: file.SHA256,
-		Mime:   actualMIME,
-		Size:   int64(len(resized)),
+		Mime:   prepared.mimeType,
+		Size:   int64(len(prepared.data)),
 		FileID: file.FileID,
 	}, nil
 }

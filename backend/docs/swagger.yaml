@@ -1663,6 +1663,10 @@ definitions:
         type: integer
       imageMaxBytes:
         type: integer
+      imageMaxDimension:
+        type: integer
+      imagePolicyVersion:
+        type: string
       maxMessageFiles:
         type: integer
       maxUploadFileBytes:
@@ -1691,6 +1695,8 @@ definitions:
     - fullContextMaxTokens
     - fullContextPDFMaxPages
     - imageMaxBytes
+    - imageMaxDimension
+    - imagePolicyVersion
     - maxMessageFiles
     - maxUploadFileBytes
     - ragAvailabilityReason
@@ -4076,6 +4082,18 @@ definitions:
         type: string
       fileName:
         type: string
+      imageAnimated:
+        type: boolean
+      imageAnimationKnown:
+        type: boolean
+      imageBitDepth:
+        type: integer
+      imageHeight:
+        type: integer
+      imageOrientation:
+        type: integer
+      imageWidth:
+        type: integer
       lastAccessedAt:
         type: string
         x-nullable: true
@@ -4116,6 +4134,12 @@ definitions:
     - fileCategory
     - fileID
     - fileName
+    - imageAnimated
+    - imageAnimationKnown
+    - imageBitDepth
+    - imageHeight
+    - imageOrientation
+    - imageWidth
     - lastAccessedAt
     - mimeType
     - processingErrorCode
@@ -4461,6 +4485,38 @@ definitions:
     required:
     - data
     - errorMsg
+    type: object
+  ImageReuseItemResponse:
+    properties:
+      file:
+        allOf:
+        - $ref: '#/definitions/FileObjectResponse'
+        x-nullable: true
+        x-omitempty: false
+      imagePolicyVersion:
+        type: string
+      sourceSha256:
+        type: string
+      sourceSizeBytes:
+        type: integer
+    required:
+    - file
+    - imagePolicyVersion
+    - sourceSha256
+    - sourceSizeBytes
+    type: object
+  ImageSourceFingerprintRequest:
+    properties:
+      imagePolicyVersion:
+        type: string
+      sourceSha256:
+        type: string
+      sourceSizeBytes:
+        type: integer
+    required:
+    - imagePolicyVersion
+    - sourceSha256
+    - sourceSizeBytes
     type: object
   ImportOpenWebUIUsersRequest:
     properties:
@@ -5067,6 +5123,41 @@ definitions:
     - data
     - errorMsg
     type: object
+  LookupImageReuseRequest:
+    properties:
+      items:
+        items:
+          $ref: '#/definitions/ImageSourceFingerprintRequest'
+        maxItems: 100
+        type: array
+    required:
+    - items
+    type: object
+  LookupImageReuseResponse:
+    properties:
+      imagePolicyVersion:
+        type: string
+      items:
+        items:
+          $ref: '#/definitions/ImageReuseItemResponse'
+        type: array
+      quota:
+        $ref: '#/definitions/StorageQuotaResponse'
+    required:
+    - imagePolicyVersion
+    - items
+    - quota
+    type: object
+  LookupImageReuseResponseDoc:
+    properties:
+      data:
+        $ref: '#/definitions/LookupImageReuseResponse'
+      errorMsg:
+        type: string
+    required:
+    - data
+    - errorMsg
+    type: object
   McpErrorDoc:
     properties:
       errorMsg:
@@ -5606,6 +5697,29 @@ definitions:
     required:
     - data
     - errorMsg
+    type: object
+  MessageRevisionResponse:
+    properties:
+      message:
+        $ref: '#/definitions/MessageResponse'
+      selectedLeafMessagePublicID:
+        type: string
+    required:
+    - message
+    - selectedLeafMessagePublicID
+    type: object
+  MessageRevisionResponseDoc:
+    properties:
+      code:
+        type: integer
+      data:
+        $ref: '#/definitions/MessageRevisionResponse'
+      message:
+        type: string
+    required:
+    - code
+    - data
+    - message
     type: object
   MessageTraceBlockResponse:
     properties:
@@ -9174,6 +9288,25 @@ definitions:
     - upstreamModelID
     - upstreamModelName
     - userID
+    type: object
+  SaveMessageRevisionRequest:
+    properties:
+      content:
+        type: string
+      expectedUpdatedAt:
+        type: string
+      fileIDs:
+        items:
+          type: string
+        maxItems: 100
+        type: array
+      revisionID:
+        type: string
+    required:
+    - content
+    - expectedUpdatedAt
+    - fileIDs
+    - revisionID
     type: object
   SecurityVerificationStartRequest:
     properties:
@@ -21292,6 +21425,33 @@ paths:
       summary: 批量提交指定文件向量化
       tags:
       - chat
+  /files/image-reuse/lookup:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: 图片来源指纹
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/LookupImageReuseRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/LookupImageReuseResponseDoc'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 按当前用户原始图片指纹批量查找可复用文件
+      tags:
+      - chat
   /files/native-readiness:
     post:
       consumes:
@@ -23002,6 +23162,47 @@ paths:
       security:
       - BearerAuth: []
       summary: 设置消息反馈
+      tags:
+      - chat
+  /messages/{id}/revisions:
+    post:
+      consumes:
+      - application/json
+      description: 新建包含完整附件集合的用户消息分支，不请求模型，保留原消息与后续回答
+      parameters:
+      - description: 原用户消息 public_id
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 消息新版本
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/SaveMessageRevisionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/MessageRevisionResponseDoc'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/ConversationErrorDoc'
+      security:
+      - BearerAuth: []
+      summary: 保存用户消息的新版本
       tags:
       - chat
   /messages/{id}/trace:

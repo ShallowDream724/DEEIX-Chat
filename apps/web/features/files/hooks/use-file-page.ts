@@ -15,7 +15,6 @@ import {
   renameFile,
   submitFileEmbeddings,
   updateFileRagOptOut,
-  uploadFile,
 } from "@/shared/api/file";
 import type {
   FileObjectDTO,
@@ -24,11 +23,15 @@ import type {
   UserStorageQuotaDTO,
 } from "@/shared/api/file-types";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
+import { useAuthSession } from "@/shared/auth/auth-session-context";
 import {
   canManuallyVectorizeFile,
   type FileStatusPollingResult,
   isFileProcessing,
+  invalidateThumbnail,
   resolveFileFilter,
+  thumbnailScopeForUser,
+  uploadPreparedFile,
   useFileProcessingStatusPolling,
 } from "@/entities/file";
 import { useDebouncedValue } from "@/shared/hooks/use-debounced-value";
@@ -116,6 +119,8 @@ function normalizeContentTab(value: string | null): FileContentTab {
 }
 
 export function useFilePage(): UseFilePageResult {
+  const auth = useAuthSession();
+  const thumbnailScope = auth.user ? thumbnailScopeForUser(auth.user.id) : undefined;
   const t = useTranslations("files");
   const resolveErrorMessage = useLocalizedErrorMessage();
   const searchParams = useSearchParams();
@@ -474,7 +479,7 @@ export function useFilePage(): UseFilePageResult {
         const results = await runSettledItemsWithConcurrency({
           items: nextFiles,
           signal: requestController.signal,
-          runItem: (file) => uploadFile(token, file, { signal: requestController.signal }),
+          runItem: (file) => uploadPreparedFile(token, file, { signal: requestController.signal, scope: thumbnailScope, allowAnimated: true }),
         });
         if (requestController.signal.aborted || !isMountedRef.current) {
           return;
@@ -564,7 +569,7 @@ export function useFilePage(): UseFilePageResult {
         }
       }
     },
-    [debouncedQuery, ensureAccessToken, filterKeys, loadFiles, resolveErrorMessage, t],
+    [debouncedQuery, ensureAccessToken, filterKeys, loadFiles, resolveErrorMessage, t, thumbnailScope],
   );
 
   const onDeleteFile = React.useCallback(
@@ -578,6 +583,7 @@ export function useFilePage(): UseFilePageResult {
       setDeletingFileID(fileID);
       try {
         const result = await deleteFile(token, fileID);
+        if (thumbnailScope) invalidateThumbnail({ fileID }, thumbnailScope);
         const currentFiles = filesRef.current;
         const deletedIndex = currentFiles.findIndex((item) => item.fileID === fileID);
         const nextFiles = currentFiles.filter((item) => item.fileID !== fileID);
@@ -599,7 +605,7 @@ export function useFilePage(): UseFilePageResult {
         setDeletingFileID(null);
       }
     },
-    [ensureAccessToken, loadFiles, resolveErrorMessage, selectedFileID, t],
+    [ensureAccessToken, loadFiles, resolveErrorMessage, selectedFileID, t, thumbnailScope],
   );
 
   const onToggleFileSelection = React.useCallback((fileID: string, checked: boolean) => {
@@ -660,6 +666,7 @@ export function useFilePage(): UseFilePageResult {
         for (const fileID of chunk) {
           try {
             const result = await deleteFile(token, fileID);
+            if (thumbnailScope) invalidateThumbnail({ fileID }, thumbnailScope);
             latestQuota = result.quota;
             successCount += 1;
           } catch {
@@ -688,7 +695,7 @@ export function useFilePage(): UseFilePageResult {
       return;
     }
     toast.success(t("toasts.bulkDeleteSucceeded", { count: successCount }));
-  }, [ensureAccessToken, loadFiles, selectedFileID, selectedFileIDs, t]);
+  }, [ensureAccessToken, loadFiles, selectedFileID, selectedFileIDs, t, thumbnailScope]);
 
   const submitVectorization = React.useCallback(async (fileIDs: string[], clearSelection: boolean) => {
     if (vectorizing) {

@@ -10,6 +10,8 @@ import type {
   FileObjectDTO,
   FileProcessingStatusDTO,
   UploadFileResult,
+  ImageSourceReference,
+  ImageReuseLookupResult,
 } from "@/shared/api/file-types";
 import {
   ApiNetworkError,
@@ -21,6 +23,7 @@ import {
 type UploadFileOptions = {
   purpose?: string;
   signal?: AbortSignal;
+  imageSource?: ImageSourceReference;
 };
 
 type ListFilesParams = {
@@ -92,6 +95,11 @@ export async function uploadFile(
     if (options.purpose) {
       formData.append("purpose", options.purpose);
     }
+    if (options.imageSource) {
+      formData.append("source_sha256", options.imageSource.sourceSha256);
+      formData.append("source_size_bytes", String(options.imageSource.sourceSizeBytes));
+      formData.append("image_policy_version", options.imageSource.imagePolicyVersion);
+    }
 
     try {
       return await authedRequest<UploadFileResult>(
@@ -121,6 +129,12 @@ export async function uploadFile(
 }
 
 // File catalog and content
+export async function lookupImageReuse(accessToken: string, items: ImageSourceReference[], signal?: AbortSignal): Promise<ImageReuseLookupResult> {
+  return authedRequest<ImageReuseLookupResult>("/api/v1/files/image-reuse/lookup", {
+    method: "POST", accessToken, body: { items }, signal,
+  }, true);
+}
+
 export async function listFiles(
   accessToken: string,
   params: ListFilesParams = {},

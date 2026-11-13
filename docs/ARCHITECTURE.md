@@ -35,6 +35,8 @@ apps/*  →  packages/core  →  packages/api-contract  →  backend/docs/swagge
 
 逐功能支持情况见 [平台矩阵](./platform-matrix.md)。
 
+图片端侧准备、来源复用、服务器兼容处理、共享缩略图资源和消息附件修订的职责及契约见 [图片输入与附件修订](image-input-pipeline.md)。文件实体承载浏览器资源管理，聊天编辑复用上传入口；权限、配额和消息分支事务仍由后端决定。
+
 | 端 | 定位 | 功能范围 | 不做什么 |
 |---|---|---|---|
 | Web (`apps/web`) | 完整产品 | 全部功能，包括 Admin | — |

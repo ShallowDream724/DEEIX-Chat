@@ -11,6 +11,11 @@ import {
 import type { QueuedChatSubmission } from "@/features/chat/model/message-submit-branching";
 import type { PendingAttachment } from "@/features/chat/types/chat-runtime";
 import type { ChatAreaMessage, UserMessageEditMode } from "@/features/chat/types/messages";
+import { messageAttachmentIDsEqual } from "@/features/chat/model/message-edit-draft";
+import { saveMessageRevision } from "@/shared/api/message-revision";
+import { createSecureUUID } from "@/shared/lib/secure-id";
+import { readSessionID } from "@/shared/auth/session";
+import { captureMessageActionScope } from "@/features/chat/model/message-action-scope";
 import { resolveErrorMessage } from "@/features/chat/utils/chat-runtime";
 import { deleteConversationMessage, forkConversationFromMessage, updateMessage } from "@/shared/api/conversation";
 import type { ConversationDTO, ConversationOptions, MessageDTO } from "@/shared/api/conversation-types";
@@ -53,6 +58,7 @@ export function useChatMessageActions({
   reload: () => void;
 }) {
   const t = useTranslations("chat.submit");
+  const captureScope = React.useCallback(() => captureMessageActionScope(() => conversationIDRef.current, readSessionID), [conversationIDRef]);
 
   const onRetryUserMessage = React.useCallback(
     async (message: ChatAreaMessage) => {
@@ -122,6 +128,7 @@ export function useChatMessageActions({
 
   const saveMessageInPlace = React.useCallback(
     async (message: ChatAreaMessage, content: string, failureKey: "editReplyFailed" | "editMessageFailed") => {
+      const isCurrentScope = captureScope();
       const messagePublicID = resolvePersistedPublicID(message.publicID);
       const nextContent = content.trim();
       if (!messagePublicID || !nextContent) {
@@ -130,24 +137,45 @@ export function useChatMessageActions({
       }
       const token = await resolveAccessToken();
       if (!token) {
-        toast.error(t(failureKey), { description: t("signInRequired") });
+        if (isCurrentScope()) toast.error(t(failureKey), { description: t("signInRequired") });
         return false;
       }
       try {
         const updated = await updateMessage(token, messagePublicID, { content: nextContent });
-        replaceMessage(updated);
+        if (isCurrentScope()) replaceMessage(updated);
         return true;
       } catch {
-        toast.error(t(failureKey), { description: t("retryLater") });
+        if (isCurrentScope()) toast.error(t(failureKey), { description: t("retryLater") });
         return false;
       }
     },
-    [replaceMessage, t],
+    [captureScope, replaceMessage, t],
   );
 
   const onEditUserMessage = React.useCallback(
-    async (message: ChatAreaMessage, content: string, mode: UserMessageEditMode) => {
+    async (message: ChatAreaMessage, content: string, mode: UserMessageEditMode, attachments = toPendingAttachments(message), revisionID = createSecureUUID()) => {
+      const isCurrentScope = captureScope();
       if (mode === "save") {
+        if (!messageAttachmentIDsEqual(attachments, message.attachments ?? []) || !content.trim()) {
+          const messagePublicID = resolvePersistedPublicID(message.publicID);
+          if (!messagePublicID || !message.updatedAt || (!content.trim() && attachments.length === 0)) return false;
+          const token = await resolveAccessToken();
+          if (!token) {
+            if (isCurrentScope()) toast.error(t("editMessageFailed"), { description: t("signInRequired") });
+            return false;
+          }
+          try {
+            const result = await saveMessageRevision(token, messagePublicID, { content: content.trim(), fileIDs: attachments.map((item) => item.fileID), expectedUpdatedAt: message.updatedAt, revisionID });
+            if (isCurrentScope()) {
+              setBranchSelections((current) => isCurrentScope() ? { ...current, [toBranchKey(message.parentPublicID)]: result.selectedLeafMessagePublicID } : current);
+              reload();
+            }
+            return true;
+          } catch (error) {
+            if (isCurrentScope()) toast.error(t("editMessageFailed"), { description: resolveErrorMessage(error, t("retryLater")) });
+            return false;
+          }
+        }
         return saveMessageInPlace(message, content, "editMessageFailed");
       }
       const sourceMessagePublicID = resolvePersistedPublicID(message.publicID);
@@ -157,7 +185,7 @@ export function useChatMessageActions({
       }
       const ok = await submitMessage({
         content: content.trim(),
-        currentAttachments: toPendingAttachments(message),
+        currentAttachments: attachments,
         resetComposer: false,
         parentMessagePublicID: message.parentPublicID,
         sourceMessagePublicID,
@@ -165,7 +193,7 @@ export function useChatMessageActions({
       });
       return ok;
     },
-    [saveMessageInPlace, submitMessage, t],
+    [captureScope, reload, saveMessageInPlace, setBranchSelections, submitMessage, t],
   );
 
   const onEditAssistantMessage = React.useCallback(

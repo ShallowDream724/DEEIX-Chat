@@ -13763,6 +13763,50 @@ const docTemplate = `{
                 }
             }
         },
+        "/files/image-reuse/lookup": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "summary": "按当前用户原始图片指纹批量查找可复用文件",
+                "parameters": [
+                    {
+                        "description": "图片来源指纹",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/LookupImageReuseRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/LookupImageReuseResponseDoc"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/ConversationErrorDoc"
+                        }
+                    }
+                }
+            }
+        },
         "/files/native-readiness": {
             "post": {
                 "security": [
@@ -16751,6 +16795,70 @@ const docTemplate = `{
                     },
                     "500": {
                         "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/ConversationErrorDoc"
+                        }
+                    }
+                }
+            }
+        },
+        "/messages/{id}/revisions": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "新建包含完整附件集合的用户消息分支，不请求模型，保留原消息与后续回答",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "summary": "保存用户消息的新版本",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "原用户消息 public_id",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "消息新版本",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/SaveMessageRevisionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/MessageRevisionResponseDoc"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/ConversationErrorDoc"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/ConversationErrorDoc"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/ConversationErrorDoc"
                         }
@@ -20640,6 +20748,8 @@ const docTemplate = `{
                 "fullContextMaxTokens",
                 "fullContextPDFMaxPages",
                 "imageMaxBytes",
+                "imageMaxDimension",
+                "imagePolicyVersion",
                 "maxMessageFiles",
                 "maxUploadFileBytes",
                 "ragAvailabilityReason",
@@ -20690,6 +20800,12 @@ const docTemplate = `{
                 },
                 "imageMaxBytes": {
                     "type": "integer"
+                },
+                "imageMaxDimension": {
+                    "type": "integer"
+                },
+                "imagePolicyVersion": {
+                    "type": "string"
                 },
                 "maxMessageFiles": {
                     "type": "integer"
@@ -24071,6 +24187,12 @@ const docTemplate = `{
                 "fileCategory",
                 "fileID",
                 "fileName",
+                "imageAnimated",
+                "imageAnimationKnown",
+                "imageBitDepth",
+                "imageHeight",
+                "imageOrientation",
+                "imageWidth",
                 "lastAccessedAt",
                 "mimeType",
                 "processingErrorCode",
@@ -24120,6 +24242,24 @@ const docTemplate = `{
                 },
                 "fileName": {
                     "type": "string"
+                },
+                "imageAnimated": {
+                    "type": "boolean"
+                },
+                "imageAnimationKnown": {
+                    "type": "boolean"
+                },
+                "imageBitDepth": {
+                    "type": "integer"
+                },
+                "imageHeight": {
+                    "type": "integer"
+                },
+                "imageOrientation": {
+                    "type": "integer"
+                },
+                "imageWidth": {
+                    "type": "integer"
                 },
                 "lastAccessedAt": {
                     "type": "string",
@@ -24638,6 +24778,54 @@ const docTemplate = `{
                 },
                 "errorMsg": {
                     "type": "string"
+                }
+            }
+        },
+        "ImageReuseItemResponse": {
+            "type": "object",
+            "required": [
+                "file",
+                "imagePolicyVersion",
+                "sourceSha256",
+                "sourceSizeBytes"
+            ],
+            "properties": {
+                "file": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/FileObjectResponse"
+                        }
+                    ],
+                    "x-nullable": true,
+                    "x-omitempty": false
+                },
+                "imagePolicyVersion": {
+                    "type": "string"
+                },
+                "sourceSha256": {
+                    "type": "string"
+                },
+                "sourceSizeBytes": {
+                    "type": "integer"
+                }
+            }
+        },
+        "ImageSourceFingerprintRequest": {
+            "type": "object",
+            "required": [
+                "imagePolicyVersion",
+                "sourceSha256",
+                "sourceSizeBytes"
+            ],
+            "properties": {
+                "imagePolicyVersion": {
+                    "type": "string"
+                },
+                "sourceSha256": {
+                    "type": "string"
+                },
+                "sourceSizeBytes": {
+                    "type": "integer"
                 }
             }
         },
@@ -25508,6 +25696,58 @@ const docTemplate = `{
                 }
             }
         },
+        "LookupImageReuseRequest": {
+            "type": "object",
+            "required": [
+                "items"
+            ],
+            "properties": {
+                "items": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "items": {
+                        "$ref": "#/definitions/ImageSourceFingerprintRequest"
+                    }
+                }
+            }
+        },
+        "LookupImageReuseResponse": {
+            "type": "object",
+            "required": [
+                "imagePolicyVersion",
+                "items",
+                "quota"
+            ],
+            "properties": {
+                "imagePolicyVersion": {
+                    "type": "string"
+                },
+                "items": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/ImageReuseItemResponse"
+                    }
+                },
+                "quota": {
+                    "$ref": "#/definitions/StorageQuotaResponse"
+                }
+            }
+        },
+        "LookupImageReuseResponseDoc": {
+            "type": "object",
+            "required": [
+                "data",
+                "errorMsg"
+            ],
+            "properties": {
+                "data": {
+                    "$ref": "#/definitions/LookupImageReuseResponse"
+                },
+                "errorMsg": {
+                    "type": "string"
+                }
+            }
+        },
         "McpErrorDoc": {
             "type": "object",
             "required": [
@@ -26263,6 +26503,40 @@ const docTemplate = `{
                     "$ref": "#/definitions/MessageResponse"
                 },
                 "errorMsg": {
+                    "type": "string"
+                }
+            }
+        },
+        "MessageRevisionResponse": {
+            "type": "object",
+            "required": [
+                "message",
+                "selectedLeafMessagePublicID"
+            ],
+            "properties": {
+                "message": {
+                    "$ref": "#/definitions/MessageResponse"
+                },
+                "selectedLeafMessagePublicID": {
+                    "type": "string"
+                }
+            }
+        },
+        "MessageRevisionResponseDoc": {
+            "type": "object",
+            "required": [
+                "code",
+                "data",
+                "message"
+            ],
+            "properties": {
+                "code": {
+                    "type": "integer"
+                },
+                "data": {
+                    "$ref": "#/definitions/MessageRevisionResponse"
+                },
+                "message": {
                     "type": "string"
                 }
             }
@@ -31268,6 +31542,33 @@ const docTemplate = `{
                 },
                 "userID": {
                     "type": "integer"
+                }
+            }
+        },
+        "SaveMessageRevisionRequest": {
+            "type": "object",
+            "required": [
+                "content",
+                "expectedUpdatedAt",
+                "fileIDs",
+                "revisionID"
+            ],
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "expectedUpdatedAt": {
+                    "type": "string"
+                },
+                "fileIDs": {
+                    "type": "array",
+                    "maxItems": 100,
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "revisionID": {
+                    "type": "string"
                 }
             }
         },

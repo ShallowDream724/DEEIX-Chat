@@ -891,7 +891,7 @@ func (s *Service) injectConversationImageContext(
 			part, err = s.prepareConversationImage(ctx, &store, cache, att, maxDim, limits)
 			if err != nil {
 				att.Current = false
-				return nil, attachmentInputErrorWithReason(att, err, attachmentInputReadFailed)
+				return nil, attachmentImagePreparationError(att, err)
 			}
 			loadedByFileID[ref.fileID] = part
 		}
@@ -989,6 +989,9 @@ func readConversationImageSource(ctx context.Context, store objectstorage.Store,
 }
 
 func (s *Service) prepareConversationImage(ctx context.Context, store *objectstorage.Store, cache *preparedConversationImageCache, att AttachmentInput, maxDim int, limits inputlimits.Limits) (llm.ContentPart, error) {
+	if err := ctx.Err(); err != nil {
+		return llm.ContentPart{}, err
+	}
 	if strings.TrimSpace(att.StoragePath) == "" {
 		return llm.ContentPart{}, fmt.Errorf("%w: image %s storage path is empty", ErrInvalidFileReference, att.FileID)
 	}
@@ -1011,16 +1014,21 @@ func (s *Service) prepareConversationImage(ctx context.Context, store *objectsto
 		}
 		*store = opened
 	}
-	data, err := readConversationImageSource(ctx, *store, att)
+	initialStore := *store
+	prepared, err := cache.load(ctx, cacheKey, func(workCtx context.Context) (preparedConversationImage, error) {
+		data, err := readConversationImageSource(workCtx, initialStore, att)
+		if err != nil {
+			return preparedConversationImage{}, err
+		}
+		return prepareImageData(workCtx, data, mime, maxDim, att.UserID)
+	})
 	if err != nil {
 		return llm.ContentPart{}, err
 	}
-	resized, actualMIME := resizeImageIfNeeded(data, mime, maxDim)
-	part := llm.ContentPart{Kind: llm.ContentPartImage, MimeType: actualMIME, Data: resized, FileName: att.FileName, SourceFileIDs: []string{strings.TrimSpace(att.FileID)}}
+	part := llm.ContentPart{Kind: llm.ContentPartImage, MimeType: prepared.mimeType, Data: prepared.data, FileName: att.FileName, SourceFileIDs: []string{strings.TrimSpace(att.FileID)}}
 	if err := validateConversationImageBudget([]llm.Message{{Parts: []llm.ContentPart{part}}}, inputlimits.Limits{ImageSingleBytes: limits.ImageSingleBytes}); err != nil {
 		return llm.ContentPart{}, err
 	}
-	cache.put(cacheKey, preparedConversationImage{data: resized, mimeType: actualMIME})
 	return part, nil
 }
 
@@ -1034,7 +1042,7 @@ func (s *Service) prepareUserContextImages(ctx context.Context, attachments []At
 		}
 		part, err := s.prepareConversationImage(ctx, &store, cache, att, cfg.ImageMaxDimension, limits)
 		if err != nil {
-			return nil, attachmentInputErrorWithReason(att, err, attachmentInputReadFailed)
+			return nil, attachmentImagePreparationError(att, err)
 		}
 		part.Dynamic = !att.Current
 		parts = append(parts, part)

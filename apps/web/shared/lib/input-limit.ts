@@ -9,7 +9,7 @@ export const INPUT_LIMIT_DIMENSIONS = [
   "parsedTextBytes", "parsedTextTokens", "parsedPDFPages",
   "contextTokens", "currentTurnTokens", "temporaryMessageCount", "temporaryTextLength", "temporarySingleTextLength",
   "temporaryFileCount", "temporaryRequestBytes", "fileUnsupported", "fileUnavailable",
-  "fileParseFailed", "fileReadFailed", "modelTaskUnsupported",
+  "fileParseFailed", "fileReadFailed", "modelTaskUnsupported", "imageProcessingFailed", "imageAnimationUnsupported",
 ] as const;
 
 export type InputLimitDimension = typeof INPUT_LIMIT_DIMENSIONS[number];
@@ -65,7 +65,8 @@ export function getInputLimitReasons(error: unknown): InputLimitReason[] {
       : undefined;
   const attachmentFailure = (error.errorCode === "file.not_ready" || error.errorCode === "file.not_found")
     && (details?.dimension === "fileParseFailed" || details?.dimension === "fileReadFailed");
-  if (error.errorCode !== "file.too_large" && !fallbackDimension && !attachmentFailure) return [];
+  const imageFailure = error.errorCode === "file.image_processing_failed" || error.errorCode === "file.animation_unsupported";
+  if (error.errorCode !== "file.too_large" && !fallbackDimension && !attachmentFailure && !imageFailure) return [];
   const candidates = isRecord(error.details) && Array.isArray(error.details.reasons)
     ? error.details.reasons
     : [{ ...details, dimension: details?.dimension ?? fallbackDimension }];

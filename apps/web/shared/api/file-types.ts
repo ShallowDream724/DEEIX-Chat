@@ -32,6 +32,8 @@ export type ChatFilePolicyDTO = {
   maxUploadFileBytes: number;
   allowedMIMETypes: string[];
   imageMaxBytes: number;
+  imageMaxDimension?: number;
+  imagePolicyVersion?: string;
   docMaxBytes: number;
   audioMaxBytes: number;
   videoMaxBytes: number;
@@ -57,6 +59,18 @@ export type FileListResult = Omit<FileListResponse, "quota" | "results"> & {
 
 export type UploadFileResult = Omit<FileUploadResponse, "file" | "quota"> & {
   file: FileObjectDTO;
+  quota: UserStorageQuotaDTO;
+};
+
+export type ImageSourceReference = {
+  sourceSha256: string;
+  sourceSizeBytes: number;
+  imagePolicyVersion: string;
+};
+
+export type ImageReuseLookupResult = {
+  items: Array<ImageSourceReference & { file: FileObjectDTO | null }>;
+  imagePolicyVersion: string;
   quota: UserStorageQuotaDTO;
 };
 

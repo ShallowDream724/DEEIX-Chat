@@ -2,6 +2,17 @@
 // Unused re-exports are tree-shaken (package.json "sideEffects"), so UI and logic share one entry.
 export { DeleteFilesOption } from "@/entities/file/components/delete-files-option";
 export { FileThumbnail } from "@/entities/file/components/file-thumbnail";
+export { FileResourceLifecycle } from "@/entities/file/components/file-resource-lifecycle";
+export { uploadPreparedFile, prepareLocalImageFile, isImageUploadCandidate } from "@/entities/file/lib/image-upload";
+export { ImagePreparationError, isImagePreparationError } from "@/entities/file/lib/image-preparation";
+export {
+  seedThumbnail,
+  invalidateThumbnail,
+  clearThumbnailResources,
+  clearThumbnailScope,
+  clearUnusedThumbnailScopes,
+  thumbnailScopeForUser,
+} from "@/entities/file/lib/thumbnail-resource";
 export { LazyFilePreviewDialog } from "@/entities/file/components/file-preview/lazy-file-preview-dialog";
 export { LazyFilePreviewPanel } from "@/entities/file/components/file-preview/lazy-file-preview-panel";
 export { FilePreviewPanel } from "@/entities/file/components/file-preview/preview-panel";

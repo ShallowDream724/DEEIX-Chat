@@ -12,7 +12,7 @@ import type {
   KnowledgeBaseSortKey,
 } from "@/features/knowledge-bases/types/knowledge-bases";
 import { useLocalizedErrorMessage } from "@/i18n/use-localized-error";
-import { submitFileEmbeddings, uploadFile } from "@/shared/api/file";
+import { getChatFilePolicy, submitFileEmbeddings } from "@/shared/api/file";
 import {
   addAdminKnowledgeBaseFiles,
   addMyKnowledgeBaseFiles,
@@ -44,11 +44,19 @@ import type {
   KnowledgeBaseFileProcessingStatusDTO,
 } from "@/shared/api/knowledge-bases-types";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
+import { useAuthSession } from "@/shared/auth/auth-session-context";
 import {
   canManuallyVectorizeFile,
+  clearThumbnailScope,
   type FileStatusPollingResult,
   isFileProcessing,
+  isImageUploadCandidate,
+  invalidateThumbnail,
+  prepareLocalImageFile,
   type PreviewDialogFile,
+  seedThumbnail,
+  thumbnailScopeForUser,
+  uploadPreparedFile,
   useFileStatusPolling,
 } from "@/entities/file";
 import {
@@ -66,6 +74,8 @@ const AVAILABLE_FILE_SEARCH_DEBOUNCE_MS = 200;
 type KnowledgeFileUploadResult = { file: { fileID: string } };
 
 export function useKnowledgeBasePage(mode: KnowledgeBaseMode) {
+  const auth = useAuthSession();
+  const thumbnailScope = auth.user ? thumbnailScopeForUser(auth.user.id) : undefined;
   const t = useTranslations("knowledgeBases");
   const resolveErrorMessage = useLocalizedErrorMessage();
   const [items, setItems] = React.useState<KnowledgeBaseDTO[]>([]);
@@ -709,15 +719,24 @@ export function useKnowledgeBasePage(mode: KnowledgeBaseMode) {
     try {
       token = await requireAccessToken();
       if (requestController.signal.aborted) return;
+      let imagePolicy: ReturnType<typeof getChatFilePolicy> | undefined;
       const upload: (
         accessToken: string,
         file: File,
         signal: AbortSignal,
       ) => Promise<KnowledgeFileUploadResult> = mode === "admin"
-        ? (accessToken: string, file: File, signal: AbortSignal) =>
-            uploadAdminKnowledgeBaseFile(accessToken, file, signal)
+        ? async (accessToken: string, file: File, signal: AbortSignal) => {
+            if (!isImageUploadCandidate(file)) return uploadAdminKnowledgeBaseFile(accessToken, file, signal);
+            imagePolicy ??= getChatFilePolicy(accessToken, signal);
+            const prepared = await prepareLocalImageFile(file, { policy: await imagePolicy, scope: thumbnailScope, signal });
+            signal.throwIfAborted();
+            const result = await uploadAdminKnowledgeBaseFile(accessToken, prepared.file, signal);
+            signal.throwIfAborted();
+            if (prepared.thumbnailBlob && thumbnailScope) seedThumbnail({ fileID: result.file.fileID }, prepared.thumbnailBlob, thumbnailScope);
+            return result;
+          }
         : (accessToken: string, file: File, signal: AbortSignal) =>
-            uploadFile(accessToken, file, { signal });
+            uploadPreparedFile(accessToken, file, { purpose: "knowledge_base", signal, scope: thumbnailScope });
       const uploadResults = await runSettledItemsWithConcurrency({
         items: nextFiles,
         signal: requestController.signal,
@@ -776,7 +795,7 @@ export function useKnowledgeBasePage(mode: KnowledgeBaseMode) {
         if (!requestController.signal.aborted) setUploadingFiles(false);
       }
     }
-  }, [addingFiles, loadItems, mode, replaceFileList, resolveErrorMessage, selected, t, uploadingFiles]);
+  }, [addingFiles, loadItems, mode, replaceFileList, resolveErrorMessage, selected, t, thumbnailScope, uploadingFiles]);
 
   const deletePlatformFile = React.useCallback(async (fileID: string): Promise<boolean> => {
     if (mode !== "admin" || deletingPlatformFileID || addingFiles || uploadingFiles) return false;
@@ -784,6 +803,7 @@ export function useKnowledgeBasePage(mode: KnowledgeBaseMode) {
     try {
       const token = await requireAccessToken();
       await deleteAdminKnowledgeBaseFile(token, fileID);
+      if (thumbnailScope) invalidateThumbnail({ fileID }, thumbnailScope);
       setAvailableFiles((current) => current.filter((file) => file.fileID !== fileID));
       setAvailableFilesTotal((current) => Math.max(0, current - 1));
       setSelectedFileIDs((current) => current.filter((id) => id !== fileID));
@@ -796,7 +816,7 @@ export function useKnowledgeBasePage(mode: KnowledgeBaseMode) {
     } finally {
       setDeletingPlatformFileID("");
     }
-  }, [addingFiles, deletingPlatformFileID, mode, resolveErrorMessage, t, uploadingFiles]);
+  }, [addingFiles, deletingPlatformFileID, mode, resolveErrorMessage, t, thumbnailScope, uploadingFiles]);
 
   const removeFile = React.useCallback(async (fileID: string) => {
     if (!selected || removingFileID || (mode === "user" && selected.scope !== "user")) return;
@@ -935,11 +955,10 @@ export function useKnowledgeBasePage(mode: KnowledgeBaseMode) {
     setDeleting(true);
     try {
       const token = await requireAccessToken();
-      if (mode === "admin") {
-        await deleteAdminKnowledgeBase(token, deleteTarget.publicID, { deleteFiles });
-      } else {
-        await deleteMyKnowledgeBase(token, deleteTarget.publicID, { deleteFiles });
-      }
+      const result = mode === "admin"
+        ? await deleteAdminKnowledgeBase(token, deleteTarget.publicID, { deleteFiles })
+        : await deleteMyKnowledgeBase(token, deleteTarget.publicID, { deleteFiles });
+      if (deleteFiles && (result.deletedFileCount ?? 0) > 0 && thumbnailScope) clearThumbnailScope(thumbnailScope);
       setDeleteTarget(null);
       setDeleteFiles(false);
       await loadItems();
@@ -950,7 +969,7 @@ export function useKnowledgeBasePage(mode: KnowledgeBaseMode) {
     } finally {
       setDeleting(false);
     }
-  }, [deleteFiles, deleteTarget, deleting, loadItems, mode, t]);
+  }, [deleteFiles, deleteTarget, deleting, loadItems, mode, t, thumbnailScope]);
 
   const toggleKnowledgeBaseSelection = React.useCallback((publicID: string, checked: boolean) => {
     setSelectedKnowledgeBaseIDs((current) => {
@@ -983,6 +1002,7 @@ export function useKnowledgeBasePage(mode: KnowledgeBaseMode) {
           : deleteMyKnowledgeBase(token, item.publicID, { deleteFiles: bulkDeleteFiles }),
       });
       const successCount = results.filter((result) => result.status === "fulfilled").length;
+      if (bulkDeleteFiles && thumbnailScope && results.some((result) => result.status === "fulfilled" && (result.value.deletedFileCount ?? 0) > 0)) clearThumbnailScope(thumbnailScope);
       const failedCount = results.length - successCount;
       setSelectedKnowledgeBaseIDs([]);
       setBulkDeleteOpen(false);
@@ -1012,6 +1032,7 @@ export function useKnowledgeBasePage(mode: KnowledgeBaseMode) {
     selectableItems,
     selectedKnowledgeBaseIDs,
     t,
+    thumbnailScope,
   ]);
 
   const toggleBuiltinEnabled = React.useCallback(async (enabled: boolean) => {

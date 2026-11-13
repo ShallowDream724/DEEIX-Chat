@@ -113,6 +113,8 @@ var sendMessageErrorStatuses = []sendMessageErrorStatus{
 	{err: appconversation.ErrInvalidSkillUse, status: http.StatusBadRequest},
 	{err: appconversation.ErrFileProcessingNotReady, status: http.StatusBadRequest},
 	{err: appconversation.ErrFileUnsupportedByModel, status: http.StatusBadRequest},
+	{err: appconversation.ErrImageProcessingFailed, status: http.StatusBadRequest},
+	{err: appconversation.ErrUnsupportedImageAnimation, status: http.StatusBadRequest},
 	{err: appconversation.ErrFileTooLargeForFullContext, status: http.StatusBadRequest},
 	{err: appconversation.ErrEmbeddingUnavailable, status: http.StatusBadRequest},
 	{err: appconversation.ErrInvalidKnowledgeBaseReference, status: http.StatusBadRequest},
@@ -175,8 +177,15 @@ func sendMessageInputDetails(err error) any {
 		fields["dimension"], fields["actual"], fields["limit"] = limit.Dimension, limit.Actual, limit.Limit
 	}
 	if file := appconversation.AttachmentInputErrorDetails(err); file != nil {
-		if fields["dimension"] == nil && (file.Reason == "fileParseFailed" || file.Reason == "fileReadFailed") {
-			fields["dimension"] = file.Reason
+		if fields["dimension"] == nil {
+			switch file.Reason {
+			case "fileParseFailed", "fileReadFailed":
+				fields["dimension"] = file.Reason
+			case "image_processing_failed":
+				fields["dimension"], fields["reason"] = "imageProcessingFailed", file.Reason
+			case "unsupported_animation":
+				fields["dimension"], fields["reason"] = "imageAnimationUnsupported", file.Reason
+			}
 		}
 		if file.FileName != "" {
 			fields["fileName"] = file.FileName

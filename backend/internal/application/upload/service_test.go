@@ -701,6 +701,7 @@ type uploadTestRepo struct {
 	failNextCreateDuplicate bool
 	referencedFileIDs       map[string]bool
 	createDelay             time.Duration
+	imageAliases            map[testImageAliasKey]string
 }
 
 func newUploadTestRepo() *uploadTestRepo {

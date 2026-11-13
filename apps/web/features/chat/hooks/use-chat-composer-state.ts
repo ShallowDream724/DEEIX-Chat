@@ -513,7 +513,9 @@ export function useChatComposerState(
       return;
     }
 
-    if (conversationKey === targetConversationKey) {
+    // Upload callbacks can outlive the conversation that started them.
+    // Read the committed active key instead of that callback's old closure.
+    if (latestStateRef.current.conversationKey === targetConversationKey && activeStorageKeyRef.current === storageKey) {
       composerRevisionRef.current++;
       setHydratedConversationKey(targetConversationKey);
       setHydratedStorageKey(storageKey);
@@ -527,12 +529,12 @@ export function useChatComposerState(
       return;
     }
 
-    if (!persistenceEnabled) {
+    if (!persistenceEnabled || activeStorageKeyRef.current !== storageKey) {
       return;
     }
 
     ComposerStorageOps.appendAttachments(storageKey, targetConversationKey, items);
-  }, [conversationKey, persistenceEnabled, storageKey]);
+  }, [persistenceEnabled, storageKey]);
 
   return {
     conversationKey: visibleState.conversationKey,

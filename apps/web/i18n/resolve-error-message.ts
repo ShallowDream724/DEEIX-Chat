@@ -578,6 +578,11 @@ export function resolveLocalizedErrorMessage(error: unknown, fallback?: string):
 // resolveLocalizedErrorMessageWithoutReference is for surfaces that render the error ID separately.
 export function resolveLocalizedErrorMessageWithoutReference(error: unknown, fallback?: string): string {
   const locale = readClientLocale();
+  if (error instanceof Error && error.name === "ImagePreparationError" && "code" in error && typeof error.code === "string") {
+    const messages = (locale === "zh-CN" ? zhErrors : enErrors).imagePreparation;
+    const translated = Object.entries(messages).find(([code]) => code === error.code)?.[1];
+    if (translated) return translated;
+  }
   if (error instanceof ApiError && error.errorCode) {
     const inputLimitReasons = getInputLimitReasons(error);
     if (inputLimitReasons.length) {
@@ -637,6 +642,12 @@ export function resolveInputLimitPresentation(reason: InputLimitReason, locale: 
   const history = scope === "history";
   if (dimension === "modelTaskUnsupported") {
     return { title, description: reason.description ?? title };
+  }
+  if (dimension === "imageAnimationUnsupported") {
+    return { title, description: format(history ? text.animationUnsupportedHistory : text.animationUnsupportedCurrent, { file }) };
+  }
+  if (dimension === "imageProcessingFailed") {
+    return { title, description: format(history ? text.imageProcessingFailedHistory : text.imageProcessingFailedCurrent, { file }) };
   }
   if (dimension === "fileUnsupported") {
     return { title, description: format(history || scope === "mixed" ? text.unsupportedHistory : text.unsupportedCurrent, { file }) };

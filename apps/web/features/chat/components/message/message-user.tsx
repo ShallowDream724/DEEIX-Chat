@@ -1,41 +1,28 @@
 "use client";
 
 import * as React from "react";
-import { CircleAlert } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { useTranslations } from "next-intl";
 
 import { ChevronDown } from "@/components/animate-ui/icons/chevron-down";
 import { ChevronUp } from "@/components/animate-ui/icons/chevron-up";
-import { ChatMentionMenuPortal } from "@/features/chat/components/shared/chat-mention-menu";
+import { MessageUserEditor } from "@/features/chat/components/message/message-user-editor";
 import { MessageAttachmentRow } from "@/features/chat/components/message/message-attachment";
 import { UserMessageMeta } from "@/features/chat/components/message/message-meta";
-import type { ChatAreaMessage, UserMessageEditMode } from "@/features/chat/types/messages";
+import type { ChatAreaMessage, EditUserMessage } from "@/features/chat/types/messages";
 import type { SendShortcut } from "@/features/settings";
-import {
-  useChatMentionMenu,
-  type ChatMentionMenuKind,
-} from "@/features/chat/hooks/use-chat-mention-menu";
-import type { ChatModelOption, PendingAttachment } from "@/features/chat/types/chat-runtime";
-import type { MCPToolDTO } from "@/shared/api/mcp-types";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
+import type { ChatModelOption } from "@/features/chat/types/chat-runtime";
 import type { FileContentLoader } from "@/entities/file";
 import { StreamdownRender } from "@/shared/components/markdown/streamdown-render";
-import { isImeComposingKeyEvent, isSendShortcutEvent } from "@/shared/lib/platform-shortcuts";
 
 // Long user messages collapse to this many lines (leading-6 → 24px each).
 const USER_MESSAGE_COLLAPSED_LINES = 6;
-const EDIT_MESSAGE_MENTION_KINDS: readonly ChatMentionMenuKind[] = ["model", "prompt"];
-const EDIT_MESSAGE_EMPTY_ATTACHMENTS: PendingAttachment[] = [];
-const EDIT_MESSAGE_EMPTY_TOOLS: MCPToolDTO[] = [];
-const EDIT_MESSAGE_EMPTY_TOOL_IDS: number[] = [];
 
 type ChatMessageUserProps = {
   item: ChatAreaMessage;
   onRetryUserMessage: (message: ChatAreaMessage) => Promise<void> | void;
-  onEditUserMessage: (message: ChatAreaMessage, content: string, mode: UserMessageEditMode) => Promise<boolean> | boolean;
+  onEditUserMessage: EditUserMessage;
   onDeleteUserMessage?: (message: ChatAreaMessage) => Promise<void> | void;
   modelOptions?: ChatModelOption[];
   selectedPlatformModelName?: string;
@@ -70,11 +57,8 @@ export function ChatMessageUser({
   sendShortcut = "enter",
   screenshotMeta,
 }: ChatMessageUserProps) {
-  const tCommon = useTranslations("common.actions");
-  const tComposer = useTranslations("chat.composer");
   const tMessages = useTranslations("chat.messages");
   const [isEditing, setIsEditing] = React.useState(false);
-  const [editingValue, setEditingValue] = React.useState(item.content);
   const [expandedContentKey, setExpandedContentKey] = React.useState("");
   const [canCollapse, setCanCollapse] = React.useState(false);
   const [isToggleHovered, setIsToggleHovered] = React.useState(false);
@@ -82,10 +66,6 @@ export function ChatMessageUser({
   const [collapsedHeight, setCollapsedHeight] = React.useState(USER_MESSAGE_COLLAPSED_LINES * 24);
   const [measuredContentKey, setMeasuredContentKey] = React.useState("");
   const contentRef = React.useRef<HTMLDivElement>(null);
-  const editInputGroupRef = React.useRef<HTMLDivElement | null>(null);
-  const editTextareaRef = React.useRef<HTMLTextAreaElement | null>(null);
-  // Some IMEs end the composition before the Enter keydown arrives, so the state is tracked too.
-  const editingComposingRef = React.useRef(false);
   const measurementKey = React.useMemo(
     () => `${item.publicID || item.key}:${item.content}`,
     [item.content, item.key, item.publicID],
@@ -101,12 +81,6 @@ export function ChatMessageUser({
   React.useEffect(() => {
     setIsEditing(false);
   }, [item.publicID]);
-
-  React.useEffect(() => {
-    if (!isEditing) {
-      setEditingValue(item.content);
-    }
-  }, [isEditing, item.content]);
 
   React.useLayoutEffect(() => {
     const element = contentRef.current;
@@ -145,154 +119,11 @@ export function ChatMessageUser({
     [item, onDeleteUserMessage],
   );
 
-  const onEditSave = React.useCallback(async (mode: UserMessageEditMode) => {
-    const nextContent = editingValue.trim();
-    if (!nextContent || nextContent === item.content.trim()) {
-      return;
-    }
-    const ok = await onEditUserMessage(item, nextContent, mode);
-    if (ok !== false) {
-      setIsEditing(false);
-    }
-  }, [editingValue, item, onEditUserMessage]);
-  const {
-    activeRowKey: mentionActiveRowKey,
-    activeTab: mentionActiveTab,
-    handleBlur: handleMentionBlur,
-    handleChange: handleMentionChange,
-    handleFocus: handleMentionFocus,
-    handleKeyDown: handleMentionKeyDown,
-    handleListScroll: handleMentionListScroll,
-    handleSelectionChange: handleMentionSelectionChange,
-    menuID: mentionMenuID,
-    menuLayout: mentionMenuLayout,
-    menuRef: mentionMenuRef,
-    menuReady: mentionMenuReady,
-    open: showMentionMenu,
-    rows: mentionRows,
-    select: selectMentionItem,
-    selectTab: selectMentionTab,
-    showTabBar: showMentionTabBar,
-    tabs: mentionTabs,
-  } = useChatMentionMenu({
-    attachments: EDIT_MESSAGE_EMPTY_ATTACHMENTS,
-    availableTools: EDIT_MESSAGE_EMPTY_TOOLS,
-    defaultFileLabel: "",
-    disabled: readOnly || !isEditing,
-    draft: editingValue,
-    enabledKinds: EDIT_MESSAGE_MENTION_KINDS,
-    maxSelectedSkills: 0,
-    maxSelectedTools: 0,
-    modelOptions,
-    selectedSkills: [],
-    selectedPlatformModelName,
-    selectedToolIDs: EDIT_MESSAGE_EMPTY_TOOL_IDS,
-    anchorRef: editInputGroupRef,
-    textareaRef: editTextareaRef,
-    toolsDisabled: true,
-    onDraftChange: setEditingValue,
-    onFileSelect: () => undefined,
-    onModelCatalogRefresh,
-    onModelChange,
-    placementPreference: "bottom",
-    onSelectedToolsChange: () => undefined,
-  });
   if (!readOnly && isEditing) {
-    const nextContent = editingValue.trim();
-    const unchanged = nextContent === item.content.trim();
-
     return (
-      <div className="flex justify-end">
-        <div className="w-full max-w-[640px] rounded-lg bg-muted/60 p-3 text-foreground">
-          <div ref={editInputGroupRef}>
-            <ChatMentionMenuPortal
-              activeRowKey={mentionActiveRowKey}
-              activeTab={mentionActiveTab}
-              menuID={mentionMenuID}
-              menuLayout={mentionMenuLayout}
-              menuRef={mentionMenuRef}
-              menuReady={mentionMenuReady}
-              open={showMentionMenu}
-              rows={mentionRows}
-              showTabBar={showMentionTabBar}
-              tabs={mentionTabs}
-              t={tComposer}
-              onListScroll={handleMentionListScroll}
-              onSelect={selectMentionItem}
-              onSelectTab={selectMentionTab}
-            />
-            <Textarea
-              ref={editTextareaRef}
-              autoFocus
-              value={editingValue}
-              className="chat-font-content min-h-[120px] resize-none rounded-lg border-border border-[0.5px] bg-background px-3 py-2 text-sm leading-7 shadow-none focus-visible:border-primary focus-visible:ring-0"
-              style={{ fontFamily: "var(--font-chat)", fontWeight: "var(--font-chat-weight)" }}
-              aria-controls={showMentionMenu ? mentionMenuID : undefined}
-              aria-expanded={showMentionMenu}
-              onBlur={handleMentionBlur}
-              onChange={(event) => handleMentionChange(event.target.value)}
-              onClick={handleMentionSelectionChange}
-              onCompositionStart={() => {
-                editingComposingRef.current = true;
-              }}
-              onCompositionEnd={() => {
-                editingComposingRef.current = false;
-              }}
-              onFocus={handleMentionFocus}
-              onKeyUp={handleMentionSelectionChange}
-              onSelect={handleMentionSelectionChange}
-              onKeyDown={(event) => {
-                if (handleMentionKeyDown(event)) {
-                  return;
-                }
-                if (isImeComposingKeyEvent(event, editingComposingRef.current) || !isSendShortcutEvent(sendShortcut, event)) {
-                  return;
-                }
-                // The send key is never a newline here; only what the primary button could
-                // run happens, so an unchanged draft leaves the text exactly as it was.
-                event.preventDefault();
-                if (nextContent.length === 0 || unchanged) {
-                  return;
-                }
-                void onEditSave("regenerate");
-              }}
-            />
-          </div>
-          <div className="flex items-center justify-between gap-4">
-            <div className="flex gap-2 pt-2 text-xs text-muted-foreground">
-              <CircleAlert className="mt-0.5 size-3 shrink-0" />
-              <span>{tMessages("editModes")}</span>
-            </div>
-            <div className="mt-3 flex items-center justify-center gap-2">
-              <Button
-                variant="ghost"
-                className="rounded-lg text-xs font-medium"
-                onClick={() => setIsEditing(false)}
-              >
-                {tCommon("cancel")}
-              </Button>
-              <Button
-                variant="outline"
-                className="rounded-lg text-xs font-medium shadow-none"
-                disabled={nextContent.length === 0 || unchanged}
-                onClick={() => void onEditSave("save")}
-                title={tMessages("editSaveOnlyHint")}
-              >
-                {tMessages("editSaveOnly")}
-              </Button>
-              <Button
-                variant="default"
-                className="rounded-lg text-xs font-medium shadow-none hover:bg-primary/60"
-                disabled={nextContent.length === 0 || unchanged}
-                onClick={() => void onEditSave("regenerate")}
-                title={tMessages("editRegenerateHint")}
-              >
-                {tMessages("editRegenerate")}
-              </Button>
-            </div>
-          </div>
-        </div>
-      </div>
+      <MessageUserEditor item={item} onSave={onEditUserMessage} onClose={() => setIsEditing(false)}
+        modelOptions={modelOptions} selectedPlatformModelName={selectedPlatformModelName} onModelChange={onModelChange}
+        onModelCatalogRefresh={onModelCatalogRefresh} sendShortcut={sendShortcut} attachmentContentLoader={attachmentContentLoader} />
     );
   }
 

@@ -58,11 +58,27 @@ type DeleteFileObjectOptions struct {
 type UploadRepository interface {
 	FileListingRepository
 	FileLookupRepository
+	ImageSourceRepository
 	GetUserByID(ctx context.Context, userID uint) (*domainuser.User, error)
 	GetLatestActiveFileObjectBySHA(ctx context.Context, userID uint, sha256 string, sizeBytes int64) (*domainconversation.FileObject, error)
 	CreateFileObjectAndConsumeQuota(ctx context.Context, item *domainconversation.FileObject, quotaLimit int64) (*domainconversation.StorageQuota, error)
 	DeleteFileObjectAndReleaseQuota(ctx context.Context, userID uint, fileID string, quotaLimit int64, options DeleteFileObjectOptions) (*domainconversation.FileObject, *domainconversation.StorageQuota, bool, error)
 	GetOrInitUserStorageQuota(ctx context.Context, userID uint, quotaLimit int64) (*domainconversation.StorageQuota, error)
+}
+
+// ImageSourceFingerprint is a private cache key declared by a user, never proof
+// of uploaded content identity or authority to access another user's files.
+type ImageSourceFingerprint struct {
+	SourceSHA256       string
+	SourceSizeBytes    int64
+	ImagePolicyVersion string
+}
+
+type ImageSourceRepository interface {
+	GetActiveImageSourceFiles(ctx context.Context, userID uint, sources []ImageSourceFingerprint) (map[ImageSourceFingerprint]domainconversation.FileObject, error)
+	BindImageSource(ctx context.Context, userID uint, source ImageSourceFingerprint, fileID string, quotaLimit int64) (*domainconversation.FileObject, error)
+	InvalidateImageSource(ctx context.Context, userID uint, source ImageSourceFingerprint, expectedFileID string) error
+	CreateFileObjectWithImageSourceAndConsumeQuota(ctx context.Context, item *domainconversation.FileObject, source ImageSourceFingerprint, quotaLimit int64) (*domainconversation.StorageQuota, bool, error)
 }
 
 // FileEmbeddingArtifactsRepository 封装 embedding 工件克隆能力。

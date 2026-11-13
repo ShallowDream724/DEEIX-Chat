@@ -1,11 +1,9 @@
 package conversation
 
 import (
-	"bytes"
+	"context"
+	"errors"
 	"fmt"
-	"image"
-	"image/draw"
-	"image/png"
 	"path/filepath"
 	"strings"
 
@@ -15,44 +13,38 @@ import (
 
 const maxMediaImageEditInputPixels = 64 * 1024 * 1024
 
-func resizeImageIfNeeded(data []byte, mimeType string, maxDim int) ([]byte, string) {
-	return imageutil.ResizeIfNeeded(data, mimeType, maxDim)
-}
-
 func resolveImageMimeType(mimeType string) string {
 	return imageutil.ResolveMimeType(mimeType)
+}
+
+func prepareImageData(ctx context.Context, data []byte, mime string, maxDim int, userID uint) (preparedConversationImage, error) {
+	prepared, actual, err := imageutil.Prepare(ctx, data, mime, imageutil.ProcessingPolicy{MaxDimension: maxDim}, userID)
+	if err != nil {
+		return preparedConversationImage{}, err
+	}
+	return preparedConversationImage{data: prepared, mimeType: actual}, nil
+}
+
+func attachmentImagePreparationError(att AttachmentInput, err error) error {
+	reason := attachmentInputReadFailed
+	if errors.Is(err, imageutil.ErrAnimatedImage) {
+		reason = "unsupported_animation"
+		err = fmt.Errorf("%w: %w", ErrUnsupportedImageAnimation, err)
+	} else if errors.Is(err, imageutil.ErrInvalidImage) || errors.Is(err, imageutil.ErrImagePixelLimit) || errors.Is(err, imageutil.ErrImageDecodeBudget) {
+		reason = "image_processing_failed"
+		err = fmt.Errorf("%w: %w", ErrImageProcessingFailed, err)
+	}
+	return attachmentInputErrorWithReason(att, err, reason)
 }
 
 // normalizeMediaImageEditInput 将用户上传的编辑输入图规整为静态 PNG。
 // 手机拍摄图片常带有上游不稳定支持的编码、色彩模式或容器元数据；图片编辑协议统一接收这里输出的 8-bit RGBA PNG。
 func normalizeMediaImageEditInput(data []byte, declaredMIME string) ([]byte, string, error) {
-	detected := detectGeneratedImageMIME(data)
-	if detected == "" {
-		return nil, strings.TrimSpace(declaredMIME), fmt.Errorf("image edit input is not a supported image")
-	}
+	return normalizeMediaImageEditInputContext(context.Background(), data, declaredMIME, 0)
+}
 
-	src, _, err := image.Decode(bytes.NewReader(data))
-	if err != nil {
-		return nil, detected, err
-	}
-	bounds := src.Bounds()
-	width := bounds.Dx()
-	height := bounds.Dy()
-	if width <= 0 || height <= 0 {
-		return nil, detected, fmt.Errorf("image edit input has invalid dimensions")
-	}
-	if int64(width)*int64(height) > maxMediaImageEditInputPixels {
-		return nil, detected, fmt.Errorf("image edit input dimensions exceed limit")
-	}
-
-	dst := image.NewNRGBA(image.Rect(0, 0, width, height))
-	draw.Draw(dst, dst.Bounds(), src, bounds.Min, draw.Src)
-
-	var buf bytes.Buffer
-	if err := png.Encode(&buf, dst); err != nil {
-		return nil, detected, err
-	}
-	return buf.Bytes(), "image/png", nil
+func normalizeMediaImageEditInputContext(ctx context.Context, data []byte, declaredMIME string, userID uint) ([]byte, string, error) {
+	return imageutil.Prepare(ctx, data, declaredMIME, imageutil.ProcessingPolicy{ForcePNG: true, MaxPixels: maxMediaImageEditInputPixels}, userID)
 }
 
 func mediaImageEditInputFileName(fileName string, mimeType string) string {
