@@ -6,7 +6,9 @@
 
 2026-11-13 镜像发布受阻：按用户指令手动触发 `Image`，参数 `architecture=amd64`、`publish_latest=true`，两次均收到 GitHub HTTP 422 `Actions has been disabled for this repository.`。仓库权限 API 同时报告 `enabled=true / allowed_actions=all`，工作流为 `active`；没有启动本批构建。复核请求时间为 `2026-11-13 13:59:45 UTC`，GitHub request ID `1EBE:55ED2:797C9A:BDA8A2:6AF717D1`。[GitHub 官方文档](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository)说明此时可能存在独立的平台侧禁用状态，普通仓库设置无法恢复，具体原因尚未确认。匿名核验 GHCR：`latest` 仍为 `db44ab400602d5d4f1ae00d691f2c4e8c5e7b1f0`，manifest digest `sha256:6dcf1ad63a90f2406c7ece970d98b841f09e0b45727d16b41c10f0a138a227c8`，与旧不可变标签一致。本机 Docker 默认及 Desktop Linux 引擎均不可连接，WSL 启动检查未返回；本机替代构建尚未执行，超过 10MB 的依赖/镜像传输待用户确认。没有将本批标记为已发布。
 
-2026-11-13 发布前追加上传切换修复：完成上传与导航同轮更新时，界面尚未提交的新附件会丢失；250ms 延迟保存的旧草稿也可能覆盖上传完成后的引用。现已同步提交上传文件引用、在目标草稿恢复前排空旧保存，并合并同一旧状态快照尚未保存的上传结果。只处理轻量文件引用，不新增文件字节缓存或上传请求；删除、账号隔离和编辑取消保持独立。129 项 Web 回归、类型检查、定向 lint，以及真实 MP3 上传延迟响应、来回切换和刷新恢复通过。镜像必须包含此修复后再发布。
+2026-11-13 发布前追加上传切换修复：完成上传与导航同轮更新时，界面尚未提交的新附件会丢失；250ms 延迟保存的旧草稿也可能覆盖上传完成后的引用。现已同步提交上传文件引用、在目标草稿恢复前排空旧保存，并合并同一旧状态快照尚未保存的上传结果。只处理轻量文件引用，不新增文件字节缓存或上传请求；删除、账号隔离和编辑取消保持独立。129 项 Web 回归、类型检查、定向 lint，以及真实 MP3 上传延迟响应、来回切换和刷新恢复通过。修复提交 `8160079d4f8c689db4539558c1eaeddca28abaae` 已推送；镜像必须包含此修复后再发布。
+
+修复后的发布重试仍受阻：再次确认认证账号为 `ShallowDream724`，仓库 Actions 权限启用且工作流 active；`2026-11-13 15:44:30 UTC` 工作流 enable 接口返回 HTTP 204，随后 dispatch 依旧返回上述 HTTP 422。没有新构建 run，匿名 GHCR 复核仍是上段记录的 `db44ab40` 旧版；不能将已推送修复等同于镜像发布完成。本机 Docker 引擎不可用，备用环境恢复及大流量传输尚待确认。
 
 | 优先级 | 工作 | 完成条件与依赖 |
 | --- | --- | --- |
