@@ -1,19 +1,25 @@
 # 分支排期
 
+## 2026-11-14 图片优化与上传草稿修复已发布
+
+镜像 `ghcr.io/shallowdream724/deeix-chat:latest`（linux/amd64）已发布，源码 `422b9d8996f5d91bb7cb9230652c7fcd3bb02357`，包含图片处理与附件修订批次、分支切换修复，以及上传切换修复 `8160079d`。[Image 构建 #43463161355](https://github.com/ShallowDream724/DEEIX-Chat/actions/runs/43463161355) 的构建、容器启动/网页/revision 检查和 Merge 全部成功。
+
+匿名读取 GHCR 核验 `latest` 与不可变 `sha-422b9d8996f5d91bb7cb9230652c7fcd3bb02357` 内容一致，镜像 revision 正确；manifest digest 为 `sha256:0d75bdfc0202a87f4953ed16aaaad481247ba3f8b7578fc13e6dec97857abb94`。发布前 129 项 Web 行为回归、类型检查与定向 lint 通过，真实 MP3 延迟响应下切走/切回、多次切换与刷新恢复通过。镜像已交付，生产服务尚未代为拉取或重建；真实手机、生产网络与 PostgreSQL 多连接并发仍按下方验收安排推进。
+
 ## 2026-11-13 图片批次与排期复核
 
 用户已批准浏览器图片优化、缩略图复用、用户消息附件编辑，并追加分支切换卡住修复；本批已实现，代码 `5634b246a573df97917b1bf4513b19756693f4a9` 已推送至自有 fork 的 `shallowdream/native-files`。流程、契约、资源边界与验证口径见 [图片输入与附件修订](image-input-pipeline.md)。镜像发布状态见下段；Terra 裸引用标记问题继续暂缓。
 
-2026-11-13 镜像发布受阻：按用户指令手动触发 `Image`，参数 `architecture=amd64`、`publish_latest=true`，两次均收到 GitHub HTTP 422 `Actions has been disabled for this repository.`。仓库权限 API 同时报告 `enabled=true / allowed_actions=all`，工作流为 `active`；没有启动本批构建。复核请求时间为 `2026-11-13 13:59:45 UTC`，GitHub request ID `1EBE:55ED2:797C9A:BDA8A2:6AF717D1`。[GitHub 官方文档](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository)说明此时可能存在独立的平台侧禁用状态，普通仓库设置无法恢复，具体原因尚未确认。匿名核验 GHCR：`latest` 仍为 `db44ab400602d5d4f1ae00d691f2c4e8c5e7b1f0`，manifest digest `sha256:6dcf1ad63a90f2406c7ece970d98b841f09e0b45727d16b41c10f0a138a227c8`，与旧不可变标签一致。本机 Docker 默认及 Desktop Linux 引擎均不可连接，WSL 启动检查未返回；本机替代构建尚未执行，超过 10MB 的依赖/镜像传输待用户确认。没有将本批标记为已发布。
+2026-11-13 镜像触发受阻记录：`Image` 的手动触发返回 HTTP 422 `Actions has been disabled for this repository.`，同时仓库权限 API 显示启用、工作流显示 active。2026-11-14 补查全部工作流，确认 CodeQL 和 Stale 在 11 月 12 日及之前连续成功；[仓库 Actions 页面](https://github.com/ShallowDream724/DEEIX-Chat/actions)明确提示该 fork 因 GitHub Actions 用量规模暂停，维护者可以重新启用。因此不能从一次触发失败推断账号或 GitHub 整体不可用。重新启用的 API 调用返回 204 但当时仍不能 dispatch；用户恢复后再次触发成功，后续构建和发布结果见最新发布记录。此次继续使用既有 GitHub 构建链路。
 
 2026-11-13 发布前追加上传切换修复：完成上传与导航同轮更新时，界面尚未提交的新附件会丢失；250ms 延迟保存的旧草稿也可能覆盖上传完成后的引用。现已同步提交上传文件引用、在目标草稿恢复前排空旧保存，并合并同一旧状态快照尚未保存的上传结果。只处理轻量文件引用，不新增文件字节缓存或上传请求；删除、账号隔离和编辑取消保持独立。129 项 Web 回归、类型检查、定向 lint，以及真实 MP3 上传延迟响应、来回切换和刷新恢复通过。修复提交 `8160079d4f8c689db4539558c1eaeddca28abaae` 已推送；镜像必须包含此修复后再发布。
 
-修复后的发布重试仍受阻：再次确认认证账号为 `ShallowDream724`，仓库 Actions 权限启用且工作流 active；`2026-11-13 15:44:30 UTC` 工作流 enable 接口返回 HTTP 204，随后 dispatch 依旧返回上述 HTTP 422。没有新构建 run，匿名 GHCR 复核仍是上段记录的 `db44ab40` 旧版；不能将已推送修复等同于镜像发布完成。本机 Docker 引擎不可用，备用环境恢复及大流量传输尚待确认。
+修复后的发布重试仍受阻：再次确认认证账号为 `ShallowDream724`，仓库 Actions 权限启用且工作流 active；`2026-11-13 15:44:30 UTC` 工作流 enable 接口返回 HTTP 204，随后 dispatch 依旧返回上述 HTTP 422。没有新构建 run，匿名 GHCR 复核仍是上段记录的 `db44ab40` 旧版；不能将已推送修复等同于镜像发布完成。本机备用构建未执行；后续恢复 GitHub 构建，见最新发布记录。
 
 | 优先级 | 工作 | 完成条件与依赖 |
 | --- | --- | --- |
 | P0 | 本轮稳定性修复的生产验收、全渠道首响应定位 | 验证长历史/长内容、模型列表与 xhigh；用慢请求记录区分发送准备、上游等待和客户端显示，确认 HTTP 200 后实际失败原因。尚未证实 10–60 秒延迟根因 |
-| 本地已实现，待发布验收 | 浏览器图片优化、缩略图复用、用户消息附件编辑与分支切换 | 已按批准方案实现单份成品、来源复用、附件修订事务及临时分支；真实桌面/390px 编辑器交互与图片 Worker 已验证。生产网络、真实手机 codec 与 PostgreSQL 多连接并发留部署后验收 |
+| 已发布，待生产验收 | 浏览器图片优化、缩略图复用、用户消息附件编辑与分支切换 | 已按批准方案实现单份成品、来源复用、附件修订事务及临时分支；真实桌面/390px 编辑器交互与图片 Worker 已验证。生产网络、真实手机 codec 与 PostgreSQL 多连接并发留部署后验收 |
 | 按使用阻断程度提前 | MinerU 任务结果接回故障 | 仍待核对提交、轮询、结果字段及下载解包；若正在阻断文件使用，与 P0/P1 并行或提前。旧文档类型扩展不等于此故障已修复 |
 | P2 | 上下文用量组件与压缩状态 | 复用已修正计量口径，区分估算与实测；展示当前输入而非累计账单，压缩前后及分支切换一致 |
 | 后续 | 原生/解析主动切换、文件库删除及卡片联动 | 在上述稳定性与图片批次后推进；用户消息附件编辑已提前至本批。长图切块、Files API、更多传输协议与独立客户端继续分批 |
@@ -40,7 +46,7 @@ Terra 引用仅保留问题记录与已有原始内容，暂不继续适配或�
 
 - 本地修复 Gemini Hydrogen 显式 xhigh 能力、模型菜单重开时裁剪层误滚动、跨渠道 HTTP 200 错误误分类；不新增真实付费模型探测。
 - 性能覆盖长历史、长 Markdown/思考、超长表格、各语言代码和流式历史重复计算；采用分层渲染与有界解析，保持定位、复制、导出和截图行为。详见 [长 Markdown 渲染](long-markdown-rendering.md)。
-- “所有渠道每一条首响应 10–60 秒”仍需生产请求分段证据；已移除无附件/知识库的纯文字请求对文件能力探测的依赖，并补无正文的准备/首事件耗时日志。OCR 与裸引用标记的已证实行为、未知项及后续证据见 [本轮排查](chat-runtime-audit-20261113.md)。本批尚未发布生产镜像。
+- “所有渠道每一条首响应 10–60 秒”仍需生产请求分段证据；已移除无附件/知识库的纯文字请求对文件能力探测的依赖，并补无正文的准备/首事件耗时日志。OCR 与裸引用标记的已证实行为、未知项及后续证据见 [本轮排查](chat-runtime-audit-20261113.md)。本批已随 2026-11-14 镜像发布，首响应根因与生产观测仍待验证。
 
 ## 2026-11-06 后续批次（用户已确认）
 
