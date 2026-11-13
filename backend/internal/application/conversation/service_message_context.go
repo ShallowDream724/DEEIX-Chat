@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"strings"
 
 	appchannel "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
@@ -324,8 +325,32 @@ func upstreamErrorSummary(err *llm.UpstreamError) string {
 	lines := make([]string, 0, 3)
 	hint := imageStreamConfigurationHint(err)
 	if isSuccessfulUpstreamStatus(err.StatusCode) {
-		lines = append(lines, fmt.Sprintf("模型响应格式不兼容（HTTP %d）", err.StatusCode))
-		lines = append(lines, "错误：上游返回成功状态码，但响应格式与当前协议不兼容")
+		title, detail := "", ""
+		switch upstreamResponseTransportFailure(err) {
+		case upstreamResponseCanceled:
+			title, detail = "模型响应已取消", "请求已取消"
+		case upstreamResponseTimeout:
+			title, detail = "模型响应超时", "上游已返回成功状态码，但读取响应超时"
+		case upstreamResponseInterrupted:
+			title, detail = "模型响应中断", "上游已返回成功状态码，但响应传输中断或未完整接收"
+		default:
+			if isUpstreamResponseFormatFailure(err) {
+				title, detail = "模型响应格式不兼容", "上游返回成功状态码，但响应格式与当前协议不兼容"
+			} else {
+				title = "模型响应失败"
+				// A wrapped reader/parser/callback error may contain response bytes or
+				// credentials. Only structured upstream business messages are public.
+				if err.Cause == nil {
+					detail = upstreamBusinessErrorMessage(err)
+				} else {
+					detail = "上游已返回成功状态码，但未能完成响应"
+				}
+			}
+		}
+		lines = append(lines, fmt.Sprintf("%s（HTTP %d）", title, err.StatusCode))
+		if detail != "" {
+			lines = append(lines, "错误："+detail)
+		}
 		if hint != "" {
 			lines = append(lines, hint)
 		}
@@ -343,6 +368,67 @@ func upstreamErrorSummary(err *llm.UpstreamError) string {
 		lines = append(lines, hint)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func upstreamBusinessErrorMessage(err *llm.UpstreamError) string {
+	message := normalizeUpstreamErrorMessage(err.Message)
+	body := strings.TrimSpace(err.Body)
+	if json.Valid([]byte(message)) || strings.HasPrefix(message, "<") || (body != "" && strings.Contains(message, body)) {
+		return ""
+	}
+	return message
+}
+
+type upstreamResponseFailureKind uint8
+
+const (
+	upstreamResponseFailureUnknown upstreamResponseFailureKind = iota
+	upstreamResponseCanceled
+	upstreamResponseTimeout
+	upstreamResponseInterrupted
+)
+
+// HTTP success records the response headers, not successful consumption of the
+// response body. Classify the preserved cause before inspecting format markers.
+func upstreamResponseTransportFailure(err error) upstreamResponseFailureKind {
+	if errors.Is(err, context.Canceled) || errors.Is(err, ErrMessageGenerationCanceled) {
+		return upstreamResponseCanceled
+	}
+	var networkErr net.Error
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &networkErr) && networkErr.Timeout()) {
+		return upstreamResponseTimeout
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || networkErr != nil {
+		return upstreamResponseInterrupted
+	}
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) && strings.Contains(strings.ToLower(syntaxErr.Error()), "unexpected end of json input") {
+		return upstreamResponseInterrupted
+	}
+	return upstreamResponseFailureUnknown
+}
+
+func isUpstreamResponseFormatFailure(err *llm.UpstreamError) bool {
+	if err == nil {
+		return false
+	}
+	if upstreamResponseTransportFailure(err) != upstreamResponseFailureUnknown {
+		return false
+	}
+	var syntaxErr *json.SyntaxError
+	var typeErr *json.UnmarshalTypeError
+	if errors.As(err, &syntaxErr) || errors.As(err, &typeErr) {
+		return true
+	}
+	if err.Cause != nil {
+		return false
+	}
+	// Some compatible gateways return parsing errors as business messages, and
+	// older adapters included an unexpected SSE envelope in the message.
+	detail := strings.ToLower(strings.TrimSpace(err.Message))
+	return looksLikeRawSSEBody(err.Message) ||
+		(strings.Contains(detail, "invalid character") && strings.Contains(detail, "looking for beginning of value")) ||
+		isStreamUnsupportedError(&llm.UpstreamError{Message: err.Message})
 }
 
 func isSuccessfulUpstreamStatus(statusCode int) bool {
@@ -438,6 +524,17 @@ func containsImageModality(raw any) bool {
 }
 
 func isStreamingResponseFormatFailure(err *llm.UpstreamError) bool {
+	if err == nil {
+		return false
+	}
+	if upstreamResponseTransportFailure(err) != upstreamResponseFailureUnknown {
+		return false
+	}
+	if err.Cause != nil {
+		var syntaxErr *json.SyntaxError
+		var typeErr *json.UnmarshalTypeError
+		return errors.As(err, &syntaxErr) || errors.As(err, &typeErr)
+	}
 	detail := strings.ToLower(strings.TrimSpace(err.Message + "\n" + err.Body))
 	if err.Debug != nil {
 		detail = strings.TrimSpace(detail + "\n" + strings.ToLower(err.Debug.Response.Body))
@@ -591,8 +688,16 @@ func fallbackContentType(contentType string) string {
 }
 
 func shouldFallbackToNonStreaming(err error) bool {
+	if upstreamResponseTransportFailure(err) != upstreamResponseFailureUnknown {
+		return false
+	}
 	var upstreamErr *llm.UpstreamError
 	if !errors.As(err, &upstreamErr) {
+		return false
+	}
+	// A local reader/parser/callback failure does not prove stream rejection.
+	// Replaying it can submit an already accepted generation a second time.
+	if upstreamErr.Cause != nil {
 		return false
 	}
 	switch upstreamErr.StatusCode {

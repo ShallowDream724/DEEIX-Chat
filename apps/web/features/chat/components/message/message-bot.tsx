@@ -548,15 +548,15 @@ export function ChatInlineAlertCard({
   const t = useTranslations("chat.composer");
   const details = alert.details;
   const message = alert.message.trim();
-  const summary = summarizeUpstreamError(message, details, t("retryLater"));
+  const summary = summarizeUpstreamError(message, details);
   const hasDetails = Boolean(details?.request || details?.response);
   const [detailsOpen, setDetailsOpen] = React.useState(false);
   const hasSuccessfulStreamDebug =
     Boolean(summary.statusCode && summary.statusCode >= 200 && summary.statusCode < 300) &&
     isUpstreamStreamingDebugBody(details?.response?.body || message);
-  const summaryText = hasSuccessfulStreamDebug
-    ? t("streamResponseParseFailed", { statusCode: summary.statusCode ?? 200 })
-    : [summary.statusCode ? `HTTP ${summary.statusCode}` : "", summary.reason].filter(Boolean).join(", ");
+  const summaryText = hasSuccessfulStreamDebug && !summary.reason
+    ? t("streamResponseFailed", { statusCode: summary.statusCode ?? 200 })
+    : [summary.statusCode ? `HTTP ${summary.statusCode}` : "", summary.reason || t("retryLater")].filter(Boolean).join(", ");
   return (
     <Alert className={cn("min-w-0 max-w-full overflow-hidden", className)} variant="destructive">
       <CircleAlert className="size-4" />

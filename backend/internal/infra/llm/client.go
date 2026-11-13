@@ -734,6 +734,18 @@ type idleTimeoutReader struct {
 	timer   *time.Timer
 }
 
+type streamIdleTimeoutError struct {
+	timeout time.Duration
+}
+
+func (e *streamIdleTimeoutError) Error() string {
+	return fmt.Sprintf("stream idle timeout: no data received for %v", e.timeout)
+}
+
+func (e *streamIdleTimeoutError) Timeout() bool { return true }
+
+func (e *streamIdleTimeoutError) Temporary() bool { return true }
+
 func newIdleTimeoutReader(reader io.Reader, timeout time.Duration) *idleTimeoutReader {
 	return &idleTimeoutReader{
 		reader:  reader,
@@ -759,7 +771,7 @@ func (r *idleTimeoutReader) Read(p []byte) (int, error) {
 	case res := <-ch:
 		return res.n, res.err
 	case <-r.timer.C:
-		return 0, fmt.Errorf("stream idle timeout: no data received for %v", r.timeout)
+		return 0, &streamIdleTimeoutError{timeout: r.timeout}
 	}
 }
 

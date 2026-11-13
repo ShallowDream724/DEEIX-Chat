@@ -73,10 +73,15 @@ export function summarizeUpstreamError(
   fallback = "",
 ): { statusCode: number | null; reason: string } {
   const statusCode = details?.response?.statusCode || extractStatusCode(message);
+  // A successful HTTP handshake can still end in a timeout or a broken stream.
+  // Preserve the server's classified cause; a recorded SSE body is only debug data.
+  const successfulResponse = Boolean(statusCode && statusCode >= 200 && statusCode < 300);
+  const messageReason = extractMessageReason(message);
   const reason =
+    (successfulResponse ? messageReason : "") ||
     extractStructuredErrorReason(details?.response?.body || "") ||
     extractStructuredErrorReason(extractDetailBody(message)) ||
-    extractMessageReason(message) ||
+    messageReason ||
     fallback;
   return { statusCode, reason };
 }

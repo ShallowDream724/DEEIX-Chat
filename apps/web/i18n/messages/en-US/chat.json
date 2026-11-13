@@ -558,7 +558,7 @@
     "copyErrorId": "Copy error ID",
     "errorIdCopied": "Error ID copied",
     "errorIdCopyFailed": "Copy failed",
-    "streamResponseParseFailed": "The upstream returned HTTP {statusCode}, but the stream format is incompatible with the selected protocol.",
+    "streamResponseFailed": "The upstream returned HTTP {statusCode}, but the response could not be fully received.",
     "jsonMustBeObject": "JSON must be an object",
     "currentModel": "Current model",
     "dialogDescription": "{model} request parameters. Saved values are sent with model requests.",
