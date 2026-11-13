@@ -300,6 +300,10 @@ export function useChatComposerState(
   const persistenceTimerRef = React.useRef<number | null>(null);
   const pendingPersistenceRef = React.useRef<PendingComposerPersistence | null>(null);
   const carryDraftRef = React.useRef<PendingComposerPersistence | null>(null);
+  // A committed render's passive save may not have run when an upload finishes.
+  // Retain only the additions to that exact snapshot, without making later
+  // explicit removals merge with storage. Weak keys release retired snapshots.
+  const completedUploadsRef = React.useRef(new WeakMap<ComposerState, PendingAttachment[]>());
 
   const flushPendingPersistence = React.useCallback(() => {
     if (persistenceTimerRef.current !== null) {
@@ -346,6 +350,9 @@ export function useChatComposerState(
   }, []);
 
   useIsomorphicLayoutEffect(() => {
+    // Save the outgoing draft before reading the destination. Passive-effect
+    // cleanup runs after hydration and can otherwise replay an older snapshot.
+    flushPendingPersistence();
     const previousStorageKey = activeStorageKeyRef.current;
     const storageAccountChanged = Boolean(previousStorageKey) && previousStorageKey !== storageKey;
     activeStorageKeyRef.current = storageKey;
@@ -400,7 +407,7 @@ export function useChatComposerState(
     });
     setHydratedConversationKey(conversationKey);
     setHydratedStorageKey(storageKey);
-  }, [conversationKey, discardPendingPersistence, persistenceEnabled, preserveDrafts, storageKey, transient]);
+  }, [conversationKey, discardPendingPersistence, flushPendingPersistence, persistenceEnabled, preserveDrafts, storageKey, transient]);
 
   React.useEffect(() => {
     if (
@@ -416,7 +423,7 @@ export function useChatComposerState(
     pendingPersistenceRef.current = {
       conversationKey: state.conversationKey,
       draft: state.draft,
-      attachments: state.attachments,
+      attachments: mergeAttachmentsByFileID(state.attachments, completedUploadsRef.current.get(state) ?? []),
       storageKey,
     };
     if (persistenceTimerRef.current !== null) {
@@ -509,13 +516,31 @@ export function useChatComposerState(
   }, [updateAttachmentStatuses]);
 
   const appendAttachmentsForKey = React.useCallback((targetConversationKey: string, items: PendingAttachment[]) => {
-    if (items.length === 0) {
+    if (items.length === 0 || activeStorageKeyRef.current !== storageKey) {
       return;
+    }
+
+    if (persistenceEnabled) {
+      // Upload completion and navigation can share a React render batch. Commit
+      // the file references now, even for the visible draft, before hydration
+      // can replace its queued state. Drain old snapshots first so they cannot
+      // overwrite the completed upload later. Explicit removals still replace
+      // the attachment list; storage writes must not unconditionally union it.
+      flushPendingPersistence();
+      const latest = latestStateRef.current;
+      if (latest.conversationKey === targetConversationKey) {
+        const completed = mergeAttachmentsByFileID(completedUploadsRef.current.get(latest) ?? [], items);
+        completedUploadsRef.current.set(latest, completed);
+        ComposerStorageOps.writeEntry(storageKey, targetConversationKey, latest.draft,
+          mergeAttachmentsByFileID(latest.attachments, completed));
+      } else {
+        ComposerStorageOps.appendAttachments(storageKey, targetConversationKey, items);
+      }
     }
 
     // Upload callbacks can outlive the conversation that started them.
     // Read the committed active key instead of that callback's old closure.
-    if (latestStateRef.current.conversationKey === targetConversationKey && activeStorageKeyRef.current === storageKey) {
+    if (latestStateRef.current.conversationKey === targetConversationKey) {
       composerRevisionRef.current++;
       setHydratedConversationKey(targetConversationKey);
       setHydratedStorageKey(storageKey);
@@ -529,12 +554,7 @@ export function useChatComposerState(
       return;
     }
 
-    if (!persistenceEnabled || activeStorageKeyRef.current !== storageKey) {
-      return;
-    }
-
-    ComposerStorageOps.appendAttachments(storageKey, targetConversationKey, items);
-  }, [persistenceEnabled, storageKey]);
+  }, [flushPendingPersistence, persistenceEnabled, storageKey]);
 
   return {
     conversationKey: visibleState.conversationKey,

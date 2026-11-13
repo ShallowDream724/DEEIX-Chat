@@ -6,6 +6,8 @@
 
 2026-11-13 镜像发布受阻：按用户指令手动触发 `Image`，参数 `architecture=amd64`、`publish_latest=true`，两次均收到 GitHub HTTP 422 `Actions has been disabled for this repository.`。仓库权限 API 同时报告 `enabled=true / allowed_actions=all`，工作流为 `active`；没有启动本批构建。复核请求时间为 `2026-11-13 13:59:45 UTC`，GitHub request ID `1EBE:55ED2:797C9A:BDA8A2:6AF717D1`。[GitHub 官方文档](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository)说明此时可能存在独立的平台侧禁用状态，普通仓库设置无法恢复，具体原因尚未确认。匿名核验 GHCR：`latest` 仍为 `db44ab400602d5d4f1ae00d691f2c4e8c5e7b1f0`，manifest digest `sha256:6dcf1ad63a90f2406c7ece970d98b841f09e0b45727d16b41c10f0a138a227c8`，与旧不可变标签一致。本机 Docker 默认及 Desktop Linux 引擎均不可连接，WSL 启动检查未返回；本机替代构建尚未执行，超过 10MB 的依赖/镜像传输待用户确认。没有将本批标记为已发布。
 
+2026-11-13 发布前追加上传切换修复：完成上传与导航同轮更新时，界面尚未提交的新附件会丢失；250ms 延迟保存的旧草稿也可能覆盖上传完成后的引用。现已同步提交上传文件引用、在目标草稿恢复前排空旧保存，并合并同一旧状态快照尚未保存的上传结果。只处理轻量文件引用，不新增文件字节缓存或上传请求；删除、账号隔离和编辑取消保持独立。129 项 Web 回归、类型检查、定向 lint，以及真实 MP3 上传延迟响应、来回切换和刷新恢复通过。镜像必须包含此修复后再发布。
+
 | 优先级 | 工作 | 完成条件与依赖 |
 | --- | --- | --- |
 | P0 | 本轮稳定性修复的生产验收、全渠道首响应定位 | 验证长历史/长内容、模型列表与 xhigh；用慢请求记录区分发送准备、上游等待和客户端显示，确认 HTTP 200 后实际失败原因。尚未证实 10–60 秒延迟根因 |
