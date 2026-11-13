@@ -61,7 +61,7 @@ export function MorphingCard({ ref, bodyRef, top, bodyHeight, style, children, .
     <motion.div ref={ref} {...props} style={{ ...style, top, transition: settled ? morphTransition("top") : "none" }}>
       <div
         ref={bodyRef}
-        className="relative min-h-0 overflow-hidden"
+        className="relative min-h-0 overflow-clip"
         style={{
           height: bodyHeight ?? undefined,
           transition: settled ? morphTransition("height") : "none",

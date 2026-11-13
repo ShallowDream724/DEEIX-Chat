@@ -538,7 +538,6 @@ function ChatModelMenuItem({
   inputModalityLabels,
   viewPricingLabel,
   freeBadgeLabel,
-  buttonRef,
   describedBy,
   withDetailPane = false,
   reservePricingSlot = false,
@@ -554,7 +553,6 @@ function ChatModelMenuItem({
   viewPricingLabel: string;
   /** Badge for free models, which the pane only mentions in its price line. */
   freeBadgeLabel: string;
-  buttonRef?: React.Ref<HTMLButtonElement>;
   /** Id of the detail pane while it describes this row, so screen readers announce it too. */
   describedBy?: string;
   /**
@@ -587,7 +585,6 @@ function ChatModelMenuItem({
       }}
     >
       <button
-        ref={buttonRef}
         type="button"
         aria-describedby={describedBy}
         className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md bg-transparent py-0 pl-2 pr-1 text-left text-[11px] font-medium leading-none text-inherit outline-none"
@@ -957,7 +954,7 @@ export function ChatModelPicker({
   }, []);
   const desktopSubmenuRef = React.useRef<HTMLDivElement | null>(null);
   const desktopSubmenuBodyRef = React.useRef<HTMLDivElement | null>(null);
-  const selectedModelButtonRef = React.useRef<HTMLButtonElement | null>(null);
+  const pendingDesktopFocusRef = React.useRef(false);
   const desktopGroupItemRefs = React.useRef(new Map<string, HTMLButtonElement>());
   const desktopModelRowRefs = React.useRef(new Map<string, HTMLDivElement>());
   const selectedModel = React.useMemo(
@@ -1302,8 +1299,34 @@ export function ChatModelPicker({
     }
   }, [desktopDetailModelName, updateDesktopSubmenuMetrics]);
 
+  React.useLayoutEffect(() => {
+    if (!open || isMobile || !desktopMenuMounted || desktopSubmenuBodyHeight === null || desktopSubmenuListMaxHeight <= 0 || activeDesktopGroupKey !== selectedGroupKey) return;
+    const frame = window.requestAnimationFrame(() => {
+      const submenu = desktopSubmenuRef.current;
+      const content = submenu ? findSubmenuContent(submenu, selectedGroupKey) : null;
+      const button = content?.querySelector<HTMLButtonElement>("[data-selected=true] > button");
+      const viewport = button?.closest<HTMLElement>("[data-model-menu-viewport]");
+      if (!button || !viewport) return;
+      if (pendingDesktopFocusRef.current) {
+        button.focus({ preventScroll: true });
+        pendingDesktopFocusRef.current = false;
+        setDesktopDetailModel(null);
+      }
+      const rowRect = button.getBoundingClientRect();
+      const viewportRect = viewport.getBoundingClientRect();
+      const scale = viewport.clientHeight > 0 ? viewportRect.height / viewport.clientHeight : 1;
+      if (rowRect.bottom > viewportRect.bottom) {
+        viewport.scrollTop += (rowRect.bottom - viewportRect.bottom) / (scale || 1);
+      } else if (rowRect.top < viewportRect.top) {
+        viewport.scrollTop += (rowRect.top - viewportRect.top) / (scale || 1);
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [open, isMobile, desktopMenuMounted, activeDesktopGroupKey, selectedGroupKey, desktopSubmenuBodyHeight, desktopSubmenuListMaxHeight, setDesktopDetailModel]);
+
   const handleOpenChange = React.useCallback(
     (nextOpen: boolean) => {
+      pendingDesktopFocusRef.current = nextOpen;
       if (nextOpen) {
         setActiveGroupKey(selectedGroupKey || modelGroups[0]?.key || "");
         if (onModelCatalogRefresh) {
@@ -1369,11 +1392,10 @@ export function ChatModelPicker({
             sideOffset={DESKTOP_MODEL_MENU_SIDE_OFFSET}
             collisionPadding={24}
             onOpenAutoFocus={(event) => {
-              if (!isMobile && selectedModelButtonRef.current) {
+              if (!isMobile) {
                 event.preventDefault();
-                selectedModelButtonRef.current.focus();
-                // The menu places this focus, not the user, so it must not open the detail pane;
-                // the row's focus handler runs in the same render, before this reset lands.
+                // Focus the incoming group's row after portal mount and sizing;
+                // Radix's default focus also scrolls animated clipping ancestors.
                 setDesktopDetailModel(null);
               }
             }}
@@ -1496,7 +1518,6 @@ export function ChatModelPicker({
                                 key={item.platformModelName}
                                 model={item}
                                 selected={item.platformModelName === selectedPlatformModelName}
-                                buttonRef={item.platformModelName === selectedPlatformModelName ? selectedModelButtonRef : undefined}
                                 onSelect={() => {
                                   onModelChange(item.platformModelName);
                                   closeMenu();
