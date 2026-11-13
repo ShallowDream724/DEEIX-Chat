@@ -2,7 +2,9 @@
 
 ## 2026-11-13 图片批次与排期复核
 
-用户已批准浏览器图片优化、缩略图复用、用户消息附件编辑，并追加分支切换卡住修复；本批已在本地实现。流程、契约、资源边界与验证口径见 [图片输入与附件修订](image-input-pipeline.md)。尚未推送或发布；Terra 裸引用标记问题继续暂缓。
+用户已批准浏览器图片优化、缩略图复用、用户消息附件编辑，并追加分支切换卡住修复；本批已实现，代码 `5634b246a573df97917b1bf4513b19756693f4a9` 已推送至自有 fork 的 `shallowdream/native-files`。流程、契约、资源边界与验证口径见 [图片输入与附件修订](image-input-pipeline.md)。镜像发布状态见下段；Terra 裸引用标记问题继续暂缓。
+
+2026-11-13 镜像发布受阻：按用户指令手动触发 `Image`，参数 `architecture=amd64`、`publish_latest=true`，两次均收到 GitHub HTTP 422 `Actions has been disabled for this repository.`。仓库权限 API 同时报告 `enabled=true / allowed_actions=all`，工作流为 `active`；没有启动本批构建。复核请求时间为 `2026-11-13 13:59:45 UTC`，GitHub request ID `1EBE:55ED2:797C9A:BDA8A2:6AF717D1`。[GitHub 官方文档](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/enabling-features-for-your-repository/managing-github-actions-settings-for-a-repository)说明此时可能存在独立的平台侧禁用状态，普通仓库设置无法恢复，具体原因尚未确认。匿名核验 GHCR：`latest` 仍为 `db44ab400602d5d4f1ae00d691f2c4e8c5e7b1f0`，manifest digest `sha256:6dcf1ad63a90f2406c7ece970d98b841f09e0b45727d16b41c10f0a138a227c8`，与旧不可变标签一致。本机 Docker 默认及 Desktop Linux 引擎均不可连接，WSL 启动检查未返回；本机替代构建尚未执行，超过 10MB 的依赖/镜像传输待用户确认。没有将本批标记为已发布。
 
 | 优先级 | 工作 | 完成条件与依赖 |
 | --- | --- | --- |
