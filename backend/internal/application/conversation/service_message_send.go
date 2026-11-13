@@ -206,6 +206,8 @@ func (s *Service) sendMessageInternal(
 	if runID == "" {
 		runID = "run_" + normalizePublicID(uuid.NewString())
 	}
+	latencyTiming := newSendLatencyTiming(ctx, s.logger, input, runID, startedAt)
+	defer func() { latencyTiming.finishPreparation(time.Now(), retErr != nil) }()
 	var moderationCoord *appcm.RunCoordinator
 
 	conversation, err := s.repo.GetConversationByUser(ctx, input.ConversationID, input.UserID)
@@ -244,14 +246,15 @@ func (s *Service) sendMessageInternal(
 	// plan 在路由解析后固化本轮请求形状；在此之前中断时其零值即“尚无有效请求参数”。
 	var plan routeGenerationPlan
 	runner := &messageGenerationRunner{
-		service:      s,
-		input:        input,
-		runID:        runID,
-		startedAt:    startedAt,
-		preferStream: preferStream,
-		onDelta:      onDelta,
-		maxLLMCalls:  s.resolveMaxLLMCallsPerRun(),
-		usage:        &messageUsageAccumulator{},
+		service:       s,
+		input:         input,
+		runID:         runID,
+		startedAt:     startedAt,
+		latencyTiming: latencyTiming,
+		preferStream:  preferStream,
+		onDelta:       onDelta,
+		maxLLMCalls:   s.resolveMaxLLMCallsPerRun(),
+		usage:         &messageUsageAccumulator{},
 	}
 	runState := newMessageSendRunState(s, input, conversation, startedAt, runID)
 	run := runState.run
@@ -261,6 +264,7 @@ func (s *Service) sendMessageInternal(
 		retErr = err
 		return nil, err
 	}
+	latencyTiming.enter(sendPreparationAttachments, time.Now())
 	defer func() {
 		if retErr != nil {
 			assistantReasoningText := ""
@@ -355,6 +359,9 @@ func (s *Service) sendMessageInternal(
 			}
 		}
 	}()
+	// Capture preparation failure before interruption persistence and moderation
+	// finalization add unrelated teardown time. The early defer covers claim errors.
+	defer func() { latencyTiming.finishPreparation(time.Now(), retErr != nil) }()
 	if input.Cancelable {
 		cancelCtx, cancel := context.WithCancel(ctx)
 		ctx = cancelCtx
@@ -398,6 +405,7 @@ func (s *Service) sendMessageInternal(
 		ConversationID:    input.ConversationID,
 		RequestID:         strings.TrimSpace(input.RequestID),
 	}
+	latencyTiming.enter(sendPreparationRoute, time.Now())
 	route, err := s.routeResolver.ResolveRoute(ctx, routeResolveInput)
 	if err != nil {
 		retErr = mapRouteResolutionError(err)
@@ -423,6 +431,7 @@ func (s *Service) sendMessageInternal(
 		retErr = err
 		return nil, err
 	}
+	latencyTiming.enter(sendPreparationHistory, time.Now())
 	compactPolicy := s.resolveContextCompactionPolicy(ctx, cfg, input.UserID)
 
 	// 并行预取：Snapshot + UserMemory 提前加载，隐藏 DB 延迟。
@@ -441,13 +450,6 @@ func (s *Service) sendMessageInternal(
 		}
 		prefetchCh <- r
 	}()
-
-	// 读取用户的文件处理模式偏好（auto / full_context / rag）。
-	fileMode := "auto"
-	capability := s.resolveChatFileCapability(ctx)
-	if fm, fmErr := s.getUserSettingCached(ctx, input.UserID, "chat.file_mode"); fmErr == nil && fm != "" {
-		fileMode = fm
-	}
 
 	// 收集并行预取结果，再规划本轮可发送的 PromptScope。
 	prefetch := <-prefetchCh
@@ -492,6 +494,8 @@ func (s *Service) sendMessageInternal(
 
 	attachmentMessages := promptScope.attachmentMessages()
 	conversationFileIDs := collectConversationFileIDs(attachmentMessages, input.FileIDs)
+	fileMode, capability := s.resolveMessageFilePolicy(ctx, input.UserID, conversationFileIDs, input.KnowledgeBaseIDs, cfg)
+	latencyTiming.enter(sendPreparationNativeHydrate, time.Now())
 	conversationAttachments, err := s.resolveConversationFileContext(ctx, input.UserID, conversationFileIDs, input.FileIDs, attachmentMessages)
 	if err != nil {
 		retErr = err
@@ -556,6 +560,7 @@ func (s *Service) sendMessageInternal(
 		// 判定、提示一并跳过，避免存量引用阻塞发送或注入误导性提示。
 		input.KnowledgeBaseIDs = nil
 	}
+	latencyTiming.enter(sendPreparationRetrieval, time.Now())
 	knowledgeBaseFiles, err := s.resolveKnowledgeBaseRAGFiles(
 		ctx,
 		input.UserID,
@@ -656,6 +661,7 @@ func (s *Service) sendMessageInternal(
 		RecallChunks:   userCtx.RecallChunks,
 		Memories:       userCtx.Memory,
 	})
+	latencyTiming.enter(sendPreparationPrompt, time.Now())
 	skillPrompts, err := s.resolveSkillPrompts(ctx, input)
 	if err != nil {
 		retErr = err
@@ -834,6 +840,7 @@ func (s *Service) sendMessageInternal(
 		return nil, err
 	}
 
+	latencyTiming.enter(sendPreparationTransport, time.Now())
 	upstreamOutput, err := runner.runRouteAttempt(ctx, &plan, sendSpan)
 	if generationCanceled(ctx, err) {
 		retErr = ErrMessageGenerationCanceled

@@ -203,6 +203,7 @@ type messageGenerationRunner struct {
 	input           SendMessageInput
 	runID           string
 	startedAt       time.Time
+	latencyTiming   *sendLatencyTiming
 	preferStream    bool
 	onDelta         func(string) error
 	maxLLMCalls     int
@@ -277,6 +278,7 @@ type generationCall struct {
 	thinkingRouter      *thinkingDeltaRouter
 	streamUsage         llm.Usage
 	observedServerTools map[string]string
+	firstEventTiming    *upstreamFirstEventTiming
 }
 
 func (c *generationCall) emitVisibleDelta(delta string) error {
@@ -315,6 +317,9 @@ func (c *generationCall) finalizeNonStreamingOutput(output *llm.GenerateOutput, 
 // 并把正文增量路由到可见文本或思考轨迹。
 func (c *generationCall) handleStreamEvent(generationCtx context.Context, currentInput llm.GenerateInput, event llm.GenerateStreamEvent) error {
 	r := c.runner
+	if c.firstEventTiming != nil && !c.firstEventTiming.recorded {
+		c.firstEventTiming.record(time.Now(), streamEventTimingKind(event), false)
+	}
 	if currentInput.ResponsesBackground {
 		if responseID := strings.TrimSpace(event.ResponseID); responseID != "" {
 			r.responsesBackgroundRecovery.ResponseID = responseID
@@ -468,7 +473,9 @@ func (r *messageGenerationRunner) generate(ctx context.Context, currentInput llm
 	if !streamRequested || !streamSupported {
 		r.upstreamCallStarted = true
 		r.llmRequestCount++
+		firstEventTiming := r.latencyTiming.beginUpstream(time.Now(), r.llmRequestCount, r.routeConfig.Protocol, false)
 		output, err := r.service.llmClient.Generate(generationCtx, r.routeConfig, currentInput)
+		firstEventTiming.recordResponse(time.Now(), output, err != nil)
 		r.recordNativeToolUsage(output)
 		generateErr = err
 		if err != nil {
@@ -494,9 +501,11 @@ func (r *messageGenerationRunner) generate(ctx context.Context, currentInput llm
 
 	r.upstreamCallStarted = true
 	r.llmRequestCount++
+	call.firstEventTiming = r.latencyTiming.beginUpstream(time.Now(), r.llmRequestCount, r.routeConfig.Protocol, true)
 	output, streamErr := r.service.llmClient.GenerateStream(generationCtx, r.routeConfig, currentInput, func(event llm.GenerateStreamEvent) error {
 		return call.handleStreamEvent(generationCtx, currentInput, event)
 	})
+	call.firstEventTiming.record(time.Now(), "none", streamErr != nil)
 	r.recordNativeToolUsage(output)
 	generateErr = streamErr
 	if streamErr != nil {
@@ -521,7 +530,9 @@ func (r *messageGenerationRunner) generate(ctx context.Context, currentInput llm
 	if !r.attemptHadSideEffect && r.llmRequestCount < r.maxLLMCalls &&
 		call.observation.canRetry(generateErr, shouldFallbackToNonStreaming) {
 		r.llmRequestCount++
+		firstEventTiming := r.latencyTiming.beginUpstream(time.Now(), r.llmRequestCount, r.routeConfig.Protocol, false)
 		output, generateErr = r.service.llmClient.Generate(generationCtx, r.routeConfig, currentInput)
+		firstEventTiming.recordResponse(time.Now(), output, generateErr != nil)
 		r.recordNativeToolUsage(output)
 		if generateErr == nil {
 			generateErr = call.finalizeNonStreamingOutput(output, true)

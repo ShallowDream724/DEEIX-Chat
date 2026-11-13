@@ -69,6 +69,21 @@ func sortedAllowedMIMETypes(raw string) []string {
 	return result
 }
 
+// resolveMessageFilePolicy waits until the active prompt's file set is known.
+// Plain text turns have no use for file-mode preferences or vector-store readiness.
+// Historical attachments and enabled knowledge-base references keep the full checks.
+func (s *Service) resolveMessageFilePolicy(ctx context.Context, userID uint, conversationFileIDs, knowledgeBaseIDs []string, cfg config.Config) (string, chatFileCapability) {
+	fileMode := "auto"
+	if len(conversationFileIDs) == 0 && !(cfg.KnowledgeBaseEnabled && len(knowledgeBaseIDs) > 0) {
+		return fileMode, chatFileCapability{}
+	}
+	capability := s.resolveChatFileCapability(ctx)
+	if value, err := s.getUserSettingCached(ctx, userID, "chat.file_mode"); err == nil && value != "" {
+		fileMode = value
+	}
+	return fileMode, capability
+}
+
 func (s *Service) resolveChatFileCapability(ctx context.Context) chatFileCapability {
 	cfg := s.cfg.Snapshot()
 	capability := chatFileCapability{
