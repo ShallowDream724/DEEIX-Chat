@@ -376,9 +376,11 @@ export function buildVisibleMessages(
 ): ChatAreaMessage[] {
   const children = buildChildrenIndex(messages);
   const reconciledSelections = reconcileBranchSelections(messages, selections);
-  let visible: ChatAreaMessage[] = [];
+  const visible: ChatAreaMessage[] = [];
   const visited = new Set<string>();
-  let parentKey = ROOT_BRANCH_KEY;
+  // Tail pages can omit the root. Start at the oldest available ancestor and
+  // still follow selections, rather than returning the latest leaf's fixed path.
+  let parentKey = children.has(ROOT_BRANCH_KEY) ? ROOT_BRANCH_KEY : tailRootBranchKey(messages);
 
   while (true) {
     const siblings = children.get(parentKey);
@@ -395,10 +397,6 @@ export function buildVisibleMessages(
     visited.add(selected.publicID);
     visible.push(selected);
     parentKey = selected.publicID;
-  }
-
-  if (visible.length === 0 && messages.length > 0) {
-    visible = buildTailVisibleMessages(messages);
   }
 
   const withBranchNavigators = visible.map((item) => {
@@ -448,18 +446,17 @@ export function buildVisibleMessages(
   });
 }
 
-function buildTailVisibleMessages(messages: ChatAreaMessage[]): ChatAreaMessage[] {
+function tailRootBranchKey(messages: ChatAreaMessage[]): string {
   const byPublicID = new Map(messages.map((item) => [item.publicID, item]));
-  const visible: ChatAreaMessage[] = [];
   const visited = new Set<string>();
   let current = messages.at(-1) ?? null;
-
+  let first = current;
   while (current && !visited.has(current.publicID)) {
     visited.add(current.publicID);
-    visible.push(current);
+    first = current;
     const parentPublicID = current.parentPublicID?.trim() || "";
     current = parentPublicID ? byPublicID.get(parentPublicID) ?? null : null;
   }
 
-  return visible.reverse();
+  return toBranchKey(first?.parentPublicID);
 }

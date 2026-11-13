@@ -66,6 +66,14 @@ export function useChatData(
   const [resumingActivityLabel, setResumingActivityLabel] = React.useState("");
   const stateRef = React.useRef(state);
   stateRef.current = state;
+  const historyScopeRef = React.useRef({ conversationID, reloadToken });
+  if (
+    historyScopeRef.current.conversationID !== conversationID ||
+    historyScopeRef.current.reloadToken !== reloadToken
+  ) {
+    historyScopeRef.current = { conversationID, reloadToken };
+  }
+  const olderRequestRef = React.useRef<object | null>(null);
   const previousConversationIDRef = React.useRef<string | null>(conversationID);
   const resumeSeqByRunRef = React.useRef<Record<string, number>>({});
   const pendingAssistantContentRef = React.useRef("");
@@ -224,8 +232,11 @@ export function useChatData(
 
   const loadOlderMessages = React.useCallback(async () => {
     const current = stateRef.current;
+    const scope = historyScopeRef.current;
     if (
       !conversationID ||
+      scope.conversationID !== conversationID ||
+      olderRequestRef.current === scope ||
       current.conversationPublicID !== conversationID ||
       current.loading ||
       current.loadingOlder ||
@@ -245,15 +256,22 @@ export function useChatData(
       return false;
     }
 
+    // Claim synchronously: React may defer state updaters, so loadingOlder alone
+    // cannot prevent two scroll/underfill events from requesting the same page.
+    olderRequestRef.current = scope;
+    const isCurrent = () => historyScopeRef.current === scope;
     setState((prev) => {
+      if (!isCurrent()) return prev;
       const next = { ...prev, loadingOlder: true };
       stateRef.current = next;
       return next;
     });
     try {
       const token = await resolveAccessToken();
+      if (!isCurrent()) return false;
       if (!token) {
         setState((prev) => {
+          if (!isCurrent()) return prev;
           const next = { ...prev, loadingOlder: false, hasOlder: false };
           stateRef.current = next;
           return next;
@@ -266,21 +284,22 @@ export function useChatData(
         beforeID,
         trace: "summary",
       });
-      if (previousConversationIDRef.current !== conversationID) {
+      if (!isCurrent()) {
         return false;
       }
-      let loaded = false;
+      const existingPublicIDs = new Set(stateRef.current.messages.map((message) => message.publicID));
+      const loaded = data.results.some((message) => !existingPublicIDs.has(message.publicID));
       setState((prev) => {
+        if (!isCurrent()) return prev;
         const existingPublicIDs = new Set(prev.messages.map((message) => message.publicID));
         const olderMessages = data.results.filter((message) => !existingPublicIDs.has(message.publicID));
         const messages = [...olderMessages, ...prev.messages];
-        loaded = olderMessages.length > 0;
         const next = {
           ...prev,
           loadingOlder: false,
           messages,
           total: data.total,
-          hasOlder: loaded && messages.length < data.total,
+          hasOlder: olderMessages.length > 0 && messages.length < data.total,
         };
         stateRef.current = next;
         return next;
@@ -288,11 +307,14 @@ export function useChatData(
       return loaded;
     } catch {
       setState((prev) => {
+        if (!isCurrent()) return prev;
         const next = { ...prev, loadingOlder: false };
         stateRef.current = next;
         return next;
       });
       return false;
+    } finally {
+      if (olderRequestRef.current === scope) olderRequestRef.current = null;
     }
   }, [conversationID]);
 
