@@ -13,7 +13,7 @@ func TestValidateReasoningCapabilityFormatsAndAllowedLevels(t *testing.T) {
 		ReasoningFormatOpenAI:          allLevels,
 		ReasoningFormatAnthropicEffort: {"none", "low", "medium", "high", "xhigh", "max"},
 		ReasoningFormatAnthropicBudget: sharedLevels,
-		ReasoningFormatGeminiLevel:     {"minimal", "low", "medium", "high"},
+		ReasoningFormatGeminiLevel:     {"minimal", "low", "medium", "high", "xhigh"},
 		ReasoningFormatGeminiBudget:    sharedLevels,
 		ReasoningFormatQwen:            sharedLevels,
 	}
@@ -211,12 +211,25 @@ func TestInferReasoningCapabilityRequiresKnownPathSelectAndCanonicalLevels(t *te
 	if capability := resolveWithoutCatalog("openai_image_generations", `{"optionControls":[{"path":"reasoning_effort","type":"select","options":["low"]}]}`); capability != nil {
 		t.Fatalf("expected media protocol to never infer, got %#v", capability)
 	}
-	// 格式不允许的档位（Gemini 没有 none/xhigh）不参与推断。
+	// Gemini Hydrogen 的 xhigh 必须保留；格式不允许的 none/max 不参与推断。
 	capability := resolveWithoutCatalog(ReasoningProtocolGeminiGenerate, `{"optionControls":[
-		{"path":"generationConfig.thinkingConfig.thinkingLevel","type":"select","options":["none","low","high","xhigh"]}
+		{"path":"generationConfig.thinkingConfig.thinkingLevel","type":"select","options":["none","low","high","xhigh","max"]}
 	]}`)
-	if capability == nil || !reflect.DeepEqual(capability.Levels, []string{"low", "high"}) {
+	if capability == nil || !reflect.DeepEqual(capability.Levels, []string{"low", "high", "xhigh"}) {
 		t.Fatalf("expected format-filtered gemini levels, got %#v", capability)
+	}
+}
+
+func TestGeminiXHighExplicitAndNativeDefaults(t *testing.T) {
+	for _, protocol := range []string{ReasoningProtocolGeminiGenerate, ReasoningProtocolGeminiInteractions} {
+		capability := resolveWithoutCatalog(protocol, `{"reasoning":{"format":"gemini_level","levels":["low","medium","high","xhigh"],"default":"xhigh"}}`)
+		if capability == nil || capability.Default != "xhigh" || capability.ResolveLevel("xhigh") != "xhigh" {
+			t.Fatalf("%s: expected explicit xhigh, got %#v", protocol, capability)
+		}
+	}
+	capability := resolveWithoutCatalog(ReasoningProtocolGeminiGenerate, `{"defaultOptions":{"generationConfig":{"thinkingConfig":{"thinkingLevel":"xhigh"}}}}`)
+	if capability == nil || capability.Default != "xhigh" || !capability.HasLevel("xhigh") {
+		t.Fatalf("expected native xhigh default, got %#v", capability)
 	}
 }
 

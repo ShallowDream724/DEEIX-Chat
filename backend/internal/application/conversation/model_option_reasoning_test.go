@@ -133,6 +133,22 @@ func TestResolveChatModelOptionsTranslationTable(t *testing.T) {
 			want:         map[string]any{"generationConfig": map[string]any{"thinkingConfig": map[string]any{"includeThoughts": true, "thinkingLevel": "low"}}},
 		},
 		{
+			name:         "gemini hydrogen xhigh on generate content",
+			protocol:     llm.AdapterGoogleGenerateContent,
+			capabilities: explicitReasoning("gemini_level", `["low","medium","high","xhigh"]`, "high", ""),
+			options:      map[string]any{"reasoning_effort": "xhigh"},
+			wantLevel:    "xhigh",
+			want:         map[string]any{"generationConfig": map[string]any{"thinkingConfig": map[string]any{"thinkingLevel": "xhigh"}}},
+		},
+		{
+			name:         "gemini hydrogen xhigh on interactions",
+			protocol:     llm.AdapterGeminiInteractions,
+			capabilities: explicitReasoning("gemini_level", `["low","medium","high","xhigh"]`, "high", ""),
+			options:      map[string]any{"reasoning_effort": "xhigh"},
+			wantLevel:    "xhigh",
+			want:         map[string]any{"generation_config": map[string]any{"thinking_level": "xhigh"}},
+		},
+		{
 			name:         "gemini level on interactions",
 			protocol:     llm.AdapterGeminiInteractions,
 			capabilities: explicitReasoning("gemini_level", `["minimal","low","medium","high"]`, "medium", ""),
