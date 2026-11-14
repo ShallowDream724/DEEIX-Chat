@@ -19,3 +19,7 @@
 详细本地记录：`.cache/local-dev/mimo-review/return-integration.json`、`settings-alignment.log`。真实手机的操作系统音频回收、网络切换与生产站点代理仍需部署后复测，不以桌面状态模拟宣称覆盖全部移动浏览器。
 
 行为依据：[AudioContext 状态](https://developer.mozilla.org/en-US/docs/Web/API/BaseAudioContext/state)、[Page Visibility](https://developer.mozilla.org/en-US/docs/Web/API/Page_Visibility_API)。
+
+## 发布结果
+
+已发布 `ghcr.io/shallowdream724/deeix-chat:latest`（linux/amd64），源码 `d1826b7dce3d160ccf813a6001f7dea29cbc34eb`。[Image #43598044292](https://github.com/ShallowDream724/DEEIX-Chat/actions/runs/43598044292) 的构建、已发布架构容器检查和 Merge 全部成功。匿名 GHCR 核验 latest 与固定 SHA 标签一致，镜像 revision 正确；manifest digest 为 `sha256:974eb587208d295640f8db135ee1bf3bd5fa343963df3d5f0cd866d89836448f`。未代为更新生产容器。
