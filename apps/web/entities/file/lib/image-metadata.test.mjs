@@ -102,3 +102,21 @@ test("ordinary MPF and known SDR gain-map bases are isolated; unknown or HDR bas
   assert.equal(inspectImageMetadata(bytes(jpeg(800, 600, [mpf, iso]), jpeg(100, 100))).colorSpace, "unsupported");
   assert.throws(() => inspectImageMetadata(data.subarray(0, data.length - 2)), { code: "IMAGE_INVALID" });
 });
+
+test("complete JPEGs with private trailers normalize the primary image without accepting truncation", async () => {
+  const primary = jpeg(1080, 2400);
+  for (const trailer of [bytes([0, 0]), bytes(Buffer.from("screenshot-metadata")), jpeg(2, 2), bytes([255])]) {
+    const source = bytes(primary, trailer);
+    const metadata = inspectImageMetadata(source);
+    assert.deepEqual([metadata.width, metadata.height], [1080, 2400]);
+    assert.equal(metadata.jpegAuxiliary.kind, "trailing-data");
+    const clean = new Uint8Array(await sdrJpegDecodeSource(new Blob([source]), metadata).arrayBuffer());
+    assert.deepEqual(clean, primary);
+    assert.equal(inspectImageMetadata(clean).jpegAuxiliary, undefined);
+    assert.equal(planImagePreparation(metadata, source.length, { maxDimension: 1536, version: "image-normalize-v1:1536" }).reuse, false);
+  }
+  assert.throws(() => inspectImageMetadata(primary.subarray(0, primary.length - 1)), { code: "IMAGE_INVALID" });
+  assert.throws(() => inspectImageMetadata(primary.subarray(0, primary.length - 2)), { code: "IMAGE_INVALID" });
+  // A trailer cannot repair a truncated segment or substitute for an EOI.
+  assert.throws(() => inspectImageMetadata(bytes(primary.subarray(0, 12), Buffer.from("metadata"))), { code: "IMAGE_INVALID" });
+});

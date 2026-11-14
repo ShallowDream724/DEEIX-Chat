@@ -1,5 +1,11 @@
 # 分支排期
 
+## 2026-11-14 语音与 DeepSeek 批次镜像
+
+`ghcr.io/shallowdream724/deeix-chat:latest`（linux/amd64）已发布源码 `1733d0b310e45ec6c0b596d2b56b68cda41562be`，包含语音、DeepSeek Responses 文档能力、官方三栏模型列表恢复及发布前资源回归。[Image #43580137420](https://github.com/ShallowDream724/DEEIX-Chat/actions/runs/43580137420) 的构建、容器启动/网页/revision 检查和 Merge 均成功；匿名 GHCR 核验 latest 与固定 SHA 标签一致，manifest digest 为 `sha256:8945702aa76039044c7bbd992e9d4005c2cfcb0aa6dd7262a4e22dca3d1ac951`。尚未代为部署生产；TTS 生产音色和播放体验由用户继续验收。
+
+发布后收到手机 JPG 截图“图片不完整”的阻断反馈。已复现 JPEG 结束标记后附加数据被误拒绝并修复，详情及样本边界见 [图片输入链路](image-input-pipeline.md)；修复镜像发布状态后续补录。
+
 ## 2026-11-14 官方模型列表恢复
 
 以用户最终截图和 `DEEIX-AI/DEEIX-Chat` 官方 dev 源码为准，恢复“分组 → 模型 → 详情”三栏：桌面悬停模型显示模态、上下文和价格，沿用官方布局、尺寸、间距与动画。较窄窗口和手机保留官方行内图标及价格入口；触屏点击原价格按钮打开同一价格内容，键盘可打开/关闭，不使用手机价格 Sheet。DeepSeek 文档模态、图像计费、BYOK 及菜单滚动修复保留。先前回退至 `ddd5deb9` 的行内设计已被这一最终要求替代。

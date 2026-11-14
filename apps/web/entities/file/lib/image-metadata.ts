@@ -14,7 +14,7 @@ export type ImageMetadata = {
   /** Explicit SDR signaling for higher-depth wide-gamut PNG inputs. */
   sdrColorConfirmed?: boolean;
   /** Decode only this standalone SDR primary, removing auxiliary declarations. */
-  jpegAuxiliary?: { kind: "mpf" | "gainmap-sdr"; primaryByteLength: number; stripRanges: [number, number][] };
+  jpegAuxiliary?: { kind: "mpf" | "gainmap-sdr" | "trailing-data"; primaryByteLength: number; stripRanges: [number, number][] };
 };
 
 export type ImagePreparationErrorCode = "IMAGE_INVALID" | "IMAGE_UNSUPPORTED" | "IMAGE_ANIMATED" | "IMAGE_COLOR_UNSUPPORTED" | "IMAGE_MEMORY_LIMIT" | "IMAGE_CAPABILITY_UNAVAILABLE" | "IMAGE_TIMEOUT";
@@ -126,7 +126,13 @@ function inspectJpeg(data: Uint8Array, metadata: ImageMetadata) {
     // v1 SDR base can be separated from its gain map without tone mapping.
     if (hdrPrimary || unknownGainmap || (hasGainmap || hasIsoGainmap) && !hasAdobeSdrVersion) metadata.colorSpace = "unsupported";
     else metadata.jpegAuxiliary = { kind: hasGainmap || hasIsoGainmap ? "gainmap-sdr" : "mpf", primaryByteLength: primary.end, stripRanges };
-  } else if (primary.end !== data.length) return invalid();
+  } else if (primary.end !== data.length) {
+    // Editors and screenshot tools may append private data after a complete
+    // JPEG. The first codestream's EOI establishes its boundary; trailing
+    // bytes do not make those pixels incomplete. Decode only that codestream,
+    // while declared MPF/gain-map images still use the checks above.
+    metadata.jpegAuxiliary = { kind: "trailing-data", primaryByteLength: primary.end, stripRanges: [] };
+  }
 }
 
 /** Blob slices retain only the SDR JPEG codestream and its EXIF/ICC metadata. */
