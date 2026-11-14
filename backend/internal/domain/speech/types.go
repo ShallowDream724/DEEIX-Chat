@@ -36,6 +36,12 @@ type Capability struct {
 	MaxDurationMS         int64    `json:"max_duration_ms,omitempty"`
 	MaxBytes              int64    `json:"max_bytes,omitempty"`
 	Voices                []Voice  `json:"voices,omitempty"`
+	DefaultVoice          string   `json:"default_voice,omitempty"`
+	Speeds                []Voice  `json:"speeds,omitempty"`
+	DefaultSpeed          string   `json:"default_speed,omitempty"`
+	SupportsStyle         bool     `json:"supports_style,omitempty"`
+	DefaultStyle          string   `json:"default_style,omitempty"`
+	MaxStyleCharacters    int64    `json:"max_style_characters,omitempty"`
 	MaxWeightedCharacters int64    `json:"max_weighted_characters,omitempty"`
 	MaxTextBytes          int64    `json:"max_text_bytes,omitempty"`
 }
@@ -71,7 +77,27 @@ type Synthesis struct {
 	Text   string
 	Voice  string
 	Format string
+	Speed  string
+	Style  string
 }
+
+// SynthesisMetadataSource is optionally implemented by the audio reader. The
+// final metadata is available after consuming the stream, including on failure.
+type SynthesisMetadataSource interface {
+	Metadata() SynthesisMetadata
+}
+
+type SynthesisMetadata struct {
+	RequestID string
+	Usage     *TokenUsage
+}
+
+type TokenUsage struct {
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
+	TotalTokens      int64 `json:"total_tokens"`
+}
+
 type Provider interface {
 	ASRCapability() *Capability
 	TTSCapability() *Capability
@@ -108,6 +134,7 @@ type Meter interface {
 }
 type Record struct {
 	UpstreamRequestID string        `json:"upstream_request_id,omitempty"`
+	UpstreamUsage     *TokenUsage   `json:"upstream_usage,omitempty"`
 	ID                string        `json:"id"`
 	OperationID       string        `json:"operation_id"`
 	UserID            uint          `json:"user_id"`

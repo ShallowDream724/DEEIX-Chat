@@ -68,7 +68,7 @@ func TestSpeechAPIKeyIsEncryptedMaskedAndPreservedOnBlankSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	previous := runtime.Snapshot()
-	if previous.Speech.DeepSeekAPIKey != credential || previous.Speech.DeepSeekTTSEnabled {
+	if previous.Speech.DeepSeekAPIKey != credential || previous.Speech.TTSEnabled {
 		t.Fatal("runtime snapshot did not decrypt the saved speech credential")
 	}
 	if _, err := service.BatchUpdate(t.Context(), []PatchItem{{Namespace: "speech", Key: "deepseek_api_key", Value: ""}, {Namespace: "speech", Key: "deepseek_tts_enabled", Value: "true"}}); err != nil {
@@ -81,7 +81,7 @@ func TestSpeechAPIKeyIsEncryptedMaskedAndPreservedOnBlankSave(t *testing.T) {
 	if err := settingsRuntime.ApplyTo(t.Context(), runtime); err != nil {
 		t.Fatal(err)
 	}
-	if !runtime.Snapshot().Speech.DeepSeekTTSEnabled || previous.Speech.DeepSeekTTSEnabled {
+	if !runtime.Snapshot().Speech.TTSEnabled || previous.Speech.TTSEnabled {
 		t.Fatal("speech update did not produce an independent runtime snapshot")
 	}
 	if _, err := service.BatchUpdate(t.Context(), []PatchItem{{Namespace: "speech", Key: "deepseek_api_key", Clear: true}, {Namespace: "speech", Key: "deepseek_tts_enabled", Value: "false"}}); err != nil {

@@ -76,7 +76,11 @@ func (a speechBillingAdapter) Authorize(ctx context.Context, access domainspeech
 			return domainspeech.BillingTicket{}, domainspeech.ErrUnavailable
 		}
 	case "tts":
-		if access.Provider != "deepseek" || !cfg.Speech.DeepSeekTTSEnabled || access.Units > 10000 {
+		selected := strings.TrimSpace(cfg.Speech.TTSProvider)
+		if selected == "" {
+			selected = "deepseek"
+		}
+		if access.Provider != selected || (selected != "deepseek" && selected != "mimo") || !cfg.Speech.TTSEnabled || access.Units > 10000 {
 			return domainspeech.BillingTicket{}, domainspeech.ErrUnavailable
 		}
 		quote.Unit, quote.RateQuantity, quote.ServiceName = "character", 10000, "朗读回复"

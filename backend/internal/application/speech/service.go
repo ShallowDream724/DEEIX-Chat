@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	domain "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/speech"
 	"github.com/google/uuid"
@@ -19,6 +20,7 @@ import (
 
 type Config struct {
 	SelectedInputProvider string
+	SelectedTTSProvider   string
 	MaxRecordingSeconds   int
 	MaxConcurrentPerUser  int
 	MaxConcurrent         int
@@ -82,12 +84,14 @@ type Session struct {
 	ExpiresAt     time.Time `json:"expires_at"`
 }
 type TTSInput struct {
-	Provider  string `json:"provider"`
-	Text      string `json:"text"`
-	Voice     string `json:"voice"`
-	Format    string `json:"format"`
-	RequestID string `json:"request_id"`
-	Retry     bool   `json:"retry,omitempty"`
+	Provider  string  `json:"provider"`
+	Text      string  `json:"text"`
+	Voice     string  `json:"voice"`
+	Format    string  `json:"format"`
+	Speed     string  `json:"speed,omitempty"`
+	Style     *string `json:"style,omitempty"`
+	RequestID string  `json:"request_id"`
+	Retry     bool    `json:"retry,omitempty"`
 }
 type TTSResult struct {
 	ID       string `json:"id"`
@@ -97,6 +101,7 @@ type TTSResult struct {
 }
 type Capabilities struct {
 	SelectedInputProvider  string              `json:"selected_input_provider"`
+	SelectedTTSProvider    string              `json:"selected_tts_provider"`
 	ASR                    []domain.Capability `json:"asr"`
 	TTS                    []domain.Capability `json:"tts"`
 	MaxRecordingDurationMS int64               `json:"max_recording_duration_ms"`
@@ -149,6 +154,9 @@ func (s *Service) config() Config {
 	if c.SelectedInputProvider == "" {
 		c.SelectedInputProvider = "browser"
 	}
+	if c.SelectedTTSProvider == "" {
+		c.SelectedTTSProvider = "deepseek"
+	}
 	if c.MaxConcurrentPerUser <= 0 {
 		c.MaxConcurrentPerUser = 2
 	}
@@ -173,11 +181,11 @@ func (s *Service) Capabilities() Capabilities {
 	if cfg.SelectedInputProvider == "deepseek" && maximum > 120000 {
 		maximum = 120000
 	}
-	c := Capabilities{SelectedInputProvider: cfg.SelectedInputProvider, ASR: []domain.Capability{}, TTS: []domain.Capability{}, MaxRecordingDurationMS: maximum}
+	c := Capabilities{SelectedInputProvider: cfg.SelectedInputProvider, SelectedTTSProvider: cfg.SelectedTTSProvider, ASR: []domain.Capability{}, TTS: []domain.Capability{}, MaxRecordingDurationMS: maximum}
 	if cfg.SelectedInputProvider == "browser" {
 		c.ASR = append(c.ASR, domain.Capability{ID: "browser", Name: "浏览器", Streaming: true, Formats: []string{}, MaxDurationMS: maximum})
 	}
-	for _, id := range []string{"deepseek", "doubao-ime", "wetype"} {
+	for _, id := range []string{"deepseek", "mimo", "doubao-ime", "wetype"} {
 		p := s.provider(id)
 		if p == nil {
 			continue
@@ -190,7 +198,7 @@ func (s *Service) Capabilities() Capabilities {
 			}
 			c.ASR = append(c.ASR, v)
 		}
-		if t := p.TTSCapability(); t != nil {
+		if t := p.TTSCapability(); t != nil && id == cfg.SelectedTTSProvider {
 			c.TTS = append(c.TTS, *t)
 		}
 	}
@@ -658,31 +666,29 @@ func (s *Service) transcribe(ctx context.Context, user uint, provider, requestID
 }
 
 func (s *Service) Synthesize(ctx context.Context, user uint, in TTSInput) (TTSResult, error) {
+	cfg := s.config()
+	if in.Provider == "" {
+		in.Provider = cfg.SelectedTTSProvider
+	}
+	if in.Provider != cfg.SelectedTTSProvider {
+		return TTSResult{}, domain.ErrProviderChanged
+	}
 	p := s.provider(in.Provider)
-	if p == nil || p.TTSCapability() == nil {
+	if p == nil {
 		return TTSResult{}, domain.ErrUnavailable
 	}
-	in.Text = strings.TrimSpace(strings.ReplaceAll(in.Text, "\r\n", "\n"))
-	if in.Voice == "" {
-		in.Voice = "stella"
+	capability := p.TTSCapability()
+	if capability == nil {
+		return TTSResult{}, domain.ErrUnavailable
 	}
-	if in.Format == "" {
-		in.Format = "wav"
-	}
-	units := WeightedCharacters(in.Text)
-	payload, _ := json.Marshal(struct {
-		Text           string `json:"text"`
-		Voice          string `json:"voice_id"`
-		Format         string `json:"format"`
-		FilterMarkdown bool   `json:"filter_markdown"`
-	}{in.Text, in.Voice, in.Format, true})
-	if in.RequestID == "" || len(in.RequestID) > 128 || in.Text == "" || units > 10000 || len(payload) > 64<<10 || (in.Voice != "stella" && in.Voice != "tide") || (in.Format != "wav" && in.Format != "pcm") {
-		return TTSResult{}, domain.ErrInvalid
+	synthesis, units, err := normalizeSynthesis(in, capability)
+	if err != nil {
+		return TTSResult{}, err
 	}
 	if s.store == nil {
 		return TTSResult{}, domain.ErrUnavailable
 	}
-	cacheParts := []string{"tts-v1", userKey(user), in.Provider, in.Text, in.Voice, in.Format}
+	cacheParts := []string{"tts-v2", userKey(user), in.Provider, synthesis.Text, synthesis.Voice, synthesis.Format, synthesis.Speed, synthesis.Style}
 	if scoped, ok := p.(interface{ CacheIdentity(string) string }); ok {
 		if identity := scoped.CacheIdentity("tts"); identity != "" {
 			cacheParts = append(cacheParts, identity)
@@ -747,13 +753,88 @@ func (s *Service) Synthesize(ctx context.Context, user uint, in TTSInput) (TTSRe
 	s.mu.Lock()
 	s.jobs[id] = j
 	s.mu.Unlock()
-	go s.generate(r, in, p, j, release)
+	go s.generate(r, synthesis, p, j, release)
 	return ttsResult(r, false), nil
 }
+
+func normalizeSynthesis(in TTSInput, capability *domain.Capability) (domain.Synthesis, int64, error) {
+	result := domain.Synthesis{
+		Text:   strings.TrimSpace(strings.ReplaceAll(in.Text, "\r\n", "\n")),
+		Voice:  strings.TrimSpace(in.Voice),
+		Format: strings.ToLower(strings.TrimSpace(in.Format)),
+		Speed:  strings.ToLower(strings.TrimSpace(in.Speed)),
+	}
+	if result.Voice == "" {
+		result.Voice = capability.DefaultVoice
+		if result.Voice == "" && len(capability.Voices) > 0 {
+			result.Voice = capability.Voices[0].ID
+		}
+	}
+	if result.Format == "" {
+		for _, format := range capability.Formats {
+			if result.Format == "" || format == "wav" {
+				result.Format = format
+			}
+		}
+	}
+	if result.Speed == "" {
+		result.Speed = capability.DefaultSpeed
+		if result.Speed == "" && len(capability.Speeds) > 0 {
+			result.Speed = capability.Speeds[0].ID
+		}
+		result.Speed = strings.ToLower(strings.TrimSpace(result.Speed))
+	}
+	if capability.SupportsStyle {
+		result.Style = capability.DefaultStyle
+		if in.Style != nil {
+			result.Style = *in.Style
+		}
+		result.Style = strings.TrimSpace(strings.ReplaceAll(result.Style, "\r\n", "\n"))
+	} else if in.Style != nil {
+		return domain.Synthesis{}, 0, domain.ErrInvalid
+	}
+	validVoice := result.Voice == "" && len(capability.Voices) == 0
+	for _, voice := range capability.Voices {
+		validVoice = validVoice || result.Voice == voice.ID
+	}
+	validFormat := false
+	for _, format := range capability.Formats {
+		validFormat = validFormat || result.Format == format
+	}
+	validSpeed := result.Speed == "" && len(capability.Speeds) == 0
+	for _, speed := range capability.Speeds {
+		validSpeed = validSpeed || result.Speed == speed.ID
+	}
+	maximumCharacters, maximumBytes := capability.MaxWeightedCharacters, capability.MaxTextBytes
+	if maximumCharacters <= 0 {
+		maximumCharacters = 10000
+	}
+	if maximumBytes <= 0 {
+		maximumBytes = 64 << 10
+	}
+	units := WeightedCharacters(result.Text)
+	if in.RequestID == "" || len(in.RequestID) > 128 || result.Text == "" || !utf8.ValidString(result.Text) || units > maximumCharacters || int64(len(result.Text)) > maximumBytes || !validVoice || !validFormat || !validSpeed || !utf8.ValidString(result.Style) || (capability.MaxStyleCharacters > 0 && int64(utf8.RuneCountInString(result.Style)) > capability.MaxStyleCharacters) {
+		return domain.Synthesis{}, 0, domain.ErrInvalid
+	}
+	// Preserve DeepSeek's existing serialized request byte limit.
+	if in.Provider == "deepseek" {
+		payload, _ := json.Marshal(struct {
+			Text           string `json:"text"`
+			Voice          string `json:"voice_id"`
+			Format         string `json:"format"`
+			FilterMarkdown bool   `json:"filter_markdown"`
+		}{result.Text, result.Voice, result.Format, true})
+		if int64(len(payload)) > maximumBytes {
+			return domain.Synthesis{}, 0, domain.ErrInvalid
+		}
+	}
+	return result, units, nil
+}
+
 func ttsResult(r domain.Record, hit bool) TTSResult {
 	return TTSResult{ID: r.ID, Status: r.Status, MediaURL: APIBasePath + "/speech/tts/" + r.ID + "/audio", CacheHit: hit}
 }
-func (s *Service) generate(r domain.Record, in TTSInput, p domain.Provider, j *job, release func()) {
+func (s *Service) generate(r domain.Record, in domain.Synthesis, p domain.Provider, j *job, release func()) {
 	defer close(j.done)
 	defer func() { s.mu.Lock(); delete(s.jobs, r.ID); s.mu.Unlock() }()
 	defer release()
@@ -767,15 +848,27 @@ func (s *Service) generate(r domain.Record, in TTSInput, p domain.Provider, j *j
 		_ = s.store.Put(context.Background(), r)
 		return
 	}
-	body, ct, err := p.Synthesize(ctx, domain.Synthesis{Text: in.Text, Voice: in.Voice, Format: in.Format})
+	body, ct, err := p.Synthesize(ctx, in)
+	if err == nil && body == nil {
+		err = io.ErrUnexpectedEOF
+	}
+	if body != nil {
+		var closeOnce sync.Once
+		closeBody := func() { closeOnce.Do(func() { _ = body.Close() }) }
+		stopClose := context.AfterFunc(ctx, closeBody)
+		defer func() { stopClose(); closeBody() }()
+	}
 	if err == nil {
-		defer body.Close()
 		r.ContentType = ct
 		err = s.store.Put(ctx, r)
 		if err == nil {
 			{
 				buf := make([]byte, 32<<10)
 				for {
+					if ctx.Err() != nil {
+						err = ctx.Err()
+						break
+					}
 					n, e := body.Read(buf)
 					if n > 0 {
 						maximum := int64(86400044)
@@ -787,6 +880,9 @@ func (s *Service) generate(r domain.Record, in TTSInput, p domain.Provider, j *j
 							break
 						}
 						wn, we := w.Write(buf[:n])
+						if we == nil && wn != n {
+							we = io.ErrShortWrite
+						}
 						r.Bytes += int64(wn)
 						select {
 						case j.changed <- struct{}{}:
@@ -810,6 +906,17 @@ func (s *Service) generate(r domain.Record, in TTSInput, p domain.Provider, j *j
 			}
 		}
 	}
+	if ctx.Err() != nil {
+		err = ctx.Err()
+	}
+	if source, ok := body.(domain.SynthesisMetadataSource); ok {
+		metadata := source.Metadata()
+		r.UpstreamRequestID = metadata.RequestID
+		if metadata.Usage != nil {
+			usage := *metadata.Usage
+			r.UpstreamUsage = &usage
+		}
+	}
 	if closeErr := w.Close(); err == nil {
 		err = closeErr
 	}
@@ -822,7 +929,7 @@ func (s *Service) generate(r domain.Record, in TTSInput, p domain.Provider, j *j
 		r.Error = "synthesis_failed"
 		_ = s.store.DeleteAudio(context.Background(), r.ID)
 	}
-	if e := s.meter.Record(context.Background(), domain.Usage{Access: domain.Access{UserID: r.UserID, OperationID: r.ID, Operation: "tts", Provider: r.Provider, Units: r.Units}, Ticket: r.Ticket, ActualUnits: r.Units, Status: r.Status}); e != nil {
+	if e := s.meter.Record(context.Background(), domain.Usage{Access: domain.Access{UserID: r.UserID, OperationID: r.ID, Operation: "tts", Provider: r.Provider, Units: r.Units}, Ticket: r.Ticket, ActualUnits: r.Units, Status: r.Status, UpstreamRequestID: r.UpstreamRequestID}); e != nil {
 		r.Status = "uncertain"
 		r.Error = "settlement_failed"
 		_ = s.store.DeleteAudio(context.Background(), r.ID)
@@ -899,6 +1006,9 @@ func (s *Service) Audio(ctx context.Context, user uint, id string, w io.Writer, 
 		f, err = s.store.OpenAudio(ctx, id)
 		if err == nil {
 			break
+		}
+		if errors.Is(err, domain.ErrExpired) {
+			return domain.ErrExpired
 		}
 		if j == nil {
 			return err

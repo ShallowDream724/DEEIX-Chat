@@ -46,7 +46,7 @@ func (r *speechPolicyBillingRepo) ReserveUsageBalance(ctx context.Context, in do
 func TestSpeechUserChargesDefaultOffAndHistoricalQuoteIsFrozen(t *testing.T) {
 	repo := &speechPolicyBillingRepo{}
 	service := billing.NewService(repo)
-	cfg := config.Config{BillingUSDToCNYRate: 7.2, Speech: config.SpeechConfig{InputProvider: "deepseek", DeepSeekTTSEnabled: true, ASRCNYPerHour: .39, TTSCNYPer10000Characters: 1.5}}
+	cfg := config.Config{BillingUSDToCNYRate: 7.2, Speech: config.SpeechConfig{InputProvider: "deepseek", TTSEnabled: true, ASRCNYPerHour: .39, TTSCNYPer10000Characters: 1.5}}
 	runtime := config.NewRuntime(cfg)
 	adapter := speechBillingAdapter{billing: service, runtime: runtime}
 	for _, operation := range []string{"asr", "tts"} {
@@ -98,7 +98,7 @@ func TestSpeechChargesApplyToSelectedIMEAndTTSStaysIndependent(t *testing.T) {
 	for _, provider := range []string{"doubao-ime", "wetype"} {
 		repo := &speechPolicyBillingRepo{}
 		service := billing.NewService(repo)
-		cfg := config.Config{BillingUSDToCNYRate: 7.2, Speech: config.SpeechConfig{InputProvider: provider, ChargeASR: true, DeepSeekTTSEnabled: true, ChargeTTS: true, ASRCNYPerHour: .39, TTSCNYPer10000Characters: 1.5}}
+		cfg := config.Config{BillingUSDToCNYRate: 7.2, Speech: config.SpeechConfig{InputProvider: provider, ChargeASR: true, TTSEnabled: true, ChargeTTS: true, ASRCNYPerHour: .39, TTSCNYPer10000Characters: 1.5}}
 		adapter := speechBillingAdapter{billing: service, runtime: config.NewRuntime(cfg)}
 		for _, operation := range []string{"asr", "tts"} {
 			route := provider
@@ -128,5 +128,35 @@ func TestSpeechRateNanousdRejectsInvalidRates(t *testing.T) {
 		if _, err := speechRateNanousd(pair[0], pair[1]); err == nil {
 			t.Fatalf("accepted invalid rate %v", pair)
 		}
+	}
+}
+
+func TestMiMoSpeechSiteChargeIsOptInAndSelectedProviderOnly(t *testing.T) {
+	repo := &speechPolicyBillingRepo{}
+	cfg := config.Config{BillingUSDToCNYRate: 7.2, Speech: config.SpeechConfig{TTSProvider: "mimo", TTSEnabled: true, TTSCNYPer10000Characters: 1.5}}
+	runtime := config.NewRuntime(cfg)
+	adapter := speechBillingAdapter{billing: billing.NewService(repo), runtime: runtime}
+	access := domainspeech.Access{UserID: 1, OperationID: "mimo-free", Provider: "mimo", Operation: "tts", Units: 200}
+	raw, err := adapter.Authorize(t.Context(), access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ticket billing.MeteredServiceAuthorization
+	if err := json.Unmarshal(raw.Snapshot, &ticket); err != nil || ticket.Quote.RateNanousd != 0 || repo.reservations != 0 {
+		t.Fatal("MiMo unexpectedly charged user", err)
+	}
+	cfg.Speech.ChargeTTS = true
+	runtime.Store(cfg)
+	access.OperationID = "mimo-charged"
+	raw, err = adapter.Authorize(t.Context(), access)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw.Snapshot, &ticket); err != nil || ticket.Quote.Provider != "mimo" || ticket.Quote.Unit != "character" || ticket.Quote.RateNanousd <= 0 {
+		t.Fatal("site rate did not apply to selected provider", err)
+	}
+	access.Provider = "deepseek"
+	if _, err := adapter.Authorize(t.Context(), access); err == nil {
+		t.Fatal("client bypassed selected TTS provider")
 	}
 }

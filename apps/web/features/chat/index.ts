@@ -22,3 +22,4 @@ export { useChatArtifacts } from "@/features/chat/hooks/use-chat-artifacts";
 export type { OpenCodeArtifactInput } from "@/features/chat/model/chat-artifacts";
 export { AppChatArea } from "@/features/chat/components/app-chat-area";
 export { AssistantImageGenerationSkeleton } from "@/features/chat/components/message/message-bot";
+export { getSelectedSpeechTTSCapability, parseSpeechPreferences, resolveSpeechPreferences, type SpeechPreferences, type SpeechProviderPreferences } from "@/features/chat/lib/speech-preferences";

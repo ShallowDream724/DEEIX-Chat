@@ -11,17 +11,20 @@ type SpeechConfig struct {
 	DeepSeekASRAPIKey            string
 	DeepSeekTTSBaseURL           string
 	DeepSeekTTSAPIKey            string
+	MiMoBaseURL                  string
+	MiMoAPIKey                   string
 	ChargeASR                    bool
 	ChargeTTS                    bool
-	DeepSeekTTSEnabled           bool
-	DeepSeekBaseURL              string
-	DeepSeekAPIKey               string
-	MaxRecordingSeconds          int
-	MaxConcurrentPerUser         int
-	CacheMaxBytes                int64
-	CacheTTLHours                int
-	ASRCNYPerHour                float64
-	TTSCNYPer10000Characters     float64
+	// TTSEnabled retains the persisted deepseek_tts_enabled key for upgrades.
+	TTSEnabled               bool
+	DeepSeekBaseURL          string
+	DeepSeekAPIKey           string
+	MaxRecordingSeconds      int
+	MaxConcurrentPerUser     int
+	CacheMaxBytes            int64
+	CacheTTLHours            int
+	ASRCNYPerHour            float64
+	TTSCNYPer10000Characters float64
 }
 
 // DeepSeekConnection resolves a role's saved connection without recursively

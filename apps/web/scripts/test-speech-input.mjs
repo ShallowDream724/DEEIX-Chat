@@ -16,6 +16,69 @@ const { SpeechDraftSegment } = await load("../features/chat/lib/speech-draft.ts"
 const { createMediaSpectrum } = await load("../shared/lib/media-spectrum.ts", ["createMediaSpectrum"]);
 const { isImeComposingKeyEvent } = await load("../shared/lib/platform-shortcuts.ts", ["isImeComposingKeyEvent"]);
 const { speechInputKeyAction } = await load("../features/chat/lib/speech-keyboard.ts", ["speechInputKeyAction"], { isImeComposingKeyEvent });
+const { getSelectedSpeechTTSCapability, parseSpeechPreferences, resolveSpeechPreferences } = await load("../features/chat/lib/speech-preferences.ts", ["getSelectedSpeechTTSCapability", "parseSpeechPreferences", "resolveSpeechPreferences"]);
+const { normalizeSpeechContent } = await load("../features/chat/lib/speech-text.ts", ["normalizeSpeechContent"]);
+const mimoCapability = { id: "mimo", name: "MiMo", formats: ["wav"], voices: [{ id: "冰糖", name: "冰糖" }, { id: "Mia", name: "Mia" }], default_voice: "冰糖", speeds: [{ id: "slow", name: "Slow" }, { id: "normal", name: "Normal" }, { id: "fast", name: "Fast" }], default_speed: "fast", supports_style: true, default_style: "自然清晰地朗读。", max_style_characters: 100, max_weighted_characters: 1200, max_text_bytes: 4096 };
+
+test("speech preferences inherit provider defaults, preserve explicit no-style and isolate legacy DeepSeek voices", () => {
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+  const deepseek = { ...mimoCapability, id: "deepseek", voices: [{ id: "stella" }, { id: "tide" }], default_voice: "stella", speeds: [], supports_style: false };
+  const defaults = { provider: "mimo", voice: "冰糖", speed: "fast", style: mimoCapability.default_style };
+  assert.deepEqual(plain(resolveSpeechPreferences(mimoCapability, {})), defaults);
+  assert.deepEqual(plain(resolveSpeechPreferences(mimoCapability, { "chat.speech_voice": "tide" })), defaults);
+  assert.deepEqual(plain(resolveSpeechPreferences(deepseek, { "chat.speech_voice": "tide" })), { provider: "deepseek", voice: "tide" });
+  const settings = { "chat.speech_preferences": JSON.stringify({ mimo: { voice: "Mia", speed: "slow", style: "" }, deepseek: { voice: "stella" } }), "chat.speech_voice": "tide" };
+  assert.deepEqual(plain(resolveSpeechPreferences(mimoCapability, settings)), { provider: "mimo", voice: "Mia", speed: "slow", style: "" });
+  assert.equal(resolveSpeechPreferences(deepseek, settings).voice, "stella");
+  for (const invalid of ["invalid json", "[]", "null", '{"mimo":{"voice":42,"speed":false,"style":null}}']) assert.deepEqual(plain(resolveSpeechPreferences(mimoCapability, { "chat.speech_preferences": invalid })), defaults);
+  assert.deepEqual(plain(resolveSpeechPreferences(mimoCapability, { "chat.speech_preferences": JSON.stringify({ mimo: { voice: "stella", speed: "invalid", style: "长".repeat(101) } }) })), defaults);
+  assert.deepEqual(plain(parseSpeechPreferences(settings["chat.speech_preferences"])), { mimo: { voice: "Mia", speed: "slow", style: "" }, deepseek: { voice: "stella" } });
+  assert.equal(getSelectedSpeechTTSCapability({ selected_tts_provider: "mimo", tts: [deepseek, mimoCapability] }), mimoCapability);
+  assert.equal(getSelectedSpeechTTSCapability({ selected_tts_provider: "mimo", tts: [deepseek] }), undefined);
+});
+
+test("TTS request sends the resolved provider and controls, including intentional empty style", async () => {
+  const requests = [];
+  const { synthesizeSpeech } = await load("../shared/api/speech.ts", ["synthesizeSpeech"], { authedRequest: async (...args) => { requests.push(args); return {}; } });
+  await synthesizeSpeech("token", "你好", { provider: "mimo", voice: "冰糖", speed: "fast", style: "" }, "request", false);
+  assert.deepEqual(JSON.parse(JSON.stringify(requests[0][1].body)), { provider: "mimo", voice: "冰糖", speed: "fast", style: "", text: "你好", format: "wav", request_id: "request", retry: false });
+});
+
+test("speech projection keeps prose and link labels while omitting URLs, destinations, images and reference definitions", () => {
+  const markdown = "# 阅读说明\n请看 [官方指南](https://example.test/path_(v2) \"Title\") 和 [详细说明][docs]。\n[docs]: https://example.test/docs\n  \"Hidden reference title\"\n另见 https://example.test/private?q=1。以及 www.example.test/path，继续正文。\n<https://example.test/autolink> ![图片说明](https://example.test/image.png) ![截图][image]\n[image]: https://example.test/image.png\n末尾 **重要**、`cacheKey` 和 [docs]。";
+  assert.equal(normalizeSpeechContent(markdown), "阅读说明 请看 官方指南 和 详细说明。 另见 。以及 ，继续正文。 末尾 重要、cacheKey 和 docs。");
+  assert.equal(normalizeSpeechContent("[![badge](https://example.test/badge)](https://example.test) Text."), "Text.");
+  assert.equal(normalizeSpeechContent("<https://example.test/path_(v2)> 后续正文。"), "后续正文。");
+});
+
+test("speech projection replaces backtick, tilde and Mermaid blocks with short notices and preserves following paragraphs", () => {
+  assert.equal(normalizeSpeechContent("开头。\n```ts\nconst secret = 42;\n```\n下一段。\n~~~mermaid\ngraph LR; A-->B\n~~~\n结束。"), "开头。 这里是一段代码。 下一段。 这里有一张图示。 结束。");
+  assert.equal(normalizeSpeechContent("开头。\n````text\n```nested\ninner\n```\n````\n结束。"), "开头。 这里是一段代码。 结束。");
+  assert.equal(normalizeSpeechContent("开头。\n~~~javascript\nsecret source\n"), "开头。 这里是一段代码。");
+  assert.equal(normalizeSpeechContent("开头。\n```\nunclosed source"), "开头。 这里是一段代码。");
+  assert.equal(normalizeSpeechContent("```json\n{}\n```\n\n~~~mermaid\ngraph TD; A-->B\n~~~\n\n$$x^2$$\n后续正文。"), "这里有一段未朗读的内容。 后续正文。");
+  assert.equal(normalizeSpeechContent("> ```js\n> const value = 1;\n> ```\n> 结束。"), "这里是一段代码。 结束。");
+  assert.equal(normalizeSpeechContent("开头。\n\n    const value = 1;\n    return value;\n\n结束。"), "开头。 这里是一段代码。 结束。");
+  assert.equal(normalizeSpeechContent("<pre><code>return value</code></pre> 后续正文。"), "这里是一段代码。 后续正文。");
+});
+
+test("speech projection omits formula source without damaging prices, numeric units or subsequent prose", () => {
+  for (const formula of ["$$\\frac{a}{b}$$", "$x^2 + y^2$", "\\(E=mc^2\\)", "\\[\\sum_i x_i\\]", "$2 + 2 = 4$"]) {
+    assert.equal(normalizeSpeechContent(`公式：${formula} 然后继续。`), "公式：这里有一条公式。 然后继续。");
+  }
+  assert.equal(normalizeSpeechContent("价格 $10 and $20，运费 $0.25。长度 12.5 cm，速度 3 m/s，温度 20°C，比例 50%。"), "价格 $10 and $20，运费 $0.25。长度 12.5 cm，速度 3 m/s，温度 20°C，比例 50%。");
+  assert.equal(normalizeSpeechContent("价格 \\$5；公式 $x$。后续。"), "价格 $5；公式 这里有一条公式。后续。");
+  assert.equal(normalizeSpeechContent("$$unclosed formula\n\n后续正文。"), "这里有一条公式。 后续正文。");
+  assert.equal(normalizeSpeechContent("公式 $x<y$ 然后 <b>继续正文</b>。"), "公式 这里有一条公式。 然后 继续正文 。");
+});
+
+test("speech projection reads table headers and cells without Markdown separators, and keeps text following unsupported markup", () => {
+  assert.equal(normalizeSpeechContent("项目 | 数值\n:--- | ---:\n长度 | 5 cm\n速度 | 3 m/s\n\n后续正文。"), "项目，数值。 长度，5 cm。 速度，3 m/s。 后续正文。");
+  assert.equal(normalizeSpeechContent("| 项目 |\n| --- |\n| 内容 |\n\n完毕。"), "项目。 内容。 完毕。");
+  assert.equal(normalizeSpeechContent("前文。<script>alert('never spoken')</script><ui_widget>{\"internal\":true}</ui_widget><svg><path d='M 0 0'/></svg> 后续正文。"), "前文。 后续正文。");
+  assert.equal(normalizeSpeechContent("- [x] 第一项\n> 引用正文\n2. 第二项\n3 < 5，10 > 2。"), "第一项 引用正文 第二项 3 < 5，10 > 2。");
+  assert.equal(normalizeSpeechContent(`${"[".repeat(20000)}无闭合标记`), `${"[".repeat(20000)}无闭合标记`);
+});
 
 test("speech keyboard keeps modifiers and IME native, stops on Enter, and interrupts real edits/navigation", () => {
   const action = (key, extra = {}, composing = false) => speechInputKeyAction({ key, ctrlKey: false, metaKey: false, altKey: false, ...extra }, composing);
@@ -155,6 +218,7 @@ function hookRuntime() {
     useSyncExternalStore(subscribe, snapshot) { const index = cursor++; if (!slots[index] || slots[index].subscribe !== subscribe) { slots[index]?.cleanup?.(); slots[index] = { subscribe, cleanup: subscribe(() => {}) }; } return snapshot(); },
     useEffect(callback, deps) { const index = cursor++; if (!slots[index] || deps.some((value, at) => value !== slots[index].deps[at])) effects.push(() => { slots[index]?.cleanup?.(); slots[index] = { deps, cleanup: callback() }; }); },
   };
+  React.useLayoutEffect = React.useEffect;
   return { React, render(callback) { cursor = 0; const result = callback(); while (effects.length) effects.shift()(); return result; }, cleanup() { for (const slot of slots) slot?.cleanup?.(); } };
 }
 async function setup(provider = "browser", duration = 120000, sharedTrack = false) {
@@ -467,8 +531,8 @@ test("track-overload allowlist excludes mobile, unknown Chromium brands and old 
   assert.equal(await run({ ...browser, userAgent: "iPhone Chrome/140" }), false);
 });
 
-async function playbackSetup({ fail = false, failTimes = fail ? Infinity : 0, deferred = false, incomplete = false, statuses = [], expiredReads = 0, sampleCount = 240, clockScale = 1, chunkSizes = [], streamingHeader = false } = {}) {
-  const stats = { syntheses: 0, requests: [], reads: 0, contexts: 0, closed: 0, recording: false, resolve: null, samples: 0, maxBufferSamples: 0, cancelled: 0 };
+async function playbackSetup({ fail = false, failTimes = fail ? Infinity : 0, deferred = false, incomplete = false, statuses = [], settledStatuses = [], expiredReads = 0, sampleCount = 240, clockScale = 1, chunkSizes = [], streamingHeader = false, holdStream = false, deferSettlement = false } = {}) {
+  const stats = { syntheses: 0, requests: [], reads: 0, contexts: 0, closed: 0, recording: false, resolve: null, samples: 0, maxBufferSamples: 0, maxAhead: 0, cancelled: 0, starts: 0, streamComplete: false, startsBeforeComplete: 0, finishStream: null, settle: null, inFlightSyntheses: 0, maxConcurrentSyntheses: 0 };
   class Context {
     constructor() { stats.contexts++; this.state = "running"; this.started = performance.now(); }
     get currentTime() { return (performance.now() - this.started) / 1000 * clockScale; }
@@ -476,25 +540,37 @@ async function playbackSetup({ fail = false, failTimes = fail ? Infinity : 0, de
     async suspend() { this.state = "suspended"; }
     async close() { if (this.state !== "closed") stats.closed++; this.state = "closed"; }
     createAnalyser() { return { fftSize: 256, getFloatTimeDomainData(buffer) { buffer.fill(0); }, disconnect() {} }; }
-    createBuffer(_channels, count) { stats.samples += count; stats.maxBufferSamples = Math.max(stats.maxBufferSamples, count); return { getChannelData: () => new Float32Array(count) }; }
-    createBufferSource() { return { connect() {}, disconnect() {}, start() {} }; }
+    createBuffer(_channels, count, sampleRate) { stats.samples += count; stats.maxBufferSamples = Math.max(stats.maxBufferSamples, count); return { duration: count / sampleRate, getChannelData: () => new Float32Array(count) }; }
+    createBufferSource() { const context = this; return { connect() {}, disconnect() {}, start(when) { stats.starts++; stats.maxAhead = Math.max(stats.maxAhead, when + this.buffer.duration - context.currentTime); if (!stats.streamComplete) stats.startsBeforeComplete++; } }; }
   }
   const audio = new Uint8Array(44 + sampleCount * 2);
   const view = new DataView(audio.buffer);
   for (const [offset, text] of [[0, "RIFF"], [8, "WAVEfmt "], [36, "data"]]) for (let i = 0; i < text.length; i++) audio[offset + i] = text.charCodeAt(i);
   view.setUint32(4, streamingHeader ? 0xffffffff : audio.length - 8, true); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, 24000, true); view.setUint16(34, 16, true); view.setUint32(40, streamingHeader ? 0xffffffff : sampleCount * 2, true);
-  const api = await load("../features/chat/lib/speech-playback.ts", ["configureSpeechPlayback", "playSpeech", "stopSpeechPlayback", "getSpeechPlaybackState", "splitSpeechText"], {
-    AudioContext: Context, createMediaSpectrum, document: { hidden: false }, window: { location: { origin: "https://example.test" } }, URL,
+  const api = await load("../features/chat/lib/speech-playback.ts", ["configureSpeechPlayback", "playSpeech", "stopSpeechPlayback", "stopSpeechPlaybackForMessage", "reconcileSpeechPlaybackMessage", "getSpeechPlaybackState", "splitSpeechText", "normalizeSpeechText"], {
+    AudioContext: Context, createMediaSpectrum, normalizeSpeechContent, document: { hidden: false }, window: { location: { origin: "https://example.test" } }, URL,
     isRecordingActive: () => stats.recording, beginPlaybackActivity: () => ({ stop() {}, publishLevel() {} }),
-    synthesizeSpeech: (_token, _text, _voice, requestID, retry) => { stats.syntheses++; stats.requests.push({ requestID, retry }); if (stats.syntheses <= failTimes) return Promise.reject(new Error("failed")); const result = { id: `audio-${stats.syntheses}`, media_url: "/api/v1/speech/tts/audio/audio", status: statuses[stats.syntheses - 1] ?? "pending" }; return deferred ? new Promise((resolve) => { stats.resolve = () => resolve(result); }) : Promise.resolve(result); },
-    getSpeechSynthesis: async () => ({ status: incomplete ? "uncertain" : "complete" }),
+    synthesizeSpeech: (_token, text, options, requestID, retry) => {
+      stats.syntheses++; stats.requests.push({ text, options, requestID, retry });
+      stats.inFlightSyntheses++; stats.maxConcurrentSyntheses = Math.max(stats.maxConcurrentSyntheses, stats.inFlightSyntheses);
+      const result = { id: `audio-${stats.syntheses}`, media_url: "/api/v1/speech/tts/audio/audio", status: statuses[stats.syntheses - 1] ?? "pending" };
+      const promise = stats.syntheses <= failTimes ? Promise.reject(new Error("failed")) : deferred ? new Promise((resolve) => { stats.resolve = () => resolve(result); }) : Promise.resolve(result);
+      return promise.finally(() => { stats.inFlightSyntheses--; });
+    },
+    getSpeechSynthesis: async () => {
+      const result = { status: settledStatuses[stats.syntheses - 1] ?? (incomplete ? "uncertain" : holdStream && !stats.streamComplete ? "pending" : "complete") };
+      return deferSettlement ? new Promise((resolve) => { stats.settle = () => resolve(result); }) : result;
+    },
     authedFetch: async () => {
       stats.reads++;
       if (stats.reads <= expiredReads) throw Object.assign(new Error("expired"), { status: 410 });
       let offset = 0; let index = 0;
       return new Response(new ReadableStream({
         pull(controller) {
-          if (offset >= audio.length) { controller.close(); return; }
+          if (offset >= audio.length) {
+            if (holdStream) return new Promise((resolve) => { stats.finishStream = () => { stats.streamComplete = true; controller.close(); resolve(); }; });
+            stats.streamComplete = true; controller.close(); return;
+          }
           const end = Math.min(audio.length, offset + (chunkSizes[index++] ?? audio.length));
           controller.enqueue(audio.subarray(offset, end)); offset = end;
         },
@@ -502,7 +578,7 @@ async function playbackSetup({ fail = false, failTimes = fail ? Infinity : 0, de
       }));
     },
   });
-  const config = { scope: "conversation", user: "user", token: "token", voice: "stella", enabled: true };
+  const config = { scope: "conversation", user: "user", token: "token", provider: "deepseek", voice: "stella", enabled: true };
   api.configureSpeechPlayback(config);
   return { api, stats, config };
 }
@@ -514,11 +590,11 @@ test("TTS synthesis identity is separate from playback: repeated play reuses one
   assert.equal(stats.syntheses, 1); assert.equal(stats.reads, 2); assert.deepEqual(errors, []);
   api.configureSpeechPlayback({ ...config, voice: "tide" }); await api.playSpeech("message", "Hello", (error) => errors.push(error));
   assert.equal(stats.syntheses, 2); assert.equal(stats.closed, stats.contexts);
-  assert.throws(() => api.splitSpeechText("汉".repeat(5001)), /tooLong/);
+  assert.throws(() => api.splitSpeechText("汉".repeat(50001)), /tooLong/);
 });
 
 test("TTS plays large transport chunks and fragmented streaming WAV headers without dropping audio or allocating large PCM buffers", async () => {
-  for (const chunkSizes of [[44 + 3 * 48000], [1, 7, 13, 22, 2, 144001]]) {
+  for (const chunkSizes of [[44 + 28 * 48000], [1, 7, 13, 22, 2, 144001]]) {
     const { api, stats } = await playbackSetup({ sampleCount: 28 * 24000, clockScale: 1000, chunkSizes, streamingHeader: true });
     const errors = [];
     await api.playSpeech("message", "Long audio", error => errors.push(error));
@@ -528,6 +604,116 @@ test("TTS plays large transport chunks and fragmented streaming WAV headers with
     assert.equal(stats.closed, stats.contexts);
     assert.equal(api.getSpeechPlaybackState().status, "idle");
   }
+});
+
+test("MiMo schedules streaming WAV audio while the synthesis job and media stream are still unfinished", async () => {
+  const { api, stats, config } = await playbackSetup({ holdStream: true, streamingHeader: true, chunkSizes: [7, 13, 24, 480] });
+  api.configureSpeechPlayback({ ...config, ...resolveSpeechPreferences(mimoCapability, {}), maxWeightedCharacters: 1200 });
+  let completed = false; const errors = [];
+  const playback = api.playSpeech("message", "现在就开始播放。", (reason) => errors.push(reason)).finally(() => { completed = true; });
+  try {
+    for (let attempt = 0; attempt < 100 && (!stats.starts || !stats.finishStream); attempt++) await new Promise((resolve) => setTimeout(resolve, 2));
+    assert.ok(stats.startsBeforeComplete > 0);
+    assert.equal(stats.streamComplete, false);
+    assert.equal(completed, false);
+    assert.equal(api.getSpeechPlaybackState().status, "playing");
+    assert.equal(stats.requests[0].options.provider, "mimo");
+    assert.equal(stats.requests[0].options.speed, "fast");
+  } finally { stats.finishStream?.(); await playback; }
+  assert.deepEqual(errors, []);
+  assert.equal(api.getSpeechPlaybackState().status, "idle");
+});
+
+test("TTS cache separates provider, scope, voice, speed and style but survives token rotation and repeated clicks", async () => {
+  const { api, stats, config } = await playbackSetup({ clockScale: 1000 });
+  const variants = [
+    config,
+    { ...config, provider: "mimo", voice: "冰糖", speed: "fast", style: "自然" },
+    { ...config, provider: "mimo", voice: "冰糖", speed: "normal", style: "自然" },
+    { ...config, provider: "mimo", voice: "冰糖", speed: "normal", style: "" },
+    { ...config, provider: "mimo", voice: "Mia", speed: "normal", style: "" },
+    { ...config, scope: "another-conversation" },
+  ];
+  for (const [index, variant] of variants.entries()) {
+    api.configureSpeechPlayback(variant);
+    await api.playSpeech("message", "Hello", assert.fail);
+    api.configureSpeechPlayback({ ...variant, token: "rotated-token" });
+    await api.playSpeech("message", "Hello", assert.fail);
+    assert.equal(stats.syntheses, index + 1);
+  }
+  api.configureSpeechPlayback({ ...config, user: "another-user" });
+  await api.playSpeech("message", "Hello", assert.fail);
+  assert.equal(stats.syntheses, variants.length + 1);
+});
+
+test("edited or regenerated reply text gets a new synthesis while unchanged spoken text reuses its cache", async () => {
+  const { api, stats } = await playbackSetup({ clockScale: 1000 });
+  await api.playSpeech("same-message", "原来的回复。", assert.fail);
+  await api.playSpeech("same-message", "**原来的回复。** [文档](https://example.test/old)", assert.fail);
+  await api.playSpeech("same-message", "**原来的回复。** [文档](https://example.test/new)", assert.fail);
+  assert.equal(stats.syntheses, 2);
+  await api.playSpeech("same-message", "编辑后的回复。", assert.fail);
+  await api.playSpeech("same-message", "重新生成的回复。", assert.fail);
+  await api.playSpeech("same-message", "重新生成的回复。", assert.fail);
+  assert.equal(stats.syntheses, 4);
+  assert.equal(stats.requests.at(-1).text, "重新生成的回复。");
+});
+
+test("reconciling edited text stops that message's old audio without reacting to other messages or equivalent markup", async () => {
+  const { api, stats } = await playbackSetup({ holdStream: true });
+  const pending = api.playSpeech("current-message", "当前回复。", assert.fail);
+  try {
+    for (let attempt = 0; attempt < 100 && (!stats.starts || !stats.finishStream); attempt++) await new Promise((resolve) => setTimeout(resolve, 2));
+    api.reconcileSpeechPlaybackMessage("other-message", "其他内容。", true);
+    api.stopSpeechPlaybackForMessage("other-message");
+    api.reconcileSpeechPlaybackMessage("current-message", "**当前回复。**");
+    assert.equal(stats.closed, 0);
+    api.reconcileSpeechPlaybackMessage("current-message", "编辑后的内容。");
+    assert.equal(stats.closed, 1); assert.equal(api.getSpeechPlaybackState().status, "idle");
+  } finally { stats.finishStream?.(); await pending; }
+});
+
+test("entering edit or regeneration stops a pending synthesis without reviving its late response", async () => {
+  for (const interrupt of [(api) => api.stopSpeechPlaybackForMessage("message"), (api) => api.reconcileSpeechPlaybackMessage("message", "旧回复。", true)]) {
+    const { api, stats } = await playbackSetup({ deferred: true });
+    const pending = api.playSpeech("message", "旧回复。", assert.fail);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    interrupt(api); stats.resolve(); await pending;
+    assert.equal(stats.reads, 0); assert.equal(stats.closed, 1);
+  }
+});
+
+test("changing synthesis controls cancels an active attempt while equivalent configuration and token refresh keep it active", async () => {
+  for (const change of [{ provider: "mimo" }, { voice: "tide" }, { speed: "fast" }, { style: "" }]) {
+    const { api, stats, config } = await playbackSetup({ deferred: true });
+    const pending = api.playSpeech("message", "Hello", assert.fail);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    api.configureSpeechPlayback({ ...config, token: "refreshed" });
+    assert.equal(stats.closed, 0);
+    api.configureSpeechPlayback({ ...config, ...change });
+    stats.resolve(); await pending;
+    assert.equal(stats.reads, 0); assert.equal(stats.closed, 1);
+  }
+});
+
+test("playback hook reacts to resolved controls without restarting for unrelated settings or capability refresh objects", async () => {
+  const runtime = hookRuntime(); const configurations = [];
+  let settings = {}; let capabilities = { selected_tts_provider: "mimo", tts: [mimoCapability] };
+  const { useChatSpeechPlayback } = await load("../features/chat/hooks/use-chat-speech-playback.ts", ["useChatSpeechPlayback"], {
+    React: runtime.React, getSelectedSpeechTTSCapability, resolveSpeechPreferences,
+    useOptionalAuthSession: () => ({ accessToken: "token", user: { publicID: "user" } }), useUserSettings: () => ({ settings }), useSpeechCapabilities: () => capabilities,
+    useTranslations: () => (value) => value, configureSpeechPlayback: (configuration) => configurations.push(configuration),
+    subscribeResponseCompletion: () => () => {}, stopSpeechPlayback() {},
+  });
+  try {
+    const render = () => runtime.render(() => useChatSpeechPlayback("conversation", "draft"));
+    render(); assert.equal(configurations.length, 1);
+    settings = { "other.setting": "changed" }; capabilities = { ...capabilities, tts: [{ ...mimoCapability }] };
+    render(); assert.equal(configurations.length, 1);
+    settings = { "chat.speech_preferences": JSON.stringify({ mimo: { speed: "normal", style: "" } }) };
+    render(); assert.equal(configurations.length, 2);
+    assert.equal(configurations[1].provider, "mimo"); assert.equal(configurations[1].speed, "normal"); assert.equal(configurations[1].style, "");
+  } finally { runtime.cleanup(); }
 });
 
 test("TTS failure does not automatically resynthesize and an incomplete stream is not successful", async () => {
@@ -604,9 +790,87 @@ test("expired metadata and a 410 media response allow a bounded fresh synthesis 
   assert.equal(stillGone.stats.syntheses, 2); assert.equal(stillGone.stats.reads, 2);
 });
 
+test("a complete cached stream expiring after playback remains successful and the next manual click creates a fresh attempt", async () => {
+  const { api, stats } = await playbackSetup({ statuses: ["complete", "pending"], settledStatuses: ["expired", "complete"], clockScale: 1000 });
+  await api.playSpeech("message", "Hello", assert.fail, { manual: true });
+  assert.equal(api.getSpeechPlaybackState().status, "idle");
+  await api.playSpeech("message", "Hello", assert.fail, { manual: true });
+  assert.equal(stats.syntheses, 2); assert.equal(stats.reads, 2);
+  assert.notEqual(stats.requests[0].requestID, stats.requests[1].requestID); assert.equal(stats.requests[1].retry, false);
+  const unfinished = await playbackSetup({ statuses: ["pending"], settledStatuses: ["expired"] }); const errors = [];
+  await unfinished.api.playSpeech("message", "Hello", (error) => errors.push(error));
+  assert.equal(unfinished.api.getSpeechPlaybackState().status, "error"); assert.deepEqual(errors, ["failed"]);
+});
+
 test("long mixed-language splitting preserves every character and the per-part weighted budget", async () => {
   const { api } = await playbackSetup(); const text = `${"中文 words! ".repeat(400)}Tail.`;
   const parts = api.splitSpeechText(text);
   assert.equal(parts.join(""), text.replace(/\s+/g, " ").trim());
   for (const part of parts) assert.ok([...part].reduce((sum, character) => sum + (/\p{Script=Han}/u.test(character) ? 2 : 1), 0) <= 1800);
+});
+
+test("MiMo segmentation preserves long English, Chinese and mixed text within selected weight and UTF-8 budgets", async () => {
+  const { api } = await playbackSetup();
+  const encoder = new TextEncoder();
+  for (const text of ["abcdefghij".repeat(950), "中文".repeat(2000), "中文 words 😀! ".repeat(500)]) {
+    const parts = api.splitSpeechText(text, { maxWeightedCharacters: 1200, maxTextBytes: 2000 });
+    assert.ok(parts.length > 1);
+    assert.equal(parts.join(""), text.replace(/\s+/g, " ").trim());
+    for (const part of parts) {
+      assert.ok([...part].reduce((sum, character) => sum + (/\p{Script=Han}/u.test(character) ? 2 : 1), 0) <= 1200);
+      assert.ok(encoder.encode(part).length <= 2000);
+    }
+  }
+  assert.equal(api.splitSpeechText("   ").length, 0);
+  assert.equal(api.splitSpeechText("English", { maxWeightedCharacters: 0, maxTextBytes: Number.NaN }).join(""), "English");
+  assert.equal(api.splitSpeechText("abc", { maxWeightedCharacters: 1, maxTextBytes: 1 }).length, 3);
+  assert.throws(() => api.splitSpeechText("汉", { maxWeightedCharacters: 1 }), /tooLong/);
+  assert.throws(() => api.splitSpeechText("😀", { maxTextBytes: 3 }), /tooLong/);
+});
+
+test("30,000 Chinese characters and long mixed Markdown split without truncation, overlap or lost normalized prose", async () => {
+  const { api } = await playbackSetup();
+  const chinese = Array.from({ length: 50 }, (_, index) => String.fromCodePoint(0x4e00 + index).repeat(600)).join("");
+  const mixed = `${"正文 English 12.5 cm, 50%.\n```mermaid\ngraph LR; A-->B\n```\n公式 $x^2$。继续说明。\n".repeat(700)}终点。`;
+  for (const text of [chinese, mixed]) {
+    const normalized = normalizeSpeechContent(text);
+    assert.ok([...normalized].length >= 30000);
+    const parts = api.splitSpeechText(text, { maxWeightedCharacters: 1200, maxTextBytes: 4096 });
+    assert.ok(parts.length >= 50);
+    assert.equal(parts.join(""), normalized);
+    assert.ok(parts.every((part) => [...part].reduce((sum, character) => sum + (/\p{Script=Han}/u.test(character) ? 2 : 1), 0) <= 1200));
+    assert.ok(parts.every((part) => new TextEncoder().encode(part).length <= 4096));
+  }
+  assert.throws(() => api.splitSpeechText("x".repeat(100001)), /tooLong/);
+  assert.throws(() => api.splitSpeechText("😀".repeat(65537)), /tooLong/);
+});
+
+test("30,000 Chinese characters play all 50 segments sequentially and replay from the existing synthesis cache", async () => {
+  const { api, stats, config } = await playbackSetup({ clockScale: 100000 });
+  const text = Array.from({ length: 50 }, (_, index) => String.fromCodePoint(0x4e00 + index).repeat(600)).join("");
+  api.configureSpeechPlayback({ ...config, ...resolveSpeechPreferences(mimoCapability, {}), maxWeightedCharacters: 1200, maxTextBytes: 4096 });
+  await api.playSpeech("long-message", text, assert.fail, { manual: true });
+  assert.equal(stats.syntheses, 50); assert.equal(stats.reads, 50);
+  assert.equal(stats.requests.map((request) => request.text).join(""), text);
+  assert.equal(stats.maxConcurrentSyntheses, 1);
+  assert.equal(api.getSpeechPlaybackState().status, "idle");
+  await api.playSpeech("long-message", text, assert.fail, { manual: true });
+  assert.equal(stats.syntheses, 50); assert.equal(stats.reads, 100);
+  assert.ok(stats.maxBufferSamples <= 4800); assert.ok(stats.maxAhead <= 0.5);
+});
+
+test("stopping a long reply during audio or metadata settlement never synthesizes a later segment", async () => {
+  for (const waiting of ["audio", "metadata"]) {
+    const { api, stats, config } = await playbackSetup({ holdStream: waiting === "audio", deferSettlement: waiting === "metadata", clockScale: 1000 });
+    api.configureSpeechPlayback({ ...config, maxWeightedCharacters: 1200 });
+    const pending = api.playSpeech("long-message", `${"汉".repeat(600)}${"字".repeat(600)}`, assert.fail);
+    for (let attempt = 0; attempt < 200 && !(waiting === "audio" ? stats.finishStream : stats.settle); attempt++) await new Promise((resolve) => setTimeout(resolve, 2));
+    assert.equal(stats.syntheses, 1);
+    api.stopSpeechPlayback();
+    if (waiting === "audio") { assert.ok(stats.finishStream); stats.finishStream(); }
+    else { assert.ok(stats.settle); stats.settle(); }
+    await pending;
+    assert.equal(stats.syntheses, 1); assert.equal(stats.reads, 1);
+    assert.equal(api.getSpeechPlaybackState().status, "idle");
+  }
 });

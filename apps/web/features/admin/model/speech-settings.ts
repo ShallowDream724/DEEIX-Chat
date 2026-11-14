@@ -8,12 +8,12 @@ export type SpeechSettingsField = {
   type: SettingsFieldType;
   defaultValue: string;
   group: SpeechSettingsGroup;
-  subgroupKey?: SpeechRole;
+  subgroupKey?: SpeechRole | "mimo";
 };
 
 const DEFAULT_DEEPSEEK_URL = "https://api.deepseek.com";
 export const SPEECH_INPUT_PROVIDERS = ["browser", "doubao-ime", "wetype", "deepseek"] as const;
-export const SPEECH_OUTPUT_PROVIDERS = ["deepseek"] as const;
+export const SPEECH_OUTPUT_PROVIDERS = ["deepseek", "mimo"] as const;
 
 export const SPEECH_SETTINGS_FIELDS: readonly SpeechSettingsField[] = [
   { key: "input_provider", type: "select", defaultValue: "browser", group: "input" },
@@ -27,6 +27,8 @@ export const SPEECH_SETTINGS_FIELDS: readonly SpeechSettingsField[] = [
   { key: "deepseek_tts_credentials_source", type: "select", defaultValue: "own", group: "output", subgroupKey: "tts" },
   { key: "deepseek_tts_base_url", type: "string", defaultValue: DEFAULT_DEEPSEEK_URL, group: "output", subgroupKey: "tts" },
   { key: "deepseek_tts_api_key", type: "password", defaultValue: "", group: "output", subgroupKey: "tts" },
+  { key: "mimo_base_url", type: "string", defaultValue: "https://api.xiaomimimo.com/v1", group: "output", subgroupKey: "mimo" },
+  { key: "mimo_api_key", type: "password", defaultValue: "", group: "output", subgroupKey: "mimo" },
   { key: "charge_asr", type: "bool", defaultValue: "false", group: "pricing" },
   { key: "asr_cny_per_hour", type: "string", defaultValue: "0.39", group: "pricing" },
   { key: "charge_tts", type: "bool", defaultValue: "false", group: "pricing" },
@@ -77,7 +79,8 @@ export function changeSpeechSetting(
 ): Record<string, string> {
   const next = { ...values, [key]: value };
   const role: SpeechRole | undefined = key === "input_provider" && value === "deepseek" && values.input_provider !== value ? "asr"
-    : key === "deepseek_tts_enabled" && value === "true" && values.deepseek_tts_enabled !== value ? "tts" : undefined;
+    : next.tts_provider === "deepseek" && next.deepseek_tts_enabled === "true"
+      && (key === "deepseek_tts_enabled" && values.deepseek_tts_enabled !== value || key === "tts_provider" && values.tts_provider !== value) ? "tts" : undefined;
   if (!role) return next;
   const sourceKey = speechCredentialsSourceKey(role);
   const explicitlyConfigured = explicitSources.has(sourceKey);
@@ -89,6 +92,7 @@ export function changeSpeechSetting(
 }
 
 export function isSpeechSettingsFieldVisible(key: string, values: Record<string, string>): boolean {
+  if (key === "mimo_base_url" || key === "mimo_api_key") return values.deepseek_tts_enabled === "true" && values.tts_provider === "mimo";
   for (const role of ["asr", "tts"] as const) {
     if (key === speechCredentialsSourceKey(role) || key === `deepseek_${role}_base_url` || key === `deepseek_${role}_api_key`) {
       const enabled = role === "asr" ? values.input_provider === "deepseek" : values.deepseek_tts_enabled === "true" && values.tts_provider === "deepseek";
@@ -104,7 +108,7 @@ export function isSpeechSettingsFieldVisible(key: string, values: Record<string,
 export function speechSettingsMissingConnectionFields(values: Record<string, string>, items: readonly SettingItem[]): ReadonlySet<string> {
   const missing = new Set<string>();
   for (const role of ["asr", "tts"] as const) {
-    const active = role === "asr" ? values.input_provider === "deepseek" : values.deepseek_tts_enabled === "true";
+    const active = role === "asr" ? values.input_provider === "deepseek" : values.deepseek_tts_enabled === "true" && values.tts_provider === "deepseek";
     if (!active) continue;
     const sourceKey = speechCredentialsSourceKey(role);
     if (values[sourceKey] !== "own") {
@@ -113,6 +117,10 @@ export function speechSettingsMissingConnectionFields(values: Record<string, str
       if (!validSpeechBaseURL(values[`deepseek_${role}_base_url`] ?? "")) missing.add(`deepseek_${role}_base_url`);
       if (!hasOwnSpeechKey(role, values, items)) missing.add(`deepseek_${role}_api_key`);
     }
+  }
+  if (values.deepseek_tts_enabled === "true" && values.tts_provider === "mimo") {
+    if (!validSpeechBaseURL(values.mimo_base_url ?? "")) missing.add("mimo_base_url");
+    if (!values.mimo_api_key?.trim() && !items.some((item) => item.key === "mimo_api_key" && item.configured)) missing.add("mimo_api_key");
   }
   return missing;
 }
@@ -140,7 +148,7 @@ export function buildSpeechSettingsGroupSave(
   const peer = peerRole(role);
   // A new reference may need the peer's connection in the same transaction,
   // while its enable switch and other unsaved fields remain local drafts.
-  if (effective[speechCredentialsSourceKey(role)] === peer && !canReuseSpeechConnection(role, effective, items)) {
+  if ((role === "asr" || effective.tts_provider === "deepseek") && effective[speechCredentialsSourceKey(role)] === peer && !canReuseSpeechConnection(role, effective, items)) {
     const dependencyKeys = new Set(SPEECH_SETTINGS_FIELDS.filter((field) => field.subgroupKey === peer).map((field) => field.key));
     for (const patch of dirty.filter((item) => dependencyKeys.has(item.key))) {
       patches.push(patch);

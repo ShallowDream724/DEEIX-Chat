@@ -33,10 +33,17 @@ func newSpeechModule(runtime *config.Runtime, billingService *billing.Service) (
 			if strings.TrimSpace(asrKey) != "" {
 				roles.ASR = infraspeech.NewDeepSeek(infraspeech.ProviderConfig{BaseURL: asrURL, APIKey: asrKey}, client)
 			}
-			if cfg.DeepSeekTTSEnabled && (cfg.TTSProvider == "" || cfg.TTSProvider == "deepseek") && strings.TrimSpace(ttsKey) != "" {
+			if cfg.TTSEnabled && (cfg.TTSProvider == "" || cfg.TTSProvider == "deepseek") && strings.TrimSpace(ttsKey) != "" {
 				roles.TTS = infraspeech.NewDeepSeek(infraspeech.ProviderConfig{BaseURL: ttsURL, APIKey: ttsKey}, client)
 			}
 			return roles, roles.ASR != nil, roles.TTS != nil
+		}},
+		"mimo": &infraspeech.DynamicProvider{ResolveSnapshot: func() (domainspeech.Provider, bool, bool) {
+			cfg := runtime.Snapshot().Speech
+			if !cfg.TTSEnabled || cfg.TTSProvider != "mimo" || strings.TrimSpace(cfg.MiMoAPIKey) == "" {
+				return nil, false, false
+			}
+			return infraspeech.NewMiMo(infraspeech.ProviderConfig{BaseURL: cfg.MiMoBaseURL, APIKey: cfg.MiMoAPIKey}, client), false, true
 		}},
 		"doubao-ime": &infraspeech.DynamicProvider{ResolveSnapshot: func() (domainspeech.Provider, bool, bool) {
 			return doubao, true, false
@@ -49,7 +56,7 @@ func newSpeechModule(runtime *config.Runtime, billingService *billing.Service) (
 	service := appspeech.NewService(func() appspeech.Config {
 		cfg := runtime.Snapshot().Speech
 		store.Configure(cfg.CacheMaxBytes, time.Duration(cfg.CacheTTLHours)*time.Hour)
-		return appspeech.Config{SelectedInputProvider: cfg.InputProvider, MaxRecordingSeconds: cfg.MaxRecordingSeconds, MaxConcurrentPerUser: cfg.MaxConcurrentPerUser, MaxConcurrent: 32, MaxAudioBytes: 8 << 20}
+		return appspeech.Config{SelectedInputProvider: cfg.InputProvider, SelectedTTSProvider: cfg.TTSProvider, MaxRecordingSeconds: cfg.MaxRecordingSeconds, MaxConcurrentPerUser: cfg.MaxConcurrentPerUser, MaxConcurrent: 32, MaxAudioBytes: 8 << 20}
 	}, providers, accounting, accounting, store)
 	handler := speechhttp.NewHandler(service, func() []string {
 		return strings.Split(runtime.Snapshot().CORSAllowOrigin, ",")

@@ -9,7 +9,8 @@
 - `selected_input_provider`：管理员统一选择的 `browser`、`doubao-ime`、`wetype` 或 `deepseek`，默认 `browser`。
 - `max_recording_duration_ms`：当前所选渠道的有效单段录音上限，浏览器识别也使用此值。
 - `asr[]`：`id,name,streaming,formats,sample_rate,max_duration_ms,max_bytes`。仅返回当前所选渠道可用的能力；浏览器识别由端侧执行。
-- `tts[]`：`id,name,formats,voices:[{id,name}],max_weighted_characters,max_text_bytes`。
+- `selected_tts_provider`：管理员选择的朗读渠道，升级默认保持 `deepseek`，支持 `mimo`。
+- `tts[]`：仅返回当前已启用且配置有效的朗读渠道，字段包含 `id,name,streaming,formats,voices:[{id,name}],default_voice,max_weighted_characters,max_text_bytes`；支持速度与风格的渠道另提供 `speeds:[{id,name}],default_speed,supports_style,default_style,max_style_characters`。
 
 每个 ASR 渠道的有效录音上限取本站上限与已确认上游硬上限的较小值。DeepSeek 完整文件 ASR 最长 120 秒、8 MiB；不提供原生流式识别。豆包、微信输入法的录音总长硬上限尚未由官方保证；当前仅声明本站上限，握手、收包与定稿超时不作为录音总长。
 
@@ -42,12 +43,22 @@ WS 输入队列 32 包、服务层转交队列 16 包、微信上传 batch 最�
 
 `voice` 为海星 `stella` 或暗潮 `tide`，HTTP 格式为 `wav` 或 `pcm`，默认 WAV。输入最多 10,000 个加权字符（汉字 2、其他字符 1），实际供应商 JSON 请求体不超过 64 KiB。输出限制为 24 kHz、16 位、单声道的最长 30 分钟音频。DeepSeek HTTP 接口接收整段正文并流式返回音频。
 
+MiMo 示例：
+
+```json
+{"provider":"mimo","text":"你好，Hello。","voice":"冰糖","speed":"fast","format":"wav","request_id":"stable-mimo-attempt-id"}
+```
+
+音色与速度严格按渠道能力列表校验，省略时使用渠道默认值。可传 `style` 自定义朗读风格，省略继承默认，显式空字符串取消个人风格指令；最多 500 个 Unicode 字符。MiMo 本站单请求限制为 1,200 加权字符和 16 KiB 文本。上游采用 `/v1/chat/completions`、`model=mimo-v2.5-tts`、`stream=true`、`audio.format=pcm16`，正文放在 assistant 消息、风格和速度放在 user 消息；只发送本段文本和指令。解析 SSE `choices[].delta.audio.data` 为 24 kHz PCM16 单声道，转换为未知长度 WAV 头加逐块 PCM，未完整生成即可播放。适配器不缓存整段 Base64 或整段解码音频，单 SSE 事件最多 1 MiB。
+
+只有成功 `finish_reason=stop` 且收到有效音频、正常结束的响应才能完成；截断、`length`、`content_filter`、错误事件与坏音频均不写成功缓存。上游响应 ID 与可选 `usage`（输入、输出、总 tokens）记录在语音操作元数据 `upstream_request_id` / `upstream_usage` 中。`usage=null` 保持缺失，不虚构为零；这些字段不代替站内加权字符计费。
+
 响应 `{id,status,media_url,cache_hit}`。`GET /api/v1/speech/tts/:id` 查询同样结构；`GET /api/v1/speech/tts/:id/audio` 通过普通身份认证后，以固定 32 KiB 缓冲读取正在增长的音频文件，首块无需等待整段生成结束。PCM 返回 `audio/L16;rate=24000;channels=1`。WAV 允许 RIFF/data 长度为 `FFFFFFFF` 的流式头，播放端按 HTTP 音频流处理。音频流 EOF 后再查询状态，只有 `complete` 可以视为完整可复用结果。
 
 状态为 `pending`、`complete`、`uncertain`、`expired`、`cancelled`：
 
-- 缓存键包含用户、规范化文本、供应商、实际连接身份摘要、音色、格式与版本；有效完整缓存与并发进行中的结果合并。连接摘要由实际地址与 Key 得到，不在缓存键保存明文密钥；切换独立朗读连接不复用另一连接的内容缓存。
-- `request_id` 表示生成尝试身份，必须非空且最多 128 字节。同一身份重放返回相同结果；同身份更换正文/音色/格式返回冲突。暂停、继续、重播只读取返回的结果 ID。
+- 缓存键包含用户、规范化文本、供应商、实际连接身份摘要、音色、速度、风格、格式与版本；有效完整缓存与并发进行中的结果合并。连接摘要由实际地址、Key、模型及指令版本得到，不在缓存键保存明文密钥；切换连接或朗读参数不误复用其他结果。
+- `request_id` 表示生成尝试身份，必须非空且最多 128 字节。同一身份重放返回相同结果；同身份更换正文、音色、速度、风格或格式返回冲突。暂停、继续、重播只读取返回的结果 ID。
 - 内容缓存键与收费操作 ID 独立。已确认成功的音频过期后，新 `request_id` 可以产生新的操作；旧请求重放仍返回 `expired`，不会静默重新收费。
 - `uncertain` 表示上游已受理后失败、连接结果不明或结算需核对；不自动重试。明确用户重试需要新的 `request_id` 和 `retry:true`。旧请求仍指向原结果。
 - 部分失败音频删除，不进入成功缓存。持久 pending 在进程重启后恢复为 uncertain，防止重启触发重复合成。
@@ -58,7 +69,7 @@ WS 输入队列 32 包、服务层转交队列 16 包、微信上传 batch 最�
 
 `charge_asr`、`charge_tts` 默认关闭：仍记录实际语音用量，冻结的有效收费价格为零。开启后，所有服务器 ASR 渠道按 `asr_cny_per_hour` 折算秒粒度费用，TTS 按 `tts_cny_per_10000_characters` 计费；后续调价或开关变化不重算已有票据。DeepSeek 语音输入和朗读各自解析所选连接，允许复用另一项或使用独立地址与密钥。保存时校验有效连接和引用关系，缺少密钥定位到对应字段；空密钥保存保留旧值，显式清除正在使用的密钥需同时处理其消费方，不回退聊天供应商凭据。请求开始时解析为固定快照，配置变化不改变已受理操作。
 
-持久音频库具有共享字节配额与 TTL；并发 writer 在每次写入时共同预留实际字节。目录启动时扫描一次，后续 GC 最多每五分钟扫描一次。元数据与索引最多 10,000 条，已完成/已取消记录和索引保留最多 30 天；待核对记录不静默删除，达到上限时拒绝新受理。音频过期与计费待核对记录分开处理。目录由操作系统独占锁保护，不能同时由两个进程管理相同文件库；进程退出后系统释放锁。
+持久音频库默认保留 6 小时、全站共享 256 MiB 配额；并发 writer 在每次写入时共同预留实际字节。容量不足先回收过期及未占用的旧完整音频，正在写入或读取的文件通过引用计数保护。目录启动时建立轻量索引，后续定期清理空闲缓存，音频块写入不扫描全部 JSON 文件。元数据与索引最多 10,000 条，已完成/已取消记录和索引按独立 30 天规则回收；待核对记录不静默删除，达到上限时拒绝新受理。仍有受保护音频时保留其记录，避免孤立文件。删除音频不会把旧请求 ID 当成新请求，缺少文件的完成记录表现为 expired。目录由操作系统独占锁保护，不能同时由两个进程管理相同文件库；关闭时停止清理任务并释放句柄和目录锁。
 
 `Service.Close()` 停止接纳新调用，取消活动任务和流式会话，释放未使用会话预留，等待活动资源回收后关闭持久目录锁。录音身份按用户存储，音频连接按会话创建；设备身份被上游拒绝时保留拒绝，不更换身份绕过限制重试。
 

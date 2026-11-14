@@ -5,11 +5,12 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { getServerSpeechPlaybackState, getSpeechPlaybackState, isSpeechPlaybackAvailable, playSpeech, subscribeSpeechPlayback } from "@/features/chat/lib/speech-playback";
+import { getServerSpeechPlaybackState, getSpeechPlaybackState, isSpeechPlaybackAvailable, playSpeech, reconcileSpeechPlaybackMessage, subscribeSpeechPlayback } from "@/features/chat/lib/speech-playback";
 
 export function SpeechPlaybackButton({ messageID, text, disabled }: { messageID: string; text: string; disabled: boolean }) {
   const t = useTranslations("chat.speech");
   const state = React.useSyncExternalStore(subscribeSpeechPlayback, getSpeechPlaybackState, getServerSpeechPlaybackState);
+  React.useLayoutEffect(() => { reconcileSpeechPlaybackMessage(messageID, text, disabled); }, [messageID, text, disabled]);
   const status = state.messageID === messageID ? state.status : "idle";
   if (!isSpeechPlaybackAvailable()) return null;
   const label = status === "playing" ? t("pause") : status === "paused" ? t("resume") : status === "error" ? t("retry") : t("play");

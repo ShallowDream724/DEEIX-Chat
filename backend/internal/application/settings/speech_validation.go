@@ -30,8 +30,15 @@ func (s *Service) validateSpeechConfiguration(ctx context.Context, patches []Pat
 		return invalid("deepseek_tts_credentials_source", "cyclic_reference")
 	}
 	legacy := asrSource == "" && ttsSource == "" && value("deepseek_asr_api_key") == "" && value("deepseek_tts_api_key") == ""
+	ttsProvider := value("tts_provider")
+	if ttsProvider == "" {
+		ttsProvider = "deepseek"
+	}
+	if value("deepseek_tts_enabled") == "true" && ttsProvider == "mimo" && strings.TrimSpace(value("mimo_api_key")) == "" {
+		return invalid("mimo_api_key", "required")
+	}
 	for _, role := range []string{"asr", "tts"} {
-		enabled := role == "asr" && value("input_provider") == "deepseek" || role == "tts" && value("deepseek_tts_enabled") == "true"
+		enabled := role == "asr" && value("input_provider") == "deepseek" || role == "tts" && value("deepseek_tts_enabled") == "true" && ttsProvider == "deepseek"
 		if !enabled {
 			continue
 		}

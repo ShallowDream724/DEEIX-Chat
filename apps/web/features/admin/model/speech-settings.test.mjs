@@ -182,3 +182,46 @@ test("a newer edit survives a response for an earlier submitted value", () => {
   const nextSaved = { ...saved, max_recording_seconds: "180" };
   assert.equal(mergeSpeechSettingsDraft(current, saved, submitted, nextSaved).max_recording_seconds, "240");
 });
+
+test("MiMo uses an independent connection and preserves the DeepSeek provider default", () => {
+  const defaults = flattenSpeechSettings([]);
+  assert.equal(defaults.tts_provider, "deepseek");
+  assert.equal(defaults.mimo_base_url, "https://api.xiaomimimo.com/v1");
+  assert.equal(flattenSpeechSettings([{ key: "tts_provider", value: "mimo" }]).tts_provider, "mimo");
+  const values = { ...defaults, tts_provider: "mimo", input_provider: "deepseek", deepseek_asr_api_key: "asr-key", deepseek_tts_api_key: "tts-key" };
+  const enabled = changeSpeechSetting(values, "deepseek_tts_enabled", "true", []);
+  assert.equal(enabled.deepseek_tts_credentials_source, "own");
+  assert.equal(isSpeechSettingsFieldVisible("mimo_api_key", values), false);
+  assert.equal(isSpeechSettingsFieldVisible("mimo_api_key", enabled), true);
+  assert.equal(isSpeechSettingsFieldVisible("deepseek_tts_api_key", enabled), false);
+  assert.deepEqual([...speechSettingsMissingConnectionFields(enabled, [])], ["mimo_api_key"]);
+  assert.equal(speechSettingsMissingConnectionFields(enabled, [{ key: "mimo_api_key", configured: true }]).size, 0);
+  const invalidURL = { ...enabled, mimo_api_key: "mimo-key", mimo_base_url: "https://name:secret@example.test" };
+  assert.deepEqual([...speechSettingsMissingConnectionFields(invalidURL, [])], ["mimo_base_url"]);
+});
+
+test("saving MiMo output leaves input credentials and pricing drafts independent", () => {
+  const saved = flattenSpeechSettings([]);
+  const current = {
+    ...saved, tts_provider: "mimo", deepseek_tts_enabled: "true", mimo_api_key: "mimo-key",
+    deepseek_tts_credentials_source: "asr", input_provider: "deepseek", deepseek_asr_api_key: "asr-draft", charge_tts: "true",
+  };
+  const plan = buildSpeechSettingsGroupSave(current, saved, [], "output");
+  assert.equal(plan.missingConnectionFields.size, 0);
+  assert.deepEqual(plan.patches.map((patch) => patch.key), ["tts_provider", "deepseek_tts_enabled", "deepseek_tts_credentials_source", "mimo_api_key"]);
+  const nextSaved = { ...saved, ...Object.fromEntries(plan.patches.map((patch) => [patch.key, patch.value])), mimo_api_key: "" };
+  const merged = mergeSpeechSettingsDraft(current, saved, plan.patches, nextSaved);
+  assert.equal(merged.mimo_api_key, "");
+  assert.equal(merged.deepseek_asr_api_key, "asr-draft");
+  assert.equal(merged.charge_tts, "true");
+  assert.deepEqual(buildSpeechSettingsPatch(merged, nextSaved).map((patch) => patch.key), ["input_provider", "deepseek_asr_api_key", "charge_tts"]);
+});
+
+test("DeepSeek input references remain atomic when MiMo is the selected output", () => {
+  const saved = flattenSpeechSettings([{ key: "tts_provider", value: "mimo" }]);
+  const current = { ...saved, input_provider: "deepseek", deepseek_asr_credentials_source: "tts", deepseek_tts_api_key: "deepseek-key", mimo_api_key: "mimo-draft" };
+  const plan = buildSpeechSettingsGroupSave(current, saved, [], "input");
+  assert.equal(plan.missingConnectionFields.size, 0);
+  assert.deepEqual(plan.patches.map((patch) => patch.key), ["input_provider", "deepseek_asr_credentials_source", "deepseek_tts_api_key"]);
+  assert.equal(plan.patches.some((patch) => patch.key === "mimo_api_key"), false);
+});

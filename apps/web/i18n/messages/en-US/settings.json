@@ -358,6 +358,10 @@
       "autoReadDescription": "Read new replies aloud when they finish.",
       "voiceTitle": "Reading voice",
       "voiceDescription": "Choose the voice used to read replies aloud.",
+      "speedTitle": "Reading speed",
+      "speeds": { "slow": "Slower", "normal": "Standard", "fast": "Faster" },
+      "styleTitle": "Reading style",
+      "restoreDefault": "Restore default",
       "stella": "Stella",
       "tide": "Tide"
     },

@@ -102,6 +102,9 @@ func (s *Service) Seed(ctx context.Context) error {
 	if err := s.migrateSpeechRoleConnections(ctx, existing); err != nil {
 		return err
 	}
+	if err := s.migrateSpeechCacheRetention(ctx, existing); err != nil {
+		return err
+	}
 	// Reload migrated values before seeding so defaults cannot overwrite the
 	// explicit legacy conversion.
 	existing, err = s.repo.ListAll(ctx)

@@ -30,11 +30,11 @@ export function AdminSpeechPage() {
   const disabled = settings.loading || settings.saving || Boolean(settings.error);
   const groups = GROUPS.map((group) => ({ group, blocks: fieldBlocks(SPEECH_SETTINGS_FIELDS.filter((field) => {
     if (field.group !== group || !isSpeechSettingsFieldVisible(field.key, settings.values)) return false;
-    return !field.key.endsWith("_credentials_source") || !field.subgroupKey || speechCredentialsSourceOptions(field.subgroupKey, settings.values, settings.items).length > 1;
+    return !field.key.endsWith("_credentials_source") || !field.subgroupKey || field.subgroupKey === "mimo" || speechCredentialsSourceOptions(field.subgroupKey, settings.values, settings.items).length > 1;
   })) })).filter(({ blocks }) => blocks.length > 0);
 
   const renderEditor = (field: SpeechSettingsField) => {
-    const credentialSource = field.key.endsWith("_credentials_source") && field.subgroupKey;
+    const credentialSource = field.key.endsWith("_credentials_source") && field.subgroupKey !== "mimo" && field.subgroupKey;
     const providerOptions = field.key === "input_provider" ? SPEECH_INPUT_PROVIDERS : field.key === "tts_provider" ? SPEECH_OUTPUT_PROVIDERS : undefined;
     const options = credentialSource
       ? speechCredentialsSourceOptions(credentialSource, settings.values, settings.items).map((value) => ({ value, label: t(`connectionSources.${value}`) }))

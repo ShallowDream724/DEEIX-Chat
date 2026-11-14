@@ -38,6 +38,7 @@ var allowedKeys = map[string]string{
 	"chat.model_control_placements":             "{}",
 	"chat.auto_read_replies":                    "false",
 	"chat.speech_voice":                         "stella",
+	"chat.speech_preferences":                   "{}",
 }
 
 // boolKeys 取值只能是 "true" / "false"。
@@ -71,6 +72,9 @@ var enumKeys = map[string]map[string]bool{
 
 // validateValue 校验 key 对应 value 的合法性。
 func validateValue(key, value string) error {
+	if key == "chat.speech_preferences" {
+		return validateSpeechPreferences(value)
+	}
 	if key == "chat.speech_voice" {
 		if len(value) == 0 || len(value) > 80 {
 			return settingValidationError(ErrInvalidSettingValue, "invalid speech voice")

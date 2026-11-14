@@ -1,23 +1,25 @@
 import { authedFetch } from "@/shared/api/authed-client";
-import { getSpeechSynthesis, synthesizeSpeech, type SpeechSynthesis } from "@/shared/api/speech";
+import { getSpeechSynthesis, synthesizeSpeech, type SpeechSynthesis, type SpeechSynthesisOptions } from "@/shared/api/speech";
 import { beginPlaybackActivity, isRecordingActive } from "@/shared/lib/media-activity";
 import { createMediaSpectrum } from "@/shared/lib/media-spectrum";
+import { normalizeSpeechContent } from "@/features/chat/lib/speech-text";
 
 export type SpeechPlaybackState = { messageID: string; status: "idle" | "loading" | "playing" | "paused" | "error" };
+export type SpeechPlaybackConfig = SpeechSynthesisOptions & { scope: string; user: string; token: string; enabled: boolean; maxWeightedCharacters?: number; maxTextBytes?: number };
 const idle: SpeechPlaybackState = { messageID: "", status: "idle" };
 let state = idle;
 const listeners = new Set<() => void>();
 type SynthesisEntry = { requestID: string; retry: boolean; pending?: Promise<SpeechSynthesis>; result?: SpeechSynthesis; error?: unknown };
 const cache = new Map<string, SynthesisEntry>();
-let config = { scope: "", user: "", token: "", voice: "stella", enabled: false };
-let active: { controller: AbortController; context: AudioContext; identity: string; duration: number; resume: () => void; activity?: ReturnType<typeof beginPlaybackActivity> } | null = null;
+let config: SpeechPlaybackConfig = { scope: "", user: "", token: "", provider: "", voice: "", enabled: false };
+let active: { controller: AbortController; context: AudioContext; identity: string; text: string; resume: () => void; activity?: ReturnType<typeof beginPlaybackActivity> } | null = null;
 export function subscribeSpeechPlayback(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }
 export function getSpeechPlaybackState() { return state; }
 export function getServerSpeechPlaybackState() { return idle; }
 export function isSpeechPlaybackAvailable() { return config.enabled; }
 function update(next: SpeechPlaybackState) { state = next; for (const listener of listeners) listener(); }
 export function configureSpeechPlayback(next: typeof config) {
-  if ((config.enabled && !next.enabled) || config.scope !== next.scope || config.user !== next.user) stopSpeechPlayback();
+  if ((config.enabled && !next.enabled) || !next.token || config.scope !== next.scope || config.user !== next.user || controlsKey(config) !== controlsKey(next) || config.maxWeightedCharacters !== next.maxWeightedCharacters || config.maxTextBytes !== next.maxTextBytes) stopSpeechPlayback();
   if (config.user !== next.user) cache.clear();
   config = next;
   update({ ...state });
@@ -28,31 +30,48 @@ export function stopSpeechPlayback() {
   update(idle);
 }
 export function normalizeSpeechText(text: string) {
-  return text.replace(/```[\s\S]*?```/g, " ").replace(/!\[[^\]]*\]\([^)]*\)/g, " ").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1").replace(/<[^>]+>/g, " ").replace(/^\s{0,3}#{1,6}\s+/gm, "").replace(/[*_`~]/g, "").replace(/\s+/g, " ").trim();
+  return normalizeSpeechContent(text);
 }
-export function splitSpeechText(text: string) {
+export function stopSpeechPlaybackForMessage(messageID: string) { if (state.messageID === messageID) stopSpeechPlayback(); }
+export function reconcileSpeechPlaybackMessage(messageID: string, text: string, disabled = false) {
+  if (state.messageID === messageID && active && (disabled || active.text !== normalizeSpeechText(text))) stopSpeechPlayback();
+}
+export function splitSpeechText(text: string, limits: { maxWeightedCharacters?: number; maxTextBytes?: number } = {}) {
   const normalized = normalizeSpeechText(text);
-  const weight = (character: string) => /\p{Script=Han}/u.test(character) ? 2 : 1;
   if (!normalized) return [];
-  let totalWeight = 0;
-  for (const character of normalized) { totalWeight += weight(character); if (totalWeight > 10000) throw new Error("tooLong"); }
-  if (new TextEncoder().encode(normalized).length > 65536) throw new Error("tooLong");
+  const budget = (value: number | undefined, fallback: number) => typeof value === "number" && Number.isFinite(value) && value >= 1 ? Math.min(Math.floor(value), fallback) : fallback;
+  const maxWeight = budget(limits.maxWeightedCharacters, 1800);
+  const maxBytes = budget(limits.maxTextBytes, 65536);
+  const sentenceWeight = Math.max(1, Math.floor(maxWeight * 2 / 3));
+  const sentenceBytes = Math.max(1, Math.floor(maxBytes * 2 / 3));
   const parts: string[] = [];
-  let current = "";
+  let totalWeight = 0;
+  let totalBytes = 0;
+  let start = 0;
+  let offset = 0;
   let currentWeight = 0;
-  for (const sentence of normalized.match(/[^。！？.!?\n]+[。！？.!?\n]*|[。！？.!?\n]+/g) ?? [normalized]) {
-    for (const character of sentence) {
-      const characterWeight = weight(character);
-      if (currentWeight + characterWeight > 1800) { parts.push(current); current = ""; currentWeight = 0; }
-      current += character;
-      currentWeight += characterWeight;
+  let currentBytes = 0;
+  const flush = () => {
+    if (offset > start) parts.push(normalized.slice(start, offset));
+    start = offset; currentWeight = 0; currentBytes = 0;
+  };
+  for (const character of normalized) {
+    const characterWeight = /\p{Script=Han}/u.test(character) ? 2 : 1;
+    const codepoint = character.codePointAt(0) ?? 0;
+    const characterBytes = codepoint <= 0x7f ? 1 : codepoint <= 0x7ff ? 2 : codepoint <= 0xffff ? 3 : 4;
+    totalWeight += characterWeight; totalBytes += characterBytes;
+    if (totalWeight > 100000 || totalBytes > 262144 || characterWeight > maxWeight || characterBytes > maxBytes) throw new Error("tooLong");
+    if (currentWeight + characterWeight > maxWeight || currentBytes + characterBytes > maxBytes) flush();
+    currentWeight += characterWeight; currentBytes += characterBytes; offset += character.length;
+    if (/[。！？.!?]/u.test(character) && (currentWeight >= sentenceWeight || currentBytes >= sentenceBytes)) {
+      flush();
     }
-    if (currentWeight > 1200) { parts.push(current); current = ""; currentWeight = 0; }
   }
-  if (current.trim()) parts.push(current);
+  flush();
   return parts;
 }
-function synthesisKey(text: string, snapshot: typeof config) { return JSON.stringify([snapshot.user, "deepseek", "wav", "v1", snapshot.voice, text]); }
+function controlsKey(snapshot: SpeechSynthesisOptions) { return JSON.stringify(["tts-controls-v2", snapshot.provider, "wav", snapshot.voice, snapshot.speed, snapshot.style]); }
+function synthesisKey(text: string, snapshot: typeof config) { return JSON.stringify([snapshot.scope, snapshot.user, controlsKey(snapshot), text]); }
 function rememberSynthesis(text: string, snapshot: typeof config, result: SpeechSynthesis) {
   const entry = cache.get(synthesisKey(text, snapshot));
   if (entry?.result?.id === result.id) entry.result = result;
@@ -74,7 +93,8 @@ async function synthesis(text: string, snapshot: typeof config, manual: boolean)
   if (!entry.result && !entry.pending) {
     const attempt = entry;
     // A transport failure keeps its request identity. A later manual click safely reconciles that same attempt.
-    attempt.pending = synthesizeSpeech(snapshot.token, text, snapshot.voice, attempt.requestID, attempt.retry).then((result) => {
+    const { provider, voice, speed, style } = snapshot;
+    attempt.pending = synthesizeSpeech(snapshot.token, text, { provider, voice, speed, style }, attempt.requestID, attempt.retry).then((result) => {
       attempt.pending = undefined; attempt.error = undefined; attempt.result = result; return result;
     }, (error: unknown) => { attempt.pending = undefined; attempt.error = error; throw error; });
   }
@@ -103,7 +123,7 @@ async function readWav(response: Response, playback: NonNullable<typeof active>,
     ensureActive();
     if (playback.context.state === "suspended") await new Promise<void>((resolve) => { playback.resume = resolve; });
     ensureActive();
-    if (cursor - playback.context.currentTime > 0.5) await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    if (cursor - playback.context.currentTime > 0.3) await new Promise<void>((resolve) => setTimeout(resolve, 50));
   };
   try {
     while (true) {
@@ -144,12 +164,11 @@ async function readWav(response: Response, playback: NonNullable<typeof active>,
       }
       let offset = 0;
       while (offset + 1 < pending.length) {
-        while (cursor - playback.context.currentTime > 0.5 || playback.context.state === "suspended") await wait();
+        while (cursor - playback.context.currentTime > 0.3 || playback.context.state === "suspended") await wait();
         ensureActive();
-        const count = Math.min(4800, Math.floor((pending.length - offset) / 2));
+        const count = Math.min(4800, Math.floor(sampleRate * 0.2), Math.floor((pending.length - offset) / 2));
         samples += count;
-        playback.duration += count / sampleRate;
-        if (samples > sampleRate * 1800 || playback.duration > 1800) throw new Error("audioTooLong");
+        if (samples > sampleRate * 1800) throw new Error("audioTooLong");
         const buffer = playback.context.createBuffer(1, count, sampleRate);
         const channel = buffer.getChannelData(0);
         const view = new DataView(pending.buffer, pending.byteOffset + offset, count * 2);
@@ -172,7 +191,8 @@ async function readWav(response: Response, playback: NonNullable<typeof active>,
 const analyzers = new WeakMap<AudioContext, AnalyserNode>();
 export async function playSpeech(messageID: string, text: string, onError: (reason: string) => void, options: { manual?: boolean } = {}) {
   if (!config.enabled || !config.token || isRecordingActive()) return;
-  const identity = JSON.stringify([messageID, config.voice, normalizeSpeechText(text)]);
+  const normalized = normalizeSpeechText(text);
+  const identity = JSON.stringify([config.scope, config.user, messageID, controlsKey(config), normalized]);
   if (active && active.identity === identity) {
     if (state.status === "loading") return;
     if (state.status === "playing") { active.activity?.publishLevel(0); await active.context.suspend(); update({ messageID, status: "paused" }); return; }
@@ -181,10 +201,10 @@ export async function playSpeech(messageID: string, text: string, onError: (reas
   stopSpeechPlayback();
   const snapshot = { ...config };
   let parts: string[];
-  try { parts = splitSpeechText(text); } catch { onError("tooLong"); return; }
+  try { parts = splitSpeechText(text, snapshot); } catch { onError("tooLong"); return; }
   if (!parts.length) return;
   const context = new AudioContext();
-  const playback: NonNullable<typeof active> = { controller: new AbortController(), context, identity, duration: 0, resume: () => {} };
+  const playback: NonNullable<typeof active> = { controller: new AbortController(), context, identity, text: normalized, resume: () => {} };
   active = playback;
   const analyzer = context.createAnalyser(); analyzers.set(context, analyzer);
   const spectrum = createMediaSpectrum(analyzer, context.sampleRate);
@@ -202,6 +222,7 @@ export async function playSpeech(messageID: string, text: string, onError: (reas
     try { await Promise.race([context.resume(), new Promise<never>((_, reject) => { resumeTimer = setTimeout(() => reject(new Error("autoplayUnavailable")), 3000); })]); }
     finally { clearTimeout(resumeTimer); }
     for (const textPart of parts) {
+      if (active !== playback || config.scope !== snapshot.scope || isRecordingActive()) throw abortError();
       let result = await synthesis(textPart, snapshot, Boolean(options.manual));
       if (active !== playback || config.scope !== snapshot.scope || isRecordingActive()) throw abortError();
       const readAudio = (result: SpeechSynthesis) => authedFetch(new URL(result.media_url, window.location.origin).pathname, { accessToken: snapshot.token, signal: playback.controller.signal });
@@ -221,7 +242,9 @@ export async function playSpeech(messageID: string, text: string, onError: (reas
       await readWav(response, playback, snapshot.scope);
       const settled = await getSpeechSynthesis(snapshot.token, result.id);
       rememberSynthesis(textPart, snapshot, { ...result, ...settled });
-      if (settled.status !== "complete") throw new Error("incompleteAudio");
+      // A completed cache entry can expire after its pinned reader finishes.
+      // Its consumed audio was valid; retain expiry so the next click renews it.
+      if (settled.status !== "complete" && !(result.status === "complete" && settled.status === "expired")) throw new Error("incompleteAudio");
     }
     if (active === playback) stopSpeechPlayback();
   } catch (error) {

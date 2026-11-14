@@ -22,6 +22,7 @@ import { useChatInlineVideoSource } from "@/features/chat/hooks/use-chat-inline-
 import { useChatMessageTraceDetail } from "@/features/chat/hooks/use-chat-message-trace-detail";
 import { useChatMessageFileActions } from "@/features/chat/hooks/use-chat-message-file-actions";
 import { resolveLeadingImagePreview } from "@/features/chat/model/media-image-preview";
+import { stopSpeechPlaybackForMessage } from "@/features/chat/lib/speech-playback";
 import {
   clearLiveUpstreamThinkTrace,
   mergeLiveUpstreamThinkTrace,
@@ -213,6 +214,7 @@ export function ChatMessageBot({
   // Some IMEs end the composition before the Enter keydown arrives, so the state is tracked too.
   const editingComposingRef = React.useRef(false);
   const onRetry = React.useCallback(() => {
+    stopSpeechPlaybackForMessage(item.publicID);
     void onRetryAssistantMessage(item);
   }, [item, onRetryAssistantMessage]);
   const onContinue = React.useCallback(() => {
@@ -513,7 +515,7 @@ export function ChatMessageBot({
         onCycleBranch={onCycleMessageBranch}
         onRetry={onRetry}
         onContinue={onContinueAssistantMessage ? onContinue : undefined}
-        onEdit={() => setIsEditing(true)}
+        onEdit={() => { stopSpeechPlaybackForMessage(item.publicID); setIsEditing(true); }}
         onCopy={onCopy}
         onFork={onForkMessage ? onFork : undefined}
         onDelete={onDeleteMessage ? onDelete : undefined}

@@ -28,7 +28,6 @@ import { Textarea } from "@/components/ui/textarea";
 import type { ChatContentWidth } from "@/entities/user-settings";
 import { useSettingsAppearancePersistence } from "@/features/settings/hooks/use-settings-appearance-persistence";
 import { useSettingsChat } from "@/features/settings/hooks/use-settings-chat";
-import { useSpeechCapabilities } from "@/shared/hooks/use-speech-capabilities";
 import { useSettingsPreferenceMemories } from "@/features/settings/hooks/use-settings-preference-memories";
 import {
   type ChatFontOption,
@@ -58,6 +57,7 @@ import {
 import { platformModifierLabel, platformSendShortcut } from "@/shared/lib/platform-shortcuts";
 import type { SendShortcut } from "@/features/settings/types/settings";
 import { ChatDisplayAppearance } from "./chat-display-appearance";
+import { ChatSpeechSettings } from "./chat-speech-settings";
 
 type ModelOption = ModelSelectOption;
 
@@ -360,7 +360,6 @@ function PreferenceMemorySection() {
 // Main component.
 
 export function SettingsChat() {
-  const speechCapabilities = useSpeechCapabilities();
   const t = useTranslations("settings.chatPage");
   const {
     settings,
@@ -568,19 +567,7 @@ export function SettingsChat() {
 
       <SettingsSectionSeparator />
 
-      <SettingsSection title={t("speech.sectionTitle")}>
-        <SettingsFieldList>
-          <SettingsFieldRow title={t("speech.autoReadTitle")} description={speechCapabilities.tts.length > 0 ? t("speech.autoReadDescription") : t("speech.unavailable")}>
-            <Switch checked={settings.autoReadReplies} onCheckedChange={handleBool("chat.auto_read_replies")} disabled={loading || speechCapabilities.tts.length === 0} aria-label={t("speech.autoReadTitle")} />
-          </SettingsFieldRow>
-          <div className="pt-4"><SettingsFieldRow title={t("speech.voiceTitle")} description={t("speech.voiceDescription")}>
-            <Select value={settings.speechVoice} onValueChange={handleEnum("chat.speech_voice")} disabled={loading || speechCapabilities.tts.length === 0}>
-              <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
-              <SelectContent>{(speechCapabilities.tts.find((provider) => provider.id === "deepseek")?.voices ?? [{ id: "stella", name: t("speech.stella") }, { id: "tide", name: t("speech.tide") }]).map((voice) => <SelectItem key={voice.id} value={voice.id}>{voice.name}</SelectItem>)}</SelectContent>
-            </Select>
-          </SettingsFieldRow></div>
-        </SettingsFieldList>
-      </SettingsSection>
+      <ChatSpeechSettings autoReadReplies={settings.autoReadReplies} loading={loading} onAutoReadChange={handleBool("chat.auto_read_replies")} />
 
       <SettingsSectionSeparator />
 

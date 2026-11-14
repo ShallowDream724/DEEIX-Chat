@@ -83,3 +83,15 @@ func (s *Service) migrateSpeechRoleConnections(ctx context.Context, rows []domai
 	}
 	return s.repo.Upsert(ctx, encrypted)
 }
+
+// Align untouched old seed values with the shorter audio retention policy;
+// an administrator's explicit setting remains authoritative.
+func (s *Service) migrateSpeechCacheRetention(ctx context.Context, rows []domainsettings.SystemSetting) error {
+	for _, row := range rows {
+		if row.Namespace == "speech" && row.Key == "cache_ttl_hours" && row.Value == "72" && !row.CreatedAt.IsZero() && row.CreatedAt.Equal(row.UpdatedAt) {
+			spec, _ := lookupSettingSpec("speech", "cache_ttl_hours")
+			return s.repo.Upsert(ctx, []domainsettings.SystemSetting{spec.seedSetting()})
+		}
+	}
+	return nil
+}

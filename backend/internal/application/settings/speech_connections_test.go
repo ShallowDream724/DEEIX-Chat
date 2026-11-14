@@ -103,3 +103,45 @@ func TestSpeechRoleConnectionValidationAndPeerDisable(t *testing.T) {
 		t.Fatal("active consumers accepted a cleared key")
 	}
 }
+
+func TestMiMoUsesItsOwnEncryptedConnectionAndKeepsDeepSeekInput(t *testing.T) {
+	s, repo, _ := newNativeToolPricingTestService()
+	patch := func(values map[string]string) error {
+		items := []PatchItem{}
+		for key, value := range values {
+			items = append(items, PatchItem{Namespace: "speech", Key: key, Value: value})
+		}
+		_, err := s.BatchUpdate(t.Context(), items)
+		return err
+	}
+	if err := patch(map[string]string{"input_provider": "deepseek", "deepseek_asr_credentials_source": "own", "deepseek_asr_api_key": "input-secret", "deepseek_tts_credentials_source": "asr"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := patch(map[string]string{"tts_provider": "mimo", "deepseek_tts_enabled": "true"}); err == nil {
+		t.Fatal("MiMo borrowed a DeepSeek key")
+	}
+	if err := patch(map[string]string{"tts_provider": "mimo", "deepseek_tts_enabled": "true", "mimo_base_url": "https://api.xiaomimimo.com/v1", "mimo_api_key": "mimo-test-secret"}); err != nil {
+		t.Fatal(err)
+	}
+	values, err := s.RuntimeValuesByNamespace(t.Context(), "speech")
+	if err != nil || values["mimo_api_key"] != "mimo-test-secret" || values["input_provider"] != "deepseek" {
+		t.Fatal("MiMo connection did not coexist with DeepSeek input", err)
+	}
+	rows, err := repo.ListAll(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range rows {
+		if row.Namespace == "speech" && row.Key == "mimo_api_key" {
+			if row.Value == "mimo-test-secret" || s.settingResponse(row).Value != "" || !s.settingResponse(row).Configured {
+				t.Fatal("MiMo secret exposed")
+			}
+		}
+	}
+	if _, err := s.BatchUpdate(t.Context(), []PatchItem{{Namespace: "speech", Key: "mimo_api_key", Clear: true}}); err == nil {
+		t.Fatal("active MiMo accepted a cleared key")
+	}
+	if err := patch(map[string]string{"tts_provider": "deepseek"}); err != nil {
+		t.Fatal("saved DeepSeek connection was lost", err)
+	}
+}

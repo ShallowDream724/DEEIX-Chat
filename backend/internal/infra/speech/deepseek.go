@@ -42,7 +42,7 @@ func (d *DeepSeek) ASRCapability() *domain.Capability {
 	return &domain.Capability{ID: "deepseek", Name: "DeepSeek", Formats: []string{"wav", "ogg"}, MaxDurationMS: 120000, MaxBytes: 8 << 20}
 }
 func (d *DeepSeek) TTSCapability() *domain.Capability {
-	return &domain.Capability{ID: "deepseek", Name: "DeepSeek", Formats: []string{"wav", "pcm"}, Voices: []domain.Voice{{ID: "stella", Name: "海星"}, {ID: "tide", Name: "暗潮"}}, MaxWeightedCharacters: 10000, MaxTextBytes: 64 << 10}
+	return &domain.Capability{ID: "deepseek", Name: "DeepSeek", Formats: []string{"wav", "pcm"}, Voices: []domain.Voice{{ID: "stella", Name: "海星"}, {ID: "tide", Name: "暗潮"}}, DefaultVoice: "stella", MaxWeightedCharacters: 10000, MaxTextBytes: 64 << 10}
 }
 func (d *DeepSeek) request(ctx context.Context, path, ct string, body io.Reader, length int64) (*http.Response, error) {
 	if d.cfg.APIKey == "" {

@@ -358,6 +358,10 @@
       "autoReadDescription": "新回复完成后自动朗读。",
       "voiceTitle": "朗读音色",
       "voiceDescription": "选择朗读回复时使用的声音。",
+      "speedTitle": "朗读速度",
+      "speeds": { "slow": "较慢", "normal": "标准", "fast": "较快" },
+      "styleTitle": "朗读风格",
+      "restoreDefault": "恢复默认",
       "stella": "海星",
       "tide": "暗潮"
     },
