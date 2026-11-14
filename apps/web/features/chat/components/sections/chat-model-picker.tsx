@@ -605,6 +605,13 @@ function ChatModelMenuItem({
     <div
       data-selected={selected}
       className="group flex h-7 items-center rounded-md text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-within:bg-accent focus-within:text-accent-foreground data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
+      onClickCapture={(event) => {
+        const target = event.target;
+        // Buttons own their actions; pricing portals must not select the underlying model.
+        if (target instanceof Element && event.currentTarget.contains(target) && !target.closest("button")) {
+          onSelect();
+        }
+      }}
     >
       <button
         type="button"
