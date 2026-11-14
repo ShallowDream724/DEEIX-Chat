@@ -158,6 +158,7 @@ type Service struct {
 	userMemCache             sync.Map // userID (uint) → *cachedUserMemories
 	imageContextCache        *preparedConversationImageCache
 	temporaryContextCache    temporaryContextObservationCache
+	temporaryProviderState   temporaryProviderStateCache
 	metadataRecovery         conversationMetadataRecoveryRegistry
 }
 

@@ -14,6 +14,18 @@ import (
 // 浏览器页面无法伪造这两个 Origin（自定义 scheme / 仅解析到本机回环的 .localhost）。
 var desktopWebviewOrigins = []string{"tauri://localhost", "http://tauri.localhost"}
 
+// IsCORSOriginAllowed shares the HTTP allowlist policy with upgraded protocols.
+// Desktop webviews and an explicitly configured development wildcard follow
+// exactly the same matching rules as CORS; production config rejects wildcard.
+func IsCORSOriginAllowed(origin, allowOrigin string) bool {
+	origin = strings.TrimRight(strings.TrimSpace(origin), "/")
+	if origin == "" {
+		return true
+	}
+	allowed := append(parseAllowedOrigins(allowOrigin), desktopWebviewOrigins...)
+	return matchAllowedOrigin(origin, allowed) != ""
+}
+
 // CORS 处理跨域请求，支持逗号分隔的 Origin allowlist；桌面端 webview Origin 总是被允许。
 func CORS(allowOrigin string) gin.HandlerFunc {
 	allowedOrigins := append(parseAllowedOrigins(allowOrigin), desktopWebviewOrigins...)

@@ -351,6 +351,19 @@
     }
   },
   "chatPage": {
+    "speech": {
+      "sectionTitle": "Speech",
+      "inputTitle": "Voice input",
+      "inputDescription": "Choose a source for voice input.",
+      "browser": "Browser voice input",
+      "unavailable": "Currently unavailable",
+      "autoReadTitle": "Read replies automatically",
+      "autoReadDescription": "Read new replies aloud when they finish.",
+      "voiceTitle": "Reading voice",
+      "voiceDescription": "Choose the voice used to read replies aloud.",
+      "stella": "Stella",
+      "tide": "Tide"
+    },
     "defaultModel": {
       "sectionTitle": "Conversation basics",
       "title": "Default model for new chats",
@@ -576,7 +589,7 @@
       },
       "columns": {
         "time": "Time",
-        "model": "Model",
+        "model": "Model / service",
         "baseBilling": "Base billing",
         "serviceBilling": "Service billing",
         "balanceAfter": "Balance after settlement",

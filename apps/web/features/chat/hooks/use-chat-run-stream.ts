@@ -9,6 +9,7 @@ import type { ChatSubmitTask } from "@/features/chat/model/chat-task";
 import { buildMediaImagePreviewMarkdown } from "@/features/chat/model/media-image-preview";
 import { mergeProcessTraceSnapshot, toPendingProcessTrace } from "@/features/chat/model/message-submit";
 import { settleCompletedExchange } from "@/features/chat/model/message-submit-exchange";
+import { publishResponseCompletion } from "@/features/chat/lib/response-completion";
 import { recoverSubmittedRun, SubmissionRecoveryError } from "@/features/chat/model/message-submit-recovery";
 import {
   resolveMediaStatusLabel,
@@ -115,6 +116,7 @@ export function useChatRunStream({
       shouldNotify: () => boolean;
     }): Promise<SendMessageResult> => {
       let terminalStreamError: Extract<StreamMessageEvent, { type: "error" }> | null = null;
+      let recovered = false;
       const streamOptions: ConversationStreamOptions = {
         signal,
         onTerminal: () => {
@@ -329,6 +331,7 @@ export function useChatRunStream({
         });
         if (recovery.kind !== "completed") throw new SubmissionRecoveryError(recovery, { cause: error });
         completed = recovery.result;
+        recovered = true;
       }
 
       flushStreamTextNow(exchangeKey);
@@ -342,6 +345,9 @@ export function useChatRunStream({
           t,
         }),
       );
+      if (!recovered && !signal.aborted && !terminalStreamError && shouldNotify() && (completed.assistantMessage.status || "success") === "success") {
+        publishResponseCompletion({ conversationID, messageID: completed.assistantMessage.publicID, content: completed.assistantMessage.content });
+      }
       return completed;
     },
     [

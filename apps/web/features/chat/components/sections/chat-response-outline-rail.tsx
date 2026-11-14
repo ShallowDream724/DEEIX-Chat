@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/message-scroller";
 import { cn } from "@/lib/utils";
 import { useScrollFadeFallbackRef } from "@/shared/hooks/use-scroll-fade-fallback-ref";
+import { useChatMediaRailFeedback } from "@/features/chat/hooks/use-chat-media-rail-feedback";
 
 const OUTLINE_GUIDE_OFFSET_PX = 48;
 
@@ -157,6 +158,7 @@ function ChatResponseOutlineRailComponent({
   const menuScrollFadeRef = useScrollFadeFallbackRef(menuViewportRef);
   const menuItemRefs = React.useRef(new Map<number, HTMLButtonElement>());
   const visibleMessageIDsRef = React.useRef(visibleMessageIds);
+  useChatMediaRailFeedback(railViewportRef, disabled ? "" : headingSignatureRef.current);
 
   const clearNavigationTarget = React.useCallback(() => {
     navigationTargetRef.current = null;
@@ -619,8 +621,9 @@ function ChatResponseOutlineRailComponent({
                   onClick={() => scrollToHeading(index)}
                 >
                   <span
+                    data-media-rail-line=""
                     className={cn(
-                      "h-0.5 rounded-full bg-current opacity-35 transition-[color,height,opacity,width] duration-150 ease-out motion-reduce:transition-none",
+                      "h-0.5 origin-right rounded-full bg-current opacity-35 transition-[color,height,opacity,width] duration-150 ease-out motion-reduce:transition-none",
                       hovered && "h-1",
                       hovered && !active && "text-foreground/55 opacity-100",
                       active && "text-foreground opacity-100",

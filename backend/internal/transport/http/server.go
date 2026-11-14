@@ -33,6 +33,7 @@ import (
 	promptpresethttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/promptpreset"
 	settingshttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/settings"
 	skillhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/skill"
+	speechhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/speech"
 	systemhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/system"
 	uicomponenthttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/uicomponent"
 	uploadhttp "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/transport/http/upload"
@@ -74,6 +75,7 @@ type Modules struct {
 	UIComponent        *uicomponenthttp.Module
 	KnowledgeBase      *knowledgebasehttp.Module
 	Settings           *settingshttp.Module
+	Speech             *speechhttp.Module
 	User               *userhttp.Module
 	UserSettings       *usersettingshttp.Module
 	PersonalProvider   *personalproviderhttp.Module
@@ -264,6 +266,9 @@ func NewEngine(cfg *config.Runtime, log *zap.Logger, modules Modules, hc HealthC
 	}
 	if modules.Settings != nil {
 		modules.Settings.RegisterRoutes(authRequired)
+	}
+	if modules.Speech != nil {
+		modules.Speech.RegisterRoutes(authRequired, api)
 	}
 	if modules.User != nil {
 		modules.User.RegisterRoutes(authRequired)

@@ -66,6 +66,41 @@ type UsagePrice struct {
 	NanousdPerCall int64
 }
 
+func deepSeekSearchDefinition(protocol string) Definition {
+	payload := map[string]any{"type": "deepseek_web_search"}
+	if protocol == "anthropic_messages" {
+		payload["name"] = "deepseek_web_search"
+	}
+	return Definition{Protocol: protocol, Provider: "DeepSeek", Type: "deepseek_web_search", Key: "deepseek.tool_search", Label: "DeepSeek Web Search", Description: "DeepSeek hosted search; depth follows thinking. Only successful provider usage is billed.", Payload: payload, DefaultEnabled: true, Billable: true, BillingUnit: "call", PriceLabel: "custom", UsageAliases: []string{"tool_search"}, BillingKeys: []string{"deepseek.tool_fetch", "deepseek.tool_image_search"}}
+}
+
+func deepSeekReadDefinition(protocol string) Definition {
+	payload := map[string]any{"type": "deepseek_read_url"}
+	if protocol == "anthropic_messages" {
+		payload["name"] = "deepseek_read_url"
+	}
+	return Definition{Protocol: protocol, Provider: "DeepSeek", Type: "deepseek_read_url", Key: "deepseek.tool_fetch", Label: "DeepSeek Read URL", Description: "DeepSeek hosted URL reading, metered by successful fetch usage.", Payload: payload, DefaultEnabled: true, Billable: true, BillingUnit: "call", PriceLabel: "custom", UsageAliases: []string{"tool_fetch"}}
+}
+
+func deepSeekImageMeter(protocol string) Definition {
+	return Definition{Protocol: protocol, Provider: "DeepSeek", Type: "tool_image_search", Key: "deepseek.tool_image_search", Label: "DeepSeek Image Search", Description: "Successful image search operations reported by DeepSeek.", MeteringOnly: true, Billable: true, BillingUnit: "call", PriceLabel: "custom", UsageAliases: []string{"tool_image_search"}}
+}
+
+func mergeDeepSeekDefinition(old, current Definition) Definition {
+	current.DefaultEnabled = old.DefaultEnabled
+	current.PriceNanousd = old.PriceNanousd
+	if old.Label != "" {
+		current.Label = old.Label
+	}
+	if old.Description != "" {
+		current.Description = old.Description
+	}
+	if old.PriceLabel != "" {
+		current.PriceLabel = old.PriceLabel
+	}
+	return current
+}
+
 var definitions = []Definition{
 	{
 		Protocol:       "openai_chat_completions",
@@ -161,10 +196,15 @@ var definitions = []Definition{
 		RiskLevel:      "high",
 		UsageAliases:   []string{"code_interpreter"},
 	},
-	{
-		Protocol: "openai_responses", Provider: "DeepSeek", Type: "web_search", Key: "deepseek.tool_search", Label: "DeepSeek Web Search", Description: "DeepSeek web search, page opening and in-page finding; successful search and fetch operations are metered separately.", Payload: map[string]any{"type": "web_search"}, Billable: true, BillingUnit: "call", PriceLabel: "custom", UsageAliases: []string{"tool_search"}, BillingKeys: []string{"deepseek.tool_search", "deepseek.tool_fetch"},
-	},
-	{Protocol: "openai_responses", Provider: "DeepSeek", Type: "tool_fetch", Key: "deepseek.tool_fetch", Label: "DeepSeek Fetch", Description: "Successful page opening and in-page finding operations performed by DeepSeek Web Search.", MeteringOnly: true, Billable: true, BillingUnit: "call", PriceLabel: "custom", UsageAliases: []string{"tool_fetch"}},
+	deepSeekSearchDefinition("openai_responses"),
+	deepSeekReadDefinition("openai_responses"),
+	deepSeekImageMeter("openai_responses"),
+	deepSeekSearchDefinition("openai_chat_completions"),
+	deepSeekReadDefinition("openai_chat_completions"),
+	deepSeekImageMeter("openai_chat_completions"),
+	deepSeekSearchDefinition("anthropic_messages"),
+	deepSeekReadDefinition("anthropic_messages"),
+	deepSeekImageMeter("anthropic_messages"),
 	{
 		Protocol:       "anthropic_messages",
 		Provider:       "Anthropic",
@@ -530,6 +570,9 @@ func buildPayload(definition Definition, raw map[string]any) map[string]any {
 	if definition.MeteringOnly {
 		return nil
 	}
+	if definition.Key == "deepseek.tool_search" || definition.Key == "deepseek.tool_fetch" {
+		return cloneMap(definition.Payload)
+	}
 	payload := cloneMap(raw)
 	if payload == nil {
 		payload = make(map[string]any)
@@ -659,12 +702,11 @@ func normalizeDefinition(definition Definition) (Definition, bool) {
 	definition.BillingUnit = strings.TrimSpace(definition.BillingUnit)
 	definition.PriceLabel = strings.TrimSpace(definition.PriceLabel)
 	definition.RiskLevel = strings.TrimSpace(definition.RiskLevel)
-	// Historical capabilities may still describe DeepSeek fetch as web_fetch.
-	// Its stable billing identity must never recreate an input tool declaration.
-	if definition.Key == "deepseek.tool_fetch" && definition.Protocol == "openai_responses" {
-		definition.Type = "tool_fetch"
-		definition.Payload = nil
-		definition.MeteringOnly = true
+	if definition.Key == "deepseek.tool_fetch" {
+		definition = mergeDeepSeekDefinition(definition, deepSeekReadDefinition(definition.Protocol))
+	}
+	if definition.Key == "deepseek.tool_search" {
+		definition = mergeDeepSeekDefinition(definition, deepSeekSearchDefinition(definition.Protocol))
 	}
 	if definition.Type == "" {
 		definition.Type = strings.TrimSpace(stringValue(definition.Payload["type"]))

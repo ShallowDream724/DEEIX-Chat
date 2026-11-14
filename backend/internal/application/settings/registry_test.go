@@ -117,6 +117,14 @@ func changedConfigFields(cfg config.Config) []string {
 	value := reflect.ValueOf(cfg)
 	var changed []string
 	for i := 0; i < value.NumField(); i++ {
+		if value.Type().Field(i).Name == "Speech" {
+			for j := 0; j < value.Field(i).NumField(); j++ {
+				if !reflect.DeepEqual(value.Field(i).Field(j).Interface(), zero.Field(i).Field(j).Interface()) {
+					changed = append(changed, "Speech."+value.Field(i).Type().Field(j).Name)
+				}
+			}
+			continue
+		}
 		if !reflect.DeepEqual(value.Field(i).Interface(), zero.Field(i).Interface()) {
 			changed = append(changed, value.Type().Field(i).Name)
 		}

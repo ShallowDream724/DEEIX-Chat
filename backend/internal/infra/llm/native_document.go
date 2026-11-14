@@ -8,7 +8,8 @@ import (
 )
 
 // 原生文件内容块（portllm.ContentPartDocument / Audio / Video）在各协议中的公共字段。
-// 只有会话层原生输入策略允许的协议会收到它们，内容一律 base64 内嵌在请求体中：
+// 只有会话层原生输入策略允许的协议会收到它们，通常 base64 内嵌在请求体中；
+// DeepSeek Files 准备步骤会给内容块填入 ProviderFileID，三个对话协议改用文件引用：
 //   - PDF：Anthropic document、Gemini inlineData、OpenAI Responses input_file、Chat Completions file；
 //   - 音频：Gemini inlineData、Chat Completions input_audio（OpenAI、OpenRouter）；
 //   - 视频：Gemini inlineData、OpenRouter Chat Completions video_url。

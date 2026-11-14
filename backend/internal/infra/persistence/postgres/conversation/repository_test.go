@@ -933,9 +933,10 @@ func TestUpdateAssistantMessageCompletionPersistsReasoningAndKnowledgeSources(t 
 	}
 
 	err := repo.UpdateAssistantMessageCompletion(ctx, message.ID, repository.AssistantMessageCompletionUpdate{
-		ContentType:      "text",
-		Content:          "final answer",
-		ReasoningContent: "stored reasoning",
+		ContentType:       "text",
+		Content:           "final answer",
+		ReasoningContent:  "stored reasoning",
+		ProviderStateJSON: `{"protocol":"openai_responses","blocks":[{"kind":"read_link","signature":"stored"}]}`,
 		KnowledgeSources: []domainconversation.MessageKnowledgeSource{{
 			FileName:   "handbook.md",
 			FileID:     "file_handbook",
@@ -953,7 +954,7 @@ func TestUpdateAssistantMessageCompletionPersistsReasoningAndKnowledgeSources(t 
 	if err != nil {
 		t.Fatalf("GetMessageByID() error = %v", err)
 	}
-	if got.Content != "final answer" || got.ReasoningContent != "stored reasoning" {
+	if got.Content != "final answer" || got.ReasoningContent != "stored reasoning" || !strings.Contains(got.ProviderStateJSON, `"signature":"stored"`) {
 		t.Fatalf("unexpected completed message: %#v", got)
 	}
 	if len(got.KnowledgeSources) != 1 || got.KnowledgeSources[0].FileID != "file_handbook" {

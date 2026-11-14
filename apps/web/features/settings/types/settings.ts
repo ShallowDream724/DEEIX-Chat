@@ -20,6 +20,9 @@ export type ChatSettings = {
   autoExpandToolCalls: boolean;
   autoGenerateTitle: boolean;
   autoGenerateLabels: boolean;
+  speechInputProvider: string;
+  autoReadReplies: boolean;
+  speechVoice: string;
   deleteFilesByDefault: boolean;
   contextCompactAuto: boolean;
   restoreDraftOnFailure: boolean;

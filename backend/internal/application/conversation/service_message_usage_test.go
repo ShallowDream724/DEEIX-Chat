@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -306,7 +307,7 @@ func TestFollowUpUsageBudgetEstimateAccumulatesObservedAndNextCall(t *testing.T)
 		CacheWriteTokens: 300,
 		OutputTokens:     120 + unobservedOutputTokens + 60 + 4096,
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("followUpUsageBudgetEstimate() = %+v, want %+v", got, want)
 	}
 	if outputTokens, reasoningTokens := accumulator.effectiveOutputTokens(); outputTokens != 120+unobservedOutputTokens || reasoningTokens != 60 {

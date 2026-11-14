@@ -246,6 +246,7 @@ func applyBlockedSnapshot(result *SendMessageResult, block appcm.BlockInfo, term
 	result.AssistantMessage.Status = "blocked"
 	result.AssistantMessage.Content = ""
 	result.AssistantMessage.ReasoningContent = ""
+	result.AssistantMessage.ProviderStateJSON = ""
 	result.AssistantMessage.Attachments = "[]"
 	result.AssistantMessage.ProcessTrace = nil
 	result.AssistantMessage.ModerationEventID = block.EventID

@@ -44,7 +44,7 @@ func (s settingSpec) seedSetting() domainsettings.SystemSetting {
 	}
 }
 
-var settingSpecs = []settingSpec{
+var settingSpecs = append([]settingSpec{
 	// 认证配置
 	{Namespace: "auth", Key: "token_ttl_hours", ValueType: "int", Default: "24", Description: "Access Token 有效期(小时)",
 		Validate: intRange(1, 168), Apply: applyField(func(c *config.Config) *int { return &c.TokenTTLHours }, toInt)},
@@ -107,7 +107,7 @@ var settingSpecs = []settingSpec{
 	{Namespace: "billing", Key: "native_tool_pricing_json", ValueType: "json", Default: nativetool.DefaultPricingJSON(), Description: "官方原生工具计费覆盖 JSON，按 toolKey 配置 priceNanousd、unit、priceLabel、billable",
 		Validate: validateNativeToolPricingJSON},
 	{Namespace: "billing", Key: "usd_to_cny_rate", ValueType: "string", Default: "7.2", Description: "易支付美元兑人民币汇率",
-		Validate: floatRange(0.000001, 1000)},
+		Validate: floatRange(0.000001, 1000), Apply: applyField(func(c *config.Config) *float64 { return &c.BillingUSDToCNYRate }, toFloat)},
 	{Namespace: "billing", Key: "display_currency", ValueType: "string", Default: "USD", Description: "用户端费用展示币种：USD 或 CNY",
 		Validate: oneOf("USD", "CNY")},
 	{Namespace: "billing", Key: "payment_providers", ValueType: "string", Default: "disabled", Description: "启用支付渠道，多个用英文逗号分隔：stripe,epay",
@@ -428,7 +428,7 @@ var settingSpecs = []settingSpec{
 		Validate: integerValue()},
 	{Namespace: "circuit", Key: "channel_circuit_open_seconds", ValueType: "int", Default: "60", Description: "熔断持续时间(秒)",
 		Validate: integerValue()},
-}
+}, speechSettingSpecs()...)
 
 var settingSpecIndex = indexSettingSpecs(settingSpecs)
 

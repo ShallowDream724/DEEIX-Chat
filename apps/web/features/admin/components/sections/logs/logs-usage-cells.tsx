@@ -23,17 +23,19 @@ import {
 } from "@/features/admin/model/usage-log-billing";
 import { cn } from "@/lib/utils";
 import { isPersonalModelRef, ModelSelect, type ModelSelectOption, resolveModelOptionLabel } from "@/entities/model";
-import type { BillingDisplayOptions } from "@/entities/billing";
+import { formatMeteredQuantity, meteredServiceDisplayName, meteredServiceName, type BillingDisplayOptions } from "@/entities/billing";
 
 const ALL_MODELS_VALUE = "__all__";
 
 export function useUsageBillingLabels(): UsageBillingLabels {
   const t = useTranslations("adminLogs.usage.billing");
   const tImage = useTranslations("adminBilling.imagePricing");
+  const tMetered = useTranslations("billingMetered");
 
   return React.useMemo(
     () => ({
       image: { model: tImage("modelUsage"), tool: tImage("toolUsage"), textInput: tImage("textInput"), textOutput: tImage("textOutput"), imageInput: tImage("imageInput"), imageOutput: tImage("imageOutput"), cachedTextInput: tImage("cachedTextInput"), cachedImageInput: tImage("cachedImageInput") },
+      metered: { service: tMetered("service"), voiceInput: tMetered("voiceInput"), readAloud: tMetered("readAloud"), actual: tMetered("actual"), billed: tMetered("billed"), seconds: tMetered("seconds"), hour: tMetered("hour"), characters: tMetered("characters"), pages: tMetered("pages"), roundedAmount: tMetered("roundedAmount") },
       input: t("input"),
       output: t("output"),
       cacheRead: t("cacheRead"),
@@ -67,7 +69,7 @@ export function useUsageBillingLabels(): UsageBillingLabels {
         scheduleRateNote: (period: string, multiplier: string) => t("scheduleRateNote", { period, multiplier }),
       },
     }),
-    [t, tImage],
+    [t, tImage, tMetered],
   );
 }
 
@@ -113,7 +115,7 @@ function UsageBillingTieredTable({
           {line.rows.map((row, rowIndex) => (
             <tr key={`${row.item}-${rowIndex}`} className="border-b border-background/10 last:border-0">
               <td className="whitespace-nowrap px-2 py-1 first:pl-0">{row.item}</td>
-              <td className="whitespace-nowrap px-2 py-1 text-right">{row.tokens}</td>
+              <td className="whitespace-pre-line px-2 py-1 text-right">{row.tokens}</td>
               <td className="whitespace-nowrap px-2 py-1 text-right">{row.unitPrice}</td>
               <td className="whitespace-nowrap px-2 py-1 text-right last:pr-0">{row.amount}</td>
             </tr>
@@ -132,7 +134,12 @@ function UsageBillingTieredTable({
 
 export function UsageLogModelCell({ item, labels }: { item: AdminUsageLogDTO; labels: UsageBillingLabels }) {
   const t = useTranslations("adminLogs.usage.modelTooltip");
-  const lines: UsageBillingTooltipLine[] = [
+  const metered = parseUsagePricingSnapshot(item.pricingSnapshotJSON).meteredBilling;
+  const modelName = item.platformModelName || (metered ? meteredServiceDisplayName(metered, labels.metered) : "-");
+  const lines: UsageBillingTooltipLine[] = metered ? [
+    { type: "row", left: labels.metered.service, right: meteredServiceName(metered, labels.metered) },
+    { type: "row", left: t("upstreamName"), right: metered.provider || "-" },
+  ] : [
     { type: "row", left: t("upstreamName"), right: item.upstreamName || "-" },
     { type: "row", left: t("upstreamModel"), right: item.upstreamModelName || "-" },
     { type: "row", left: t("bindingCode"), right: item.routedBindingCode || "-" },
@@ -143,8 +150,8 @@ export function UsageLogModelCell({ item, labels }: { item: AdminUsageLogDTO; la
     <Tooltip>
       <TooltipTrigger asChild>
         <div className="grid min-w-0 cursor-default gap-px">
-          <div className="flex min-w-0 items-center gap-1 leading-4" title={item.platformModelName || "-"}>
-            <span className="max-w-[15rem] truncate font-medium">{resolveModelOptionLabel(item.platformModelName ?? "") || "-"}</span>
+          <div className="flex min-w-0 items-center gap-1 leading-4" title={modelName}>
+            <span className="max-w-[15rem] truncate font-medium">{resolveModelOptionLabel(modelName) || "-"}</span>
             {isPersonalModelRef(item.platformModelName ?? "") ? (
               <span className="shrink-0 rounded-sm bg-muted px-1 text-[10px] leading-4 text-muted-foreground">{t("personalKey")}</span>
             ) : null}
@@ -167,6 +174,22 @@ export function UsageLogModelCell({ item, labels }: { item: AdminUsageLogDTO; la
 export function UsageLogUsageCell({ item, locale }: { item: AdminUsageLogDTO; locale: string }) {
   const t = useTranslations("adminLogs.usage.tokens");
   const snapshot = parseUsagePricingSnapshot(item.pricingSnapshotJSON);
+  const labels = useUsageBillingLabels();
+  const metered = snapshot.meteredBilling;
+  if (metered) {
+    return (
+      <div className="grid min-w-[10.5rem] gap-1">
+        {[
+          { label: labels.metered.actual, value: formatMeteredQuantity(metered.quantity, metered.unit, labels.metered, locale) },
+          { label: labels.metered.billed, value: formatMeteredQuantity(metered.billableQuantity, metered.unit, labels.metered, locale) },
+        ].map((entry) => (
+          <span key={entry.label} className="inline-flex h-5 items-center justify-between gap-2 rounded-md bg-muted/45 px-1.5 text-[11px] leading-none text-muted-foreground">
+            <span>{entry.label}</span><span className="font-mono tabular-nums">{entry.value}</span>
+          </span>
+        ))}
+      </div>
+    );
+  }
   const isVideoUsage = snapshot.media_type === "video" || snapshot.duration_billable === true;
   if (isVideoUsage) {
     const inputImageCount = typeof snapshot.input_image_count === "number" && Number.isFinite(snapshot.input_image_count) && snapshot.input_image_count >= 0

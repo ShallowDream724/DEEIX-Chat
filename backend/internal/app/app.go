@@ -39,6 +39,7 @@ import (
 	appsecretrotation "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/secretrotation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/settings"
 	appskill "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/skill"
+	appspeech "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/speech"
 	appuicomponent "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/uicomponent"
 	appupload "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/upload"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/user"
@@ -76,6 +77,7 @@ import (
 	logcleanuprepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/logcleanup"
 	mcprepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/mcp"
 	memoryrepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/memory"
+	nativefilerepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/nativefile"
 	personalproviderrepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/personalprovider"
 	promptpresetrepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/promptpreset"
 	secretrotationrepo "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/persistence/postgres/secretrotation"
@@ -129,6 +131,8 @@ type App struct {
 	conversationService    *conversation.Service
 	contentModeration      *appcontentmoderation.Service
 	authService            *auth.Service
+	speechService          *appspeech.Service
+	speechHTTPClient       *http.Client
 	runtimeCfg             *config.Runtime
 	tracingShutdown        platformtracing.ShutdownFunc
 	backgroundCancel       context.CancelFunc
@@ -374,6 +378,7 @@ func NewAppWithOptions(opts Options) (*App, error) {
 	trustedOutboundPolicy := cfg.TrustedOutboundPolicy()
 	strictOutboundPolicy := cfg.StrictOutboundPolicy()
 	llmClient := llm.NewClient(trustedOutboundPolicy)
+	llmClient.SetNativeFileStore(nativefilerepo.NewRepo(db))
 	mcpClient := mcp.NewClient(trustedOutboundPolicy)
 	mediaArtifactClient := mediaartifact.New(strictOutboundPolicy)
 	// 用户自带 Key 的端点返回的制品与其 API 请求同样只允许公网目标，不受部署级白名单与环境影响。
@@ -547,6 +552,16 @@ func NewAppWithOptions(opts Options) (*App, error) {
 	knowledgeBaseHandler := knowledgebasehttp.NewHandler(knowledgeBaseService, runtimeCfg)
 	knowledgeBaseModule := knowledgebasehttp.NewModule(knowledgeBaseHandler)
 
+	speechService, speechModule, speechHTTPClient, err := newSpeechModule(runtimeCfg, billingService)
+	if err != nil {
+		return nil, fmt.Errorf("initialize speech: %w", err)
+	}
+	defer func() {
+		if !keepTracing {
+			speechService.Close()
+			speechHTTPClient.CloseIdleConnections()
+		}
+	}()
 	hc := newHealthChecker(db, cacheBackend)
 	rateLimiter := cacheBackend.RateLimiter()
 	personalProviderHandler := personalproviderhttp.NewHandler(personalProviderService)
@@ -569,6 +584,7 @@ func NewAppWithOptions(opts Options) (*App, error) {
 		UIComponent:        uiComponentModule,
 		KnowledgeBase:      knowledgeBaseModule,
 		Settings:           settingsModule,
+		Speech:             speechModule,
 		UserSettings:       userSettingsModule,
 		User:               userModule,
 		PersonalProvider:   personalProviderModule,
@@ -625,6 +641,8 @@ func NewAppWithOptions(opts Options) (*App, error) {
 		conversationService:    conversationService,
 		contentModeration:      contentModerationService,
 		authService:            authService,
+		speechService:          speechService,
+		speechHTTPClient:       speechHTTPClient,
 		runtimeCfg:             runtimeCfg,
 		tracingShutdown:        tracingShutdown,
 		backgroundCancel:       backgroundCancel,
@@ -774,6 +792,12 @@ func logOutboundProxy(log *zap.Logger, status sharedsecurity.OutboundProxyStatus
 func (a *App) Close() {
 	if a.backgroundCancel != nil {
 		a.backgroundCancel()
+	}
+	if a.speechService != nil {
+		a.speechService.Close()
+	}
+	if a.speechHTTPClient != nil {
+		a.speechHTTPClient.CloseIdleConnections()
 	}
 	// Workers 必须在其依赖（cache、database）关闭前排空。
 	if a.contentModeration != nil {

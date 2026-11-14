@@ -11,6 +11,8 @@ import enAdminModels from "@/i18n/messages/en-US/admin-models.json";
 import enAdminLibrary from "@/i18n/messages/en-US/admin-library.json";
 import enAdminStatistics from "@/i18n/messages/en-US/admin-statistics.json";
 import enAdminTools from "@/i18n/messages/en-US/admin-tools.json";
+import enAdminSpeech from "@/i18n/messages/en-US/admin-speech.json";
+import enBillingMetered from "@/i18n/messages/en-US/billing-metered.json";
 import enAdminUpstreams from "@/i18n/messages/en-US/admin-upstreams.json";
 import enAdminUserKeys from "@/i18n/messages/en-US/admin-user-keys.json";
 import enAdminUsers from "@/i18n/messages/en-US/admin-users.json";
@@ -66,6 +68,8 @@ const ENGLISH_MESSAGES = {
   adminLibrary: enAdminLibrary,
   adminStatistics: enAdminStatistics,
   adminTools: enAdminTools,
+  adminSpeech: enAdminSpeech,
+  billingMetered: enBillingMetered,
   adminUpstreams: enAdminUpstreams,
   adminUserKeys: enAdminUserKeys,
   adminUsers: enAdminUsers,
@@ -157,6 +161,8 @@ export async function loadLocaleMessages(locale: AppLocale): Promise<AppMessages
     adminLibrary,
     adminStatistics,
     adminTools,
+    adminSpeech,
+    billingMetered,
     adminUpstreams,
     adminUserKeys,
     adminUsers,
@@ -192,6 +198,8 @@ export async function loadLocaleMessages(locale: AppLocale): Promise<AppMessages
     import("@/i18n/messages/zh-CN/admin-library.json"),
     import("@/i18n/messages/zh-CN/admin-statistics.json"),
     import("@/i18n/messages/zh-CN/admin-tools.json"),
+    import("@/i18n/messages/zh-CN/admin-speech.json"),
+    import("@/i18n/messages/zh-CN/billing-metered.json"),
     import("@/i18n/messages/zh-CN/admin-upstreams.json"),
     import("@/i18n/messages/zh-CN/admin-user-keys.json"),
     import("@/i18n/messages/zh-CN/admin-users.json"),
@@ -229,6 +237,8 @@ export async function loadLocaleMessages(locale: AppLocale): Promise<AppMessages
     adminLibrary: adminLibrary.default,
     adminStatistics: adminStatistics.default,
     adminTools: adminTools.default,
+    adminSpeech: adminSpeech.default,
+    billingMetered: billingMetered.default,
     adminUpstreams: adminUpstreams.default,
     adminUserKeys: adminUserKeys.default,
     adminUsers: adminUsers.default,

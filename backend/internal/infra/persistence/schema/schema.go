@@ -41,6 +41,7 @@ func Models() []any {
 		&models.Attachment{},
 		&models.FileObject{},
 		&models.ImageSourceAlias{},
+		&models.NativeFile{},
 		&models.UserStorageQuota{},
 		&models.ConversationRun{},
 		&models.ContentModerationEvent{},

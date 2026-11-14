@@ -818,6 +818,7 @@ func (s *Service) sendMessageInternal(
 	}
 	runState.applyReasoningEffort(plan.reasoningEffort)
 	runner.routeConfig = plan.routeConfig
+	runner.route = route
 	if plan.generateInput.ResponsesBackground {
 		sendSpan.SetAttributes(attribute.Bool("conversation.responses_background", true))
 	}
@@ -920,6 +921,7 @@ func (s *Service) sendMessageInternal(
 		}
 		runState.applyReasoningEffort(plan.reasoningEffort)
 		runner.beginRouteFailover(plan.routeConfig)
+		runner.route = route
 		sendSpan.SetAttributes(
 			attribute.Bool("conversation.route_failover", true),
 			attribute.Int("conversation.route_attempt", len(attemptedRouteIDs)),
@@ -1003,10 +1005,11 @@ func (s *Service) sendMessageInternal(
 			reasoningContent = outputReasoningContent(upstreamOutput)
 		}
 		assistantToolMessage := llm.Message{
-			Role:             "assistant",
-			Content:          assistantText,
-			ReasoningContent: reasoningContent,
-			ToolCalls:        pendingToolCalls,
+			ProviderStateJSON: upstreamOutput.ProviderStateJSON,
+			Role:              "assistant",
+			Content:           assistantText,
+			ReasoningContent:  reasoningContent,
+			ToolCalls:         pendingToolCalls,
 		}
 		toolResultTokenBudget := resolveToolResultTokenBudget(
 			generateInput,
@@ -1250,28 +1253,29 @@ func (s *Service) sendMessageInternal(
 	// including non-streaming calls whose streamedText buffer is empty.
 	completedAssistantText = assistantText
 	err = s.persistSuccessfulMessageGeneration(persistCtx, persistMessageGenerationInput{
-		SendInput:                 input,
-		Conversation:              conversation,
-		UserMessage:               userMessage,
-		AssistantMessage:          assistantMessage,
-		AssistantText:             assistantText,
-		AssistantReasoningContent: assistantReasoningContent,
-		GeneratedImages:           upstreamOutput.GeneratedImages,
-		GeneratedFiles:            generatedFiles,
-		ArtifactRoute:             routeConfig,
-		InputTokens:               effectiveInputTokens,
-		CacheReadTokens:           totalUsage.CacheReadTokens,
-		CacheWriteTokens:          totalUsage.CacheWriteTokens,
-		OutputTokens:              effectiveOutputTokens,
-		ReasoningTokens:           effectiveReasoningTokens,
-		AssistantLatency:          assistantLatencyMS,
-		ResponseID:                responseIDForPersistence,
-		StatefulPromptFingerprint: statefulPromptFingerprint,
-		ToolCallRows:              toolCallRows,
-		PersistedToolCallKeys:     persistedToolCallKeys,
-		Route:                     runState.route,
-		ReuseUserMessage:          reuseUserMessage,
-		SkipEmbed:                 moderationCoord != nil,
+		SendInput:                  input,
+		Conversation:               conversation,
+		UserMessage:                userMessage,
+		AssistantMessage:           assistantMessage,
+		AssistantText:              assistantText,
+		AssistantReasoningContent:  assistantReasoningContent,
+		AssistantProviderStateJSON: upstreamOutput.ProviderStateJSON,
+		GeneratedImages:            upstreamOutput.GeneratedImages,
+		GeneratedFiles:             generatedFiles,
+		ArtifactRoute:              routeConfig,
+		InputTokens:                effectiveInputTokens,
+		CacheReadTokens:            totalUsage.CacheReadTokens,
+		CacheWriteTokens:           totalUsage.CacheWriteTokens,
+		OutputTokens:               effectiveOutputTokens,
+		ReasoningTokens:            effectiveReasoningTokens,
+		AssistantLatency:           assistantLatencyMS,
+		ResponseID:                 responseIDForPersistence,
+		StatefulPromptFingerprint:  statefulPromptFingerprint,
+		ToolCallRows:               toolCallRows,
+		PersistedToolCallKeys:      persistedToolCallKeys,
+		Route:                      runState.route,
+		ReuseUserMessage:           reuseUserMessage,
+		SkipEmbed:                  moderationCoord != nil,
 	})
 	platformtracing.RecordError(persistSpan, err)
 	persistSpan.End()

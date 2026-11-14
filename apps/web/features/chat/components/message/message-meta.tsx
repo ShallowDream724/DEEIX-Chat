@@ -1027,6 +1027,7 @@ export function AssistantMessageMeta({
   readOnly = false,
   alwaysVisible = false,
   showBranchNavigator = true,
+  speechAction,
 }: {
   item: ChatMetaMessage;
   busy: boolean;
@@ -1049,6 +1050,7 @@ export function AssistantMessageMeta({
   readOnly?: boolean;
   alwaysVisible?: boolean;
   showBranchNavigator?: boolean;
+  speechAction?: React.ReactNode;
 }) {
   const t = useTranslations("chat.messages");
   const timeT = useTranslations("common.time");
@@ -1132,6 +1134,7 @@ export function AssistantMessageMeta({
                     <Copy strokeWidth={1.8} animateOnHover="default" />
                   )}
                 </MetaIconButton>
+                {speechAction}
                 {canEdit ? (
                   <MetaIconButton
                     label={t("editReply")}

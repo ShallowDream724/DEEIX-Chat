@@ -17,7 +17,13 @@ import {
   billingScheduleNote,
   cacheWriteBillingLabel,
   cacheWriteBillingNote,
+  readMeteredBillingSnapshot,
+  meteredServiceDisplayName,
+  buildMeteredBillingTableRow,
+  formatMeteredBillingAmountFromUSD,
+  type MeteredBillingLabels,
 } from "@/entities/billing";
+import { buildUsageLogDisplayRows } from "@/features/settings/model/subscription-usage-rows";
 import { isRecord, parseJSON, readFiniteNumber, readString, type UnknownRecord } from "@/shared/lib/type-guards";
 import {
   formatAccountBalance,
@@ -32,6 +38,7 @@ import {
 } from "@/features/settings/model/subscription-format";
 
 type BillingTooltipLabels = {
+  metered: MeteredBillingLabels;
   display: BillingDisplayLabels;
   baseService: string;
   input: string;
@@ -55,8 +62,10 @@ function formatBalanceAfter(value: number | null | undefined, billingDisplay: Bi
 
 function useBillingTooltipLabels(): BillingTooltipLabels {
   const t = useTranslations("settings.subscriptionPage.billingTooltip");
+  const tMetered = useTranslations("billingMetered");
   return React.useMemo(
     () => ({
+      metered: { service: tMetered("service"), voiceInput: tMetered("voiceInput"), readAloud: tMetered("readAloud"), actual: tMetered("actual"), billed: tMetered("billed"), seconds: tMetered("seconds"), hour: tMetered("hour"), characters: tMetered("characters"), pages: tMetered("pages"), roundedAmount: tMetered("roundedAmount") },
       display: {
         cacheWrite: t("cacheWrite"),
         cacheWrite5m: t("cacheWrite5m"),
@@ -85,7 +94,7 @@ function useBillingTooltipLabels(): BillingTooltipLabels {
       secondUnit: t("secondUnit"),
       tieredRange: (from, upTo) => upTo ? t("tieredRangeBounded", { from, upTo }) : t("tieredRangeOpen", { from }),
     }),
-    [t],
+    [t, tMetered],
   );
 }
 
@@ -310,44 +319,6 @@ function buildServiceItemTableRows(serviceItems: BillingServiceItemSnapshot[], l
   });
 }
 
-function isBaseServiceLedger(item: BillingUsageLedgerDTO): boolean {
-  const snapshot = parsePricingSnapshot(item.pricingSnapshotJSON);
-  return readServiceItems(snapshot).length > 0 && readMainBilledNanousd(snapshot) <= 0;
-}
-
-type UsageLogDisplayRow = {
-  item: BillingUsageLedgerDTO;
-  baseServiceItems: BillingServiceItemSnapshot[];
-};
-
-function buildUsageLogDisplayRows(items: BillingUsageLedgerDTO[]): UsageLogDisplayRow[] {
-  const chatRows = items.filter((item) => !isBaseServiceLedger(item));
-  const rows = chatRows.map((item): UsageLogDisplayRow => ({ item, baseServiceItems: [] }));
-  const serviceLedgers = items.filter(isBaseServiceLedger);
-  for (const serviceLedger of serviceLedgers) {
-    const serviceSnapshot = parsePricingSnapshot(serviceLedger.pricingSnapshotJSON);
-    const serviceItems = readServiceItems(serviceSnapshot);
-    if (serviceItems.length === 0) continue;
-    const serviceTime = new Date(serviceLedger.createdAt || serviceLedger.usageDate).getTime();
-    let matchedIndex = -1;
-    let matchedDistance = Number.POSITIVE_INFINITY;
-    for (let index = 0; index < rows.length; index += 1) {
-      const row = rows[index];
-      if (row.item.conversationID !== serviceLedger.conversationID) continue;
-      const rowTime = new Date(row.item.createdAt || row.item.usageDate).getTime();
-      const distance = Math.abs((Number.isFinite(serviceTime) ? serviceTime : 0) - (Number.isFinite(rowTime) ? rowTime : 0));
-      if (distance < matchedDistance) {
-        matchedDistance = distance;
-        matchedIndex = index;
-      }
-    }
-    if (matchedIndex >= 0) {
-      rows[matchedIndex].baseServiceItems.push(...serviceItems);
-    }
-  }
-  return rows;
-}
-
 function buildBaseBillingTooltipLines(serviceItems: BillingServiceItemSnapshot[], labels: BillingTooltipLabels, billingDisplay: BillingDisplayOptions): BillingTooltipLine[] {
   if (serviceItems.length === 0) {
     return [formatBillingTotalLine(labels.total, formatTooltipUsageCost(0, billingDisplay))];
@@ -367,6 +338,12 @@ function buildBaseBillingTooltipLines(serviceItems: BillingServiceItemSnapshot[]
 
 function buildServiceBillingTooltipLines(item: BillingUsageLedgerDTO, labels: BillingTooltipLabels, billingDisplay: BillingDisplayOptions): BillingTooltipLine[] {
   const snapshot = parsePricingSnapshot(item.pricingSnapshotJSON);
+  const metered = readMeteredBillingSnapshot(snapshot);
+  if (metered) {
+    const formatAmount = (usd: number) => formatMeteredBillingAmountFromUSD(usd, billingDisplay);
+    const row = buildMeteredBillingTableRow(metered, labels.metered, formatAmount, formatAmount);
+    return [{ type: "tiered-table", rangeLabel: labels.metered.roundedAmount, rows: [row], totalLabel: labels.total, totalAmount: formatAmount(nanousdToUSD(item.billedNanousd)) }];
+  }
   const mainBilledNanousd = readMainBilledNanousd(snapshot);
   const currentServiceItems = readServiceItems(snapshot);
   const currentServiceBilledNanousd = readServiceItemsBilledNanousd(currentServiceItems);
@@ -512,7 +489,7 @@ function TieredBillingTable({ line }: { line: Extract<BillingTooltipLine, { type
           {line.rows.map((row, rowIndex) => (
             <tr key={`${row.item}-${rowIndex}`} className="border-b border-background/10 last:border-0">
               <td className="whitespace-nowrap px-2 py-1 first:pl-0">{row.item}</td>
-              <td className="whitespace-nowrap px-2 py-1 text-right">{row.tokens}</td>
+              <td className="whitespace-pre-line px-2 py-1 text-right">{row.tokens}</td>
               <td className="whitespace-nowrap px-2 py-1 text-right">{row.unitPrice}</td>
               <td className="whitespace-nowrap px-2 py-1 text-right last:pr-0">{row.amount}</td>
             </tr>
@@ -548,7 +525,7 @@ function ServiceBillingSummary({ item, billingDisplay }: { item: BillingUsageLed
   const labels = useBillingTooltipLabels();
   const snapshot = parsePricingSnapshot(item.pricingSnapshotJSON);
   const currentServiceItems = readServiceItems(snapshot);
-  const totalNanousd = readMainBilledNanousd(snapshot) + readServiceItemsBilledNanousd(currentServiceItems);
+  const totalNanousd = readMeteredBillingSnapshot(snapshot) ? item.billedNanousd : readMainBilledNanousd(snapshot) + readServiceItemsBilledNanousd(currentServiceItems);
   const total = item.isFreeModel && totalNanousd <= 0 ? 0 : totalNanousd;
   return (
     <Tooltip>
@@ -560,6 +537,12 @@ function ServiceBillingSummary({ item, billingDisplay }: { item: BillingUsageLed
       </TooltipContent>
     </Tooltip>
   );
+}
+
+function UsageLogServiceName({ item, labels }: { item: BillingUsageLedgerDTO; labels: MeteredBillingLabels }) {
+  const metered = readMeteredBillingSnapshot(parsePricingSnapshot(item.pricingSnapshotJSON));
+  const label = item.platformModelName || !metered ? modelDisplayLabel(item) : meteredServiceDisplayName(metered, labels);
+  return <div className="truncate" title={label}>{label}</div>;
 }
 
 export function SubscriptionUsageLog({
@@ -596,6 +579,7 @@ export function SubscriptionUsageLog({
   onPageSizeChange: (pageSize: number) => void;
 }) {
   const t = useTranslations("settings.subscriptionPage.usageLog");
+  const billingLabels = useBillingTooltipLabels();
   const { locale } = useAppLocale();
   const rows = React.useMemo(() => buildUsageLogDisplayRows(items), [items]);
   const statusOptions = React.useMemo(
@@ -684,12 +668,10 @@ export function SubscriptionUsageLog({
                 <TableRow key={row.item.id}>
                   <TableCell className="text-xs text-muted-foreground">{formatUsageLogTime(row.item.createdAt || row.item.usageDate, locale)}</TableCell>
                   <TableCell className="text-xs font-medium">
-                    <div className="truncate" title={modelDisplayLabel(row.item)}>
-                      {modelDisplayLabel(row.item)}
-                    </div>
+                    <UsageLogServiceName item={row.item} labels={billingLabels.metered} />
                   </TableCell>
                   <TableCell className="text-xs">
-                    <BaseBillingSummary items={row.baseServiceItems} billingDisplay={billingDisplay} />
+                    {readMeteredBillingSnapshot(parsePricingSnapshot(row.item.pricingSnapshotJSON)) ? "—" : <BaseBillingSummary items={row.baseServiceItems} billingDisplay={billingDisplay} />}
                   </TableCell>
                   <TableCell className="text-xs">
                     <ServiceBillingSummary item={row.item} billingDisplay={billingDisplay} />

@@ -75,7 +75,7 @@ func (c *Client) generateOpenAICompatible(ctx context.Context, route portllm.Rou
 	debug := upstreamDebugSnapshot(req, payload, resp, body)
 	output, err := parseOpenAIGenerateOutput(endpoint, route.Protocol, body, deepSeekTextEncodedToolCallsEnabled(route))
 	if err != nil {
-		return nil, portllm.MarkRequestAccepted(attachUpstreamDebug(err, debug))
+		return output, portllm.MarkRequestAccepted(attachUpstreamDebug(err, debug))
 	}
 	output.Debug = debug
 	return output, nil
@@ -558,6 +558,12 @@ func consumeOpenAIGenerateStream(
 				result.ServerSideToolUsage = usage
 			}
 		}
+		if normalizeEndpoint(endpoint) == portllm.EndpointChatCompletions && len(asMap(parsed["usage"])) > 0 {
+			result.Usage = parseOpenAICompatibleUsageForAdapter(adapter, parsed)
+			if usage := parseServerSideToolUsage(parsed); usage != nil {
+				result.ServerSideToolUsage = usage
+			}
+		}
 		if err := parseStreamUpstreamError(parsed, payloadText); err != nil {
 			return err
 		}
@@ -616,6 +622,9 @@ func parseOpenAIGenerateOutput(endpoint string, adapter string, body []byte, all
 	}
 
 	result := buildGenerateOutputFromParsedForAdapter(endpoint, adapter, parsed, allowTextEncodedToolCalls)
+	if len(asMap(parsed["error"])) > 0 || getString(parsed["status"]) == "failed" {
+		return result, parseUpstreamError(http.StatusBadGateway, body, nil)
+	}
 	if normalizeEndpoint(endpoint) == portllm.EndpointChatCompletions && allowTextEncodedToolCalls && maybeDSMLToolCallsPrefix(result.Text) {
 		return nil, errDeepSeekDSMLToolCallsIncomplete
 	}
@@ -680,6 +689,9 @@ func mergeGenerateOutput(dst *portllm.GenerateOutput, src *portllm.GenerateOutpu
 	}
 	if dst.ResponseID == "" {
 		dst.ResponseID = strings.TrimSpace(src.ResponseID)
+	}
+	if src.ProviderStateJSON != "" {
+		dst.ProviderStateJSON = src.ProviderStateJSON
 	}
 	if dst.Text == "" {
 		dst.Text = src.Text

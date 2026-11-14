@@ -358,9 +358,10 @@ func (r *Repo) ApplyRunBlock(ctx context.Context, runID string, includeUser bool
 		if err := tx.Model(&models.Message{}).
 			Where("run_id = ? AND role = ?", runID, "assistant").
 			Updates(map[string]any{
-				"content":           "",
-				"reasoning_content": "",
-				"content_type":      "text",
+				"content":             "",
+				"reasoning_content":   "",
+				"provider_state_json": "",
+				"content_type":        "text",
 			}).Error; err != nil {
 			return err
 		}

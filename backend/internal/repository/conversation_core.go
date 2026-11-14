@@ -18,19 +18,20 @@ type MessageUsageUpdate struct {
 
 // AssistantMessageCompletionUpdate 定义助手消息完成态更新字段。
 type AssistantMessageCompletionUpdate struct {
-	ContentType      string
-	Content          string
-	ReasoningContent string
-	InputTokens      int64
-	OutputTokens     int64
-	CacheReadTokens  int64
-	CacheWriteTokens int64
-	ReasoningTokens  int64
-	LatencyMS        int64
-	Status           string
-	ErrorCode        string
-	ErrorMessage     string
-	KnowledgeSources []domainconversation.MessageKnowledgeSource
+	ContentType       string
+	Content           string
+	ReasoningContent  string
+	ProviderStateJSON string
+	InputTokens       int64
+	OutputTokens      int64
+	CacheReadTokens   int64
+	CacheWriteTokens  int64
+	ReasoningTokens   int64
+	LatencyMS         int64
+	Status            string
+	ErrorCode         string
+	ErrorMessage      string
+	KnowledgeSources  []domainconversation.MessageKnowledgeSource
 	// ReasoningEffort 为 nil 时保留原值，避免媒体等无推理能力的完成路径清空已记录的档位。
 	ReasoningEffort *string
 }

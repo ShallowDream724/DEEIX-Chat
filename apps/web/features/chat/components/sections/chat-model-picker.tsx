@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { InputGroupButton } from "@/components/ui/input-group";
 import type { ChatModelOption, ModelModality } from "@/features/chat/types/chat-runtime";
 import { useChatPopoverAlignOffset } from "@/features/chat/hooks/use-chat-popover-align-offset";
@@ -543,6 +544,7 @@ function ChatModelMenuItem({
   reservePricingSlot = false,
   onHover,
   rowRef,
+  onViewPricing,
 }: {
   model: ChatModelOption;
   selected: boolean;
@@ -566,6 +568,7 @@ function ChatModelMenuItem({
   onHover?: () => void;
   /** The row element, so the detail pane can be placed level with the row it describes. */
   rowRef?: (node: HTMLDivElement | null) => void;
+  onViewPricing?: (trigger: HTMLButtonElement) => void;
 }) {
   const platformModelName = resolveModelOptionLabel(model.platformModelName);
   const iconURL = React.useMemo(() => resolveModelOptionIconUrl(model), [model]);
@@ -615,6 +618,8 @@ function ChatModelMenuItem({
                   type="button"
                   className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:text-current focus-visible:text-current focus-visible:outline-none group-hover:text-current group-focus-within:text-current group-data-[selected=true]:text-current"
                   aria-label={viewPricingLabel}
+                  aria-haspopup={onViewPricing ? "dialog" : undefined}
+                  onClick={onViewPricing ? (event) => { event.stopPropagation(); onViewPricing(event.currentTarget); } : undefined}
                 >
                   {model.pricing.isFree ? (
                     <TicketSlash className="size-3.5" strokeWidth={1.8} />
@@ -624,6 +629,7 @@ function ChatModelMenuItem({
                 </button>
               </TooltipTrigger>
               <TooltipContent
+                hidden={Boolean(onViewPricing)}
                 side="right"
                 align="center"
                 sideOffset={8}
@@ -924,6 +930,8 @@ export function ChatModelPicker({
   const [open, setOpen] = React.useState(false);
   const [activeGroupKey, setActiveGroupKey] = React.useState("");
   const [mobileGroupKey, setMobileGroupKey] = React.useState<string | null>(null);
+  const [mobilePricingModel, setMobilePricingModel] = React.useState<ChatModelOption | null>(null);
+  const mobilePricingTriggerRef = React.useRef<HTMLButtonElement | null>(null);
   const [desktopSubmenuSide, setDesktopSubmenuSide] = React.useState<"right" | "left">("right");
   const [desktopSubmenuTop, setDesktopSubmenuTop] = React.useState(0);
   const [desktopSubmenuWidth, setDesktopSubmenuWidth] = React.useState(DESKTOP_MODEL_MENU_WIDTH);
@@ -1391,6 +1399,9 @@ export function ChatModelPicker({
             avoidCollisions={!isMobile}
             sideOffset={DESKTOP_MODEL_MENU_SIDE_OFFSET}
             collisionPadding={24}
+            onInteractOutside={(event) => {
+              if (mobilePricingModel) event.preventDefault();
+            }}
             onOpenAutoFocus={(event) => {
               if (!isMobile) {
                 event.preventDefault();
@@ -1448,6 +1459,10 @@ export function ChatModelPicker({
                             viewPricingLabel={t("viewPricing")}
                             freeBadgeLabel={t("freeBadge")}
                             reservePricingSlot={mobileGroup.items.some((item) => item.pricing)}
+                            onViewPricing={(trigger) => {
+                              mobilePricingTriggerRef.current = trigger;
+                              setMobilePricingModel(item);
+                            }}
                           />
                         ))}
                       </div>
@@ -1652,6 +1667,35 @@ export function ChatModelPicker({
             )}
         </PopoverContent>
       </Popover>
+      <Sheet open={mobilePricingModel !== null} onOpenChange={(nextOpen) => { if (!nextOpen) setMobilePricingModel(null); }}>
+        <SheetContent
+          side="bottom"
+          className="max-h-[min(80dvh,36rem)] gap-0 rounded-xl"
+          aria-describedby={undefined}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            mobilePricingTriggerRef.current?.focus({ preventScroll: true });
+          }}
+        >
+          <SheetHeader className="px-4 pb-3 pt-4 pr-12">
+            <SheetTitle>{mobilePricingModel ? resolveModelOptionLabel(mobilePricingModel.platformModelName) : t("viewPricing")}</SheetTitle>
+            <p className="text-xs text-muted-foreground">{t("viewPricing")}</p>
+          </SheetHeader>
+          <div className="min-h-0 overflow-auto overscroll-contain px-4 pb-4">
+            {mobilePricingModel?.pricing ? (
+              <div className="overflow-x-auto rounded-md bg-foreground p-3 text-background text-xs tabular-nums">
+                <ModelPricingTooltipContent
+                  platformModelName={mobilePricingModel.platformModelName}
+                  protocols={mobilePricingModel.protocols}
+                  pricing={mobilePricingModel.pricing}
+                  billingDisplay={billingDisplay}
+                  labels={pricingLabels}
+                />
+              </div>
+            ) : null}
+          </div>
+        </SheetContent>
+      </Sheet>
       </div>
   );
 }

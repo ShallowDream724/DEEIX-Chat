@@ -48,6 +48,7 @@ import {
 import { useChatData } from "@/features/chat/hooks/use-chat-data";
 import { useChatModelOptions } from "@/features/chat/hooks/use-chat-model-options";
 import { useChatRuntime } from "@/features/chat/hooks/use-chat-runtime";
+import { useChatSpeechPlayback } from "@/features/chat/hooks/use-chat-speech-playback";
 import { useChatScreenshot } from "@/features/chat/hooks/use-chat-screenshot";
 import { useChatLoadedConversation } from "@/features/chat/hooks/use-chat-loaded-conversation";
 import { useChatViewerProfile } from "@/features/chat/hooks/use-chat-viewer-profile";
@@ -287,6 +288,8 @@ export function AppChatArea() {
     transient: temporaryMode,
   });
   const selectionConversationKey = resolveConversationComposerKey(conversationID);
+  const speechScopeKey = `${temporaryMode ? "temporary" : "draft"}:${conversationKey}:${newConversationRevision}`;
+  useChatSpeechPlayback(conversationID, speechScopeKey);
   const selectedModel = React.useMemo(
     () => modelOptions.find((item) => item.platformModelName === selectedPlatformModelName) ?? null,
     [modelOptions, selectedPlatformModelName],
@@ -728,6 +731,7 @@ export function AppChatArea() {
   );
   const temporaryRuntime = useChatTemporaryRuntime({
     active: temporaryMode,
+    scopeKey: speechScopeKey,
     draft,
     model: selectedPlatformModelName,
     options: requestOptions,
@@ -796,13 +800,13 @@ export function AppChatArea() {
     && (nativeReadinessPending || !nativeEligibleFileIDs.has(item.fileID)));
   const sendTemporary = temporaryRuntime.send;
   const startNewTemporary = temporaryRuntime.startNew;
-  const handleSendComposer = React.useCallback(() => {
+  const handleSendComposer = React.useCallback((draftOverride?: string) => {
     if (inputIssues.length > 0) {
       onInputLimit(inputIssues);
       return;
     }
     if (processingAttachments) return;
-    return temporaryMode ? sendTemporary() : onSendMessage();
+    return temporaryMode ? sendTemporary(draftOverride) : onSendMessage(draftOverride);
   }, [inputIssues, onInputLimit, onSendMessage, processingAttachments, sendTemporary, temporaryMode]);
   const displayMessages = temporaryMode ? temporaryRuntime.messages : messagesWithInlineError;
   const chatUIBlockState = React.useMemo(
@@ -948,7 +952,7 @@ export function AppChatArea() {
     modelLoading: modelsLoading,
     dropActive: fileDragActive,
     temporaryMode,
-    autoFocusKey: conversationID ?? `${conversationKey}:${newConversationRevision}`,
+    autoFocusKey: conversationID ?? speechScopeKey,
     onDraftChange: setDraft,
     onModelChange: setSelectedPlatformModelName,
     onModelCatalogRefresh: refreshModelCatalogForComposer,

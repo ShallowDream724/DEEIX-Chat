@@ -6,9 +6,11 @@ import { formatBillingBalance } from "@/features/admin/utils/user-display";
 import { type BillingDisplayLabels, type BillingDisplayOptions, billingRateMultiplierNote, billingScheduleNote, cacheWriteBillingLabel, cacheWriteBillingNote, formatBillingDisplayCompactAmountFromUSD, formatBillingDisplayPreciseAmountFromUSD, formatBillingDisplayUnitPriceFromUSD } from "@/entities/billing";
 import { isRecord, parseJSON, readBoolean, readString } from "@/shared/lib/type-guards";
 import { readImageBillingSnapshot, type ImageBillingSnapshot, type ImageBillingBreakdown, type ImageBillingLabels } from "@/entities/billing";
+import { readMeteredBillingSnapshot, buildMeteredBillingTableRow, formatMeteredBillingAmountFromUSD, type MeteredBillingSnapshot, type MeteredBillingLabels } from "@/entities/billing";
 
 export type UsagePricingSnapshot = {
   imageBilling?: ImageBillingSnapshot;
+  meteredBilling?: MeteredBillingSnapshot;
   pricing_mode?: "token" | "call" | "duration" | "tiered" | string;
   provider_protocol?: string;
   duration_billable?: boolean;
@@ -44,6 +46,7 @@ export type UsagePricingSnapshot = {
 
 export type UsageBillingLabels = {
   image: ImageBillingLabels;
+  metered: MeteredBillingLabels;
   input: string;
   output: string;
   cacheRead: string;
@@ -157,6 +160,7 @@ export function parseUsagePricingSnapshot(raw: string): UsagePricingSnapshot {
   }
   const snapshot: UsagePricingSnapshot = {};
   snapshot.imageBilling = readImageBillingSnapshot(parsed);
+  snapshot.meteredBilling = readMeteredBillingSnapshot(parsed);
   for (const key of USAGE_SNAPSHOT_STRING_KEYS) {
     const value = readString(parsed, key);
     if (value !== undefined) snapshot[key] = value;
@@ -305,6 +309,12 @@ export function buildUsageBillingTooltipLines(
   billingDisplay: BillingDisplayOptions,
 ): UsageBillingTooltipLine[] {
   const snapshot = parseUsagePricingSnapshot(item.pricingSnapshotJSON);
+  if (snapshot.meteredBilling) {
+    const metered = snapshot.meteredBilling;
+    const formatAmount = (usd: number) => formatMeteredBillingAmountFromUSD(usd, billingDisplay);
+    const row = buildMeteredBillingTableRow(metered, labels.metered, formatAmount, formatAmount);
+    return [{ type: "tiered-table", rangeLabel: labels.metered.roundedAmount, rows: [row], totalLabel: labels.total, totalAmount: formatAmount(nanousdToUSD(item.billedNanousd)) }];
+  }
   const pricingMode = normalizePricingMode(snapshot.pricing_mode);
   const inputRate = readUsageSnapshotNumber(snapshot, "input_nanousd_per_m_tokens");
   const outputRate = readUsageSnapshotNumber(snapshot, "output_nanousd_per_m_tokens");

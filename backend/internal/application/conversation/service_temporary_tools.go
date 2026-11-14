@@ -52,25 +52,42 @@ func (s *Service) runTemporaryGeneration(ctx context.Context, input temporaryGen
 	completedLLMCallCount := 0
 	meter := input.ContextMeter
 	var initialObservation contextInputObservation
+	var nativeURLInput deepSeekURLInput
 
 	runGenerate := func(currentInput llm.GenerateInput) (*llm.GenerateOutput, error) {
 		currentInput = enforceTemporaryGenerateInput(currentInput)
 		currentInput = enforceRouteGeneratePolicy(route.Protocol, currentInput)
+		var fetchBudget deepSeekURLBudget
+		if !nativeURLInput.prepared && len(deepSeekExplicitURLs(currentInput)) > 0 {
+			fetchBudget = deepSeekURLBudget{route: route, estimate: followUpUsageBudgetEstimate(totalUsage, meter.estimate(currentInput), currentInput.Options)}
+		}
+		preparedInput, fetchUsage, fetchCalls, fetchErr := s.prepareDeepSeekURLInput(ctx, routeConfig, currentInput, request.UsageAuthorization, &nativeURLInput, fetchBudget)
+		totalServerToolUsage = addServerSideToolUsage(totalServerToolUsage, fetchUsage)
+		if len(fetchCalls) > 0 {
+			appendUpstreamServerToolTrace(traceRecorder, upstreamServerToolCallRows(&llm.GenerateOutput{ServerToolCalls: fetchCalls}, request.ClientRunID))
+		}
+		if fetchErr != nil {
+			return &llm.GenerateOutput{ServerSideToolUsage: totalServerToolUsage}, fetchErr
+		}
+		currentInput = preparedInput
 		if err := validateGenerationInputMedia(routeConfig, currentInput); err != nil {
-			return nil, err
+			return &llm.GenerateOutput{ServerSideToolUsage: totalServerToolUsage}, err
 		}
 		current := describeContextInput(meter.identity, currentInput, nil)
 		estimate := meter.estimateDescribed(current)
 		if err := input.ContextBudget.evaluate(currentInput, estimate).err(); err != nil {
-			return nil, err
+			return &llm.GenerateOutput{ServerSideToolUsage: totalServerToolUsage}, err
 		}
 		// Each follow-up is independently billable. Reject a local input limit
 		// before raising the budget reservation for this upstream call.
-		if llmCallCount > 0 {
-			if err := s.ensureUsageBudgetCoversEstimate(ctx, request.UsageAuthorization, route, initialInput.Options, followUpUsageBudgetEstimate(
-				totalUsage, estimate, initialInput.Options,
-			)); err != nil {
-				return nil, err
+		if llmCallCount > 0 || len(nativeURLInput.parts) > 0 {
+			budgetEstimate := followUpUsageBudgetEstimate(totalUsage, estimate, initialInput.Options)
+			if len(nativeURLInput.parts) > 0 {
+				budgetEstimate.NativeToolUsage = addServerSideToolUsage(nil, totalServerToolUsage)
+				budgetEstimate.NativeToolUsage["deepseek.tool_fetch"]++
+			}
+			if err := s.ensureUsageBudgetCoversEstimate(ctx, request.UsageAuthorization, route, initialInput.Options, budgetEstimate); err != nil {
+				return &llm.GenerateOutput{ServerSideToolUsage: totalServerToolUsage}, err
 			}
 		}
 
@@ -122,6 +139,7 @@ func (s *Service) runTemporaryGeneration(ctx context.Context, input temporaryGen
 		if output == nil {
 			output = &llm.GenerateOutput{}
 		}
+		output.ProviderStateJSON = withDeepSeekURLContext(output.ProviderStateJSON, route.Protocol, nativeURLInput.parts)
 		if output.Text == "" {
 			output.Text = callText.String()
 		}
@@ -186,9 +204,10 @@ func (s *Service) runTemporaryGeneration(ctx context.Context, input temporaryGen
 			pending = pending[:remainingToolCalls]
 		}
 		assistantToolMessage := llm.Message{
-			Role:      "assistant",
-			Content:   output.Text,
-			ToolCalls: pending,
+			ProviderStateJSON: output.ProviderStateJSON,
+			Role:              "assistant",
+			Content:           output.Text,
+			ToolCalls:         pending,
 		}
 		resultBudget := resolveToolResultTokenBudget(
 			initialInput,

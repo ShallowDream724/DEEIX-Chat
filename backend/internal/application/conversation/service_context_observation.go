@@ -59,13 +59,18 @@ func describeContextInput(identity string, input llm.GenerateInput, fullMessages
 		Duration               int64
 		Size                   int64
 		Workspace              bool `json:",omitempty"`
+		ParsedDocument         bool `json:",omitempty"`
 	}
 	media := make([]mediaPart, 0)
 	var system []string
+	var providerStates []string
 	if strings.TrimSpace(input.Instructions) != "" {
 		system = append(system, strings.TrimSpace(input.Instructions))
 	}
 	for _, message := range input.Messages {
+		if message.ProviderStateJSON != "" {
+			providerStates = append(providerStates, contextObservationHash(message.ProviderStateJSON))
+		}
 		if message.Role == "system" || message.Role == "developer" {
 			if text := strings.TrimSpace(systemInstructionText(message)); text != "" {
 				system = append(system, text)
@@ -84,7 +89,7 @@ func describeContextInput(identity string, input llm.GenerateInput, fullMessages
 				if part.Reference != nil {
 					contentHash = part.Reference.SHA256
 				}
-				media = append(media, mediaPart{part.Kind, part.MimeType, part.FileName, contentHash, part.SourceFileIDs, part.PageCount, part.DurationSeconds, part.ByteSize(), part.WorkspaceFile})
+				media = append(media, mediaPart{part.Kind, part.MimeType, part.FileName, contentHash, part.SourceFileIDs, part.PageCount, part.DurationSeconds, part.ByteSize(), part.WorkspaceFile, part.ParsedDocument})
 			}
 		}
 	}
@@ -96,7 +101,8 @@ func describeContextInput(identity string, input llm.GenerateInput, fullMessages
 			Options                map[string]any
 			Tools                  []llm.ToolDefinition
 			DisableTools           bool
-		}{identity, strings.Join(system, "\n\n"), media, input.Options, input.Tools, input.DisableTools}),
+			ProviderStates         []string `json:",omitempty"`
+		}{identity, strings.Join(system, "\n\n"), media, input.Options, input.Tools, input.DisableTools, providerStates}),
 		EstimatedTokens: estimateGenerateInputTokens(input),
 	}
 }

@@ -2,7 +2,7 @@ package nativetool
 
 import "testing"
 
-func TestDeepSeekFetchRemainsMeteredWithoutAnInputTool(t *testing.T) {
+func TestDeepSeekReadURLAndImageMeterHaveStableIdentities(t *testing.T) {
 	for _, toolType := range []string{"web_fetch", "tool_fetch"} {
 		if _, _, ok := PayloadFromOption("openai_responses", map[string]any{"type": toolType}); ok {
 			t.Fatalf("metered fetch must not create input tool %q", toolType)
@@ -14,12 +14,12 @@ func TestDeepSeekFetchRemainsMeteredWithoutAnInputTool(t *testing.T) {
 			fetch = definition
 		}
 	}
-	if !fetch.MeteringOnly || CanonicalPayload(fetch, map[string]any{"type": "web_fetch"}) != nil {
-		t.Fatalf("fetch must be metering-only: %#v", fetch)
+	if fetch.MeteringOnly || CanonicalPayload(fetch, map[string]any{"type": "web_fetch"})["type"] != "deepseek_read_url" {
+		t.Fatalf("fetch must be an independent read tool: %#v", fetch)
 	}
 	legacy := DefinitionsFromCapabilitiesJSON(`{"nativeTools":[{"key":"deepseek.tool_fetch","protocol":"openai_responses","type":"web_fetch","payload":{"type":"web_fetch"}}]}`)
-	if len(legacy) != 1 || !legacy[0].MeteringOnly || legacy[0].Payload != nil {
-		t.Fatalf("legacy capabilities recreated an input tool: %#v", legacy)
+	if len(legacy) != 1 || legacy[0].MeteringOnly || legacy[0].Payload["type"] != "deepseek_read_url" {
+		t.Fatalf("legacy capabilities did not migrate to read_url: %#v", legacy)
 	}
 	if len(MergeDefinitions(legacy)) != len(Definitions()) {
 		t.Fatal("legacy fetch duplicated the canonical billing identity")

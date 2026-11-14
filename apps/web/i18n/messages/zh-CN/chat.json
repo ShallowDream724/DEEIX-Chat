@@ -287,6 +287,15 @@
     "generating": "正在生成，代码完成后显示预览。",
     "security": "预览运行在隔离沙箱中，外部网络、表单、弹窗、父页面访问和存储访问均受限制。"
   },
+  "speech": {
+    "play": "朗读回复",
+    "retry": "重试朗读",
+    "pause": "暂停朗读",
+    "resume": "继续朗读",
+    "loading": "正在准备朗读…",
+    "failed": "朗读失败，请稍后重试",
+    "tooLong": "这条回复过长，暂时无法朗读"
+  },
   "messages": {
     "debugRequest": "请求",
     "debugResponse": "响应",
@@ -622,6 +631,12 @@
     "editQueuedMessage": "编辑排队消息",
     "deleteQueuedMessage": "删除排队消息",
     "voiceInput": "语音输入",
+    "voiceCancel": "取消",
+    "voiceStop": "停止",
+    "voiceSend": "发送",
+    "voiceTranscribing": "正在识别…",
+    "voiceRecording": "录音中",
+    "voiceRemaining": "剩余 {seconds} 秒",
     "cancelVoiceInput": "取消语音输入",
     "voiceUnsupported": "当前浏览器不支持语音输入",
     "voiceErrorTitle": "语音输入已停止",

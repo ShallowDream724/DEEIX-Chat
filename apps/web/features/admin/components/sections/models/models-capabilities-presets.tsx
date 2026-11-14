@@ -250,18 +250,21 @@ const GOOGLE_IMAGE_SIZES = ["1K", "2K", "4K"];
 const MODEL_CAPABILITY_PRESETS: CapabilityPreset[] = [
   {
     id: "deepseek_responses",
-    label: "DeepSeek（Responses）",
+    label: "DeepSeek Flash",
     provider: "DeepSeek",
     protocol: "openai_responses",
     payload: {
+      inputModalities: ["text", "image", "pdf", "attachment"],
       reasoning: {
         format: "openai",
         levels: ["none", "low", "high", "max"],
         default: "high",
       },
       nativeTools: [
-        { key: "deepseek.tool_search", provider: "DeepSeek", protocols: ["openai_responses"], type: "web_search", label: "DeepSeek Search", enabled: true, defaultEnabled: true, payload: { type: "web_search" } },
+        { key: "deepseek.tool_search", provider: "DeepSeek", protocols: ["openai_responses", "openai_chat_completions", "anthropic_messages"], type: "deepseek_web_search", label: "DeepSeek Search", enabled: true, defaultEnabled: true, payload: { type: "deepseek_web_search" } },
+        { key: "deepseek.tool_fetch", provider: "DeepSeek", protocols: ["openai_responses", "openai_chat_completions", "anthropic_messages"], type: "deepseek_read_url", label: "DeepSeek Read URL", enabled: true, defaultEnabled: true, payload: { type: "deepseek_read_url" } },
       ],
+      nativeFiles: { provider: "deepseek", enabled: true, spreadsheet: "local" },
     },
   },
   {

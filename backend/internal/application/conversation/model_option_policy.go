@@ -107,11 +107,53 @@ func modelCapabilityDefaultOptions(raw string) map[string]any {
 	}
 	var config struct {
 		DefaultOptions map[string]any `json:"defaultOptions"`
+		NativeToolKeys []string       `json:"nativeToolKeys"`
+		NativeTools    []struct {
+			Key            string `json:"key"`
+			ToolKey        string `json:"toolKey"`
+			Enabled        *bool  `json:"enabled"`
+			DefaultEnabled *bool  `json:"defaultEnabled"`
+		} `json:"nativeTools"`
 	}
 	if err := json.Unmarshal([]byte(value), &config); err != nil {
 		return nil
 	}
-	return cloneModelOptionMap(config.DefaultOptions)
+	defaults := cloneModelOptionMap(config.DefaultOptions)
+	if _, explicit := defaults["tools"]; explicit {
+		return defaults
+	}
+	var tools []map[string]any
+	add := func(key string) {
+		typ := ""
+		if key == "deepseek.tool_search" {
+			typ = "deepseek_web_search"
+		}
+		if key == "deepseek.tool_fetch" {
+			typ = "deepseek_read_url"
+		}
+		if typ != "" {
+			tools = append(tools, map[string]any{"type": typ})
+		}
+	}
+	if config.NativeTools != nil {
+		for _, tool := range config.NativeTools {
+			if tool.Enabled != nil && !*tool.Enabled || tool.DefaultEnabled != nil && !*tool.DefaultEnabled {
+				continue
+			}
+			add(textutil.FirstNonEmpty(tool.Key, tool.ToolKey))
+		}
+	} else {
+		for _, key := range config.NativeToolKeys {
+			add(key)
+		}
+	}
+	if len(tools) > 0 {
+		if defaults == nil {
+			defaults = map[string]any{}
+		}
+		defaults["tools"] = tools
+	}
+	return defaults
 }
 
 func modelCapabilityLockedOptionPaths(raw string) [][]string {
@@ -233,9 +275,7 @@ func nativeToolCapabilitiesForProtocol(capabilities []nativeToolCapability, prot
 	current := make([]nativeToolCapability, 0, len(capabilities))
 	fallback := make([]nativeToolCapability, 0, len(capabilities))
 	for _, capability := range capabilities {
-		// DeepSeek's hosted web tools are supported only by Responses; unlike
-		// other configured tools, they cannot use the cross-protocol fallback.
-		if capability.Key == "deepseek.tool_search" && protocol != "openai_responses" {
+		if strings.HasPrefix(capability.Key, "deepseek.") && capability.Protocol != protocol {
 			continue
 		}
 		fallback = append(fallback, capability)
@@ -341,14 +381,8 @@ func nativeToolCapabilitiesFromConfig(raw string, protocolKey string) []nativeTo
 	seen := make(map[string]struct{})
 	addCapability := func(tool nativeToolCapability) {
 		tool.Key = strings.TrimSpace(tool.Key)
-		// Older settings exposed fetch as a standalone tool. DeepSeek executes
-		// it internally through web_search, so preserve the selection as one
-		// capability while authorizing both metered operations.
-		if tool.Key == "deepseek.tool_fetch" {
-			tool.Key = "deepseek.tool_search"
-		}
-		if tool.Key == "deepseek.tool_search" {
-			if definition, ok := nativeToolDefinitionForProtocol(nativeToolDefinitionsByKey(tool.Key), "openai_responses"); ok {
+		if tool.Key == "deepseek.tool_search" || tool.Key == "deepseek.tool_fetch" {
+			if definition, ok := nativeToolDefinitionForProtocol(nativeToolDefinitionsByKey(tool.Key), textutil.FirstNonEmpty(tool.Protocol, protocolKey)); ok {
 				tool.Protocol = definition.Protocol
 				tool.Type = definition.Type
 				tool.Payload = nativetool.CanonicalPayload(definition, tool.Payload)
@@ -383,6 +417,12 @@ func nativeToolCapabilitiesFromConfig(raw string, protocolKey string) []nativeTo
 		}
 		protocols := nativeToolCapabilityProtocols(item.Protocols, item.Protocol)
 		definitions := nativeToolDefinitionsByKey(key)
+		if key == "deepseek.tool_search" || key == "deepseek.tool_fetch" {
+			wireType := textutil.FirstNonEmpty(item.Type, modelOptionStringValue(item.Payload["type"]))
+			if wireType == "web_search" || wireType == "web_fetch" || wireType == "tool_fetch" {
+				protocols = nativeToolDefinitionProtocols(definitions)
+			}
+		}
 		if len(protocols) == 0 {
 			protocols = nativeToolDefinitionProtocols(definitions)
 		}
@@ -444,7 +484,7 @@ func nativeToolCapabilitiesFromConfig(raw string, protocolKey string) []nativeTo
 			if modelOptionStringValue(tool["type"]) == "web_fetch" {
 				// Older fetch defaults identify DeepSeek before the shared
 				// web_search type can be inferred as an OpenAI capability.
-				addCapability(nativeToolCapability{Key: "deepseek.tool_search", Protocol: "openai_responses", Payload: tool})
+				addCapability(nativeToolCapability{Key: "deepseek.tool_fetch", Protocol: protocolKey, Payload: tool})
 				break
 			}
 		}
@@ -456,7 +496,7 @@ func nativeToolCapabilitiesFromConfig(raw string, protocolKey string) []nativeTo
 		// the selected route uses Chat Completions.
 		declared := false
 		for _, capability := range capabilities {
-			if (capability.Protocol == protocolKey || capability.Key == "deepseek.tool_search") && nativeToolCapabilityMatchesRawTool(capability, tool) {
+			if capability.Protocol == protocolKey && nativeToolCapabilityMatchesRawTool(capability, tool) {
 				declared = true
 				break
 			}
@@ -554,7 +594,10 @@ func nativeToolDefinitionForProtocol(definitions []nativetool.Definition, protoc
 
 func nativeToolCapabilityMatchesRawTool(capability nativeToolCapability, rawTool map[string]any) bool {
 	rawType := strings.TrimSpace(modelOptionStringValue(rawTool["type"]))
-	if capability.Key == "deepseek.tool_search" && (rawType == "web_fetch" || rawType == "tool_fetch") {
+	if capability.Key == "deepseek.tool_search" && rawType == "web_search" {
+		return true
+	}
+	if capability.Key == "deepseek.tool_fetch" && (rawType == "web_fetch" || rawType == "tool_fetch") {
 		return true
 	}
 	if rawType != "" && capability.Type != "" {

@@ -870,8 +870,9 @@ export function useChatMessageSubmit({
     ],
   );
 
-  const enqueueSubmission = React.useCallback(() => {
-    const content = draft.trim();
+  const enqueueSubmission = React.useCallback((draftOverride?: string) => {
+    const originalDraft = draftOverride ?? draft;
+    const content = originalDraft.trim();
     const currentAttachments = attachments.slice();
     if ((!content && currentAttachments.length === 0) || uploading) {
       return false;
@@ -939,7 +940,7 @@ export function useChatMessageSubmit({
           parentMessagePublicID,
           content,
           composerRevision,
-          originalDraft: draft,
+          originalDraft,
           attachments: currentAttachments,
           platformModelName: selectedPlatformModelName,
           options: sanitizeConversationOptions(options),
@@ -985,12 +986,13 @@ export function useChatMessageSubmit({
     reload,
   });
 
-  const onSendMessage = React.useCallback(async () => {
+  const onSendMessage = React.useCallback(async (draftOverride?: string) => {
     if (sending || resumeGenerationActive) {
-      enqueueSubmission();
+      enqueueSubmission(draftOverride);
       return;
     }
-    const content = draft.trim();
+    const originalDraft = draftOverride ?? draft;
+    const content = originalDraft.trim();
     const parentMessagePublicID =
       resolvePersistedPublicID(currentLeafMessage?.publicID) ??
       resolveDefaultSubmissionParentMessage(visibleMessages)?.publicID ??
@@ -999,7 +1001,7 @@ export function useChatMessageSubmit({
       content,
       currentAttachments: attachments,
       resetComposer: true,
-      originalDraft: draft,
+      originalDraft,
       parentMessagePublicID,
       branchReason: "default",
     });

@@ -78,6 +78,13 @@ func estimateNativeMediaTokens(part llm.ContentPart, tokensPerSecond int64, byte
 }
 
 func estimateContentPartTokens(part llm.ContentPart) int64 {
+	if part.ParsedDocument {
+		pages := int64(part.PageCount)
+		if pages <= 0 {
+			pages = max(part.ByteSize()/nativeDocumentBytesPerPage, 1)
+		}
+		return pages * nativeDocumentTokensPerPage
+	}
 	if part.WorkspaceFile {
 		switch part.Kind {
 		case llm.ContentPartDocument, llm.ContentPartAudio, llm.ContentPartVideo, llm.ContentPartAttachment:

@@ -1,0 +1,12 @@
+{
+  "service": "语音服务",
+  "voiceInput": "语音输入",
+  "readAloud": "朗读回复",
+  "actual": "实际用量",
+  "billed": "计费用量",
+  "seconds": "秒",
+  "hour": "小时",
+  "characters": "计费字符",
+  "pages": "页",
+  "roundedAmount": "计费用量 × 单价 ÷ 单价单位，金额向上取整至最小结算单位。"
+}

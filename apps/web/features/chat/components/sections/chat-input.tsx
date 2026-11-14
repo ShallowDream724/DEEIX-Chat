@@ -1,6 +1,7 @@
 "use client";
 
-import { Box, CircleAlert, CornerDownRight, Eye, EyeOff, HatGlasses, LoaderCircle, PencilLine, Trash2 } from "lucide-react";
+import { Box, CircleAlert, CornerDownRight, Eye, EyeOff, HatGlasses, LoaderCircle, PencilLine, Square, Trash2 } from "lucide-react";
+import { MediaWaveform } from "@/components/ui/media-waveform";
 import { AnimatePresence, motion } from "motion/react";
 import { useLocale, useTranslations } from "next-intl";
 import * as React from "react";
@@ -171,7 +172,7 @@ type ChatInputProps = {
   onUploadFiles: (files: File[]) => Promise<PendingAttachment[]>;
   onCaptureScreenshot: () => void | Promise<void>;
   onRemoveAttachment: (fileID: string) => void;
-  onSendMessage: () => void | Promise<void>;
+  onSendMessage: (draftOverride?: string) => void | Promise<void>;
   onStopMessage: () => void;
   onDeleteQueuedMessage: (id: string) => void;
   onEditQueuedMessage: (id: string, content: string) => void;
@@ -286,6 +287,7 @@ function ChatInputComponent({
   }, [tComposer]);
   const speechInput = useChatSpeechInput({
     draft,
+    scopeKey: autoFocusKey,
     language: locale,
     listeningPlaceholder: tComposer("voiceListeningPlaceholder"),
     onDraftChange,
@@ -293,6 +295,9 @@ function ChatInputComponent({
     placeholder: tComposer("inputPlaceholder"),
     startingPlaceholder: tComposer("voiceStartingPlaceholder"),
   });
+  const sendMessageRef = React.useRef(onSendMessage);
+  sendMessageRef.current = onSendMessage;
+  const sendComposer = () => speechInput.finishAndSend((finalDraft) => sendMessageRef.current(finalDraft));
   const [hoveredTool, setHoveredTool] = React.useState<"upload" | "screenshot" | null>(null);
   const [ragWarnDismissed, setRagWarnDismissed] = React.useState(false);
   const [previewAttachment, setPreviewAttachment] = React.useState<PendingAttachment | null>(null);
@@ -967,7 +972,6 @@ function ChatInputComponent({
             ref={textareaRef}
             value={draft}
             disabled={loading}
-            readOnly={speechInput.active}
             placeholder={dropActive ? tChat("attachments.dropTitle") : speechInput.active ? speechInput.placeholder : mediaPlaceholder || speechInput.placeholder}
             rows={1}
             aria-controls={showMentionMenu ? mentionMenuID : undefined}
@@ -1041,11 +1045,31 @@ function ChatInputComponent({
               if (shouldSend) {
                 event.preventDefault();
                 if (canSend) {
-                  void onSendMessage();
+                  void sendComposer();
                 }
               }
             }}
           />
+
+          {speechInput.active ? (
+            <div className="mx-3 mt-2 flex min-h-12 items-center gap-2 rounded-xl border border-border/60 bg-muted/30 px-2 py-1.5" role="group" aria-label={tComposer("voiceInput")}>
+              <InputGroupButton type="button" variant="ghost" className="h-9 shrink-0 gap-1.5 px-2 text-muted-foreground" onClick={speechInput.cancel} aria-label={tComposer("cancelVoiceInput")}>
+                <XIcon size={16} /><span className="hidden sm:inline">{tComposer("voiceCancel")}</span>
+              </InputGroupButton>
+              <div className="flex min-w-0 flex-1 items-center gap-2">
+                {speechInput.status === "listening" ? <MediaWaveform active className="h-7 min-w-4 flex-1" /> : <LoaderCircle aria-hidden className="size-4 shrink-0 animate-spin text-muted-foreground" />}
+                <span className="shrink-0 text-xs tabular-nums text-muted-foreground" role="status" aria-live={speechInput.remainingMS <= 10000 ? "polite" : "off"}>
+                  {speechInput.status === "transcribing" ? tComposer("voiceTranscribing") : speechInput.status === "starting" ? tComposer("voiceStartingPlaceholder") : speechInput.remainingMS <= 10000 ? tComposer("voiceRemaining", { seconds: Math.ceil(speechInput.remainingMS / 1000) }) : `${tComposer("voiceRecording")} ${Math.floor(speechInput.elapsedMS / 60000)}:${String(Math.floor(speechInput.elapsedMS / 1000) % 60).padStart(2, "0")}`}
+                </span>
+              </div>
+              <InputGroupButton type="button" variant="outline" className="h-9 shrink-0 gap-1.5 px-2.5" disabled={speechInput.status !== "listening"} onClick={() => void speechInput.stop()} aria-label={tComposer("voiceStop")}>
+                <Square className="size-3.5" /><span className="hidden sm:inline">{tComposer("voiceStop")}</span>
+              </InputGroupButton>
+              <InputGroupButton type="button" variant="default" className="h-9 shrink-0 gap-1.5 px-2.5" disabled={speechInput.status === "starting" || loading || uploading || waitingForAttachments} onClick={() => void sendComposer()} aria-label={tComposer("voiceSend")}>
+                <Send size={16} /><span className="hidden sm:inline">{tComposer("voiceSend")}</span>
+              </InputGroupButton>
+            </div>
+          ) : null}
 
           <InputGroupAddon align="block-end" className="items-center justify-between pt-2">
             <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
@@ -1227,6 +1251,15 @@ function ChatInputComponent({
                 placementPreference={isConversationMode ? "top" : "bottom"}
               />
 
+              {hasSubmitContent && !speechInput.active ? (
+                <Tooltip><TooltipTrigger asChild>
+                  <InputGroupButton type="button" variant="ghost" size="icon-sm" className="size-7 shrink-0 rounded-md text-muted-foreground hover:text-foreground sm:size-8" disabled={loading || uploading || !speechInput.supported} onClick={() => void speechInput.start()} aria-label={tComposer("voiceInput")}>
+                    <AudioLines size={20} strokeWidth={1.4} />
+                  </InputGroupButton>
+                </TooltipTrigger><TooltipContent>{tComposer("voiceInput")}</TooltipContent></Tooltip>
+              ) : null}
+
+              {!speechInput.active ? (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <InputGroupButton
@@ -1235,7 +1268,7 @@ function ChatInputComponent({
                     size="icon-sm"
                     className="size-7 rounded-md text-muted-foreground hover:text-foreground sm:size-8"
                     disabled={loading || uploading || (hasSubmitContent && waitingForAttachments) || (!sending && !hasSubmitContent && !speechInput.supported)}
-                    onClick={hasSubmitContent ? onSendMessage : sending ? onStopMessage : speechInput.toggle}
+                    onClick={hasSubmitContent ? sendComposer : sending ? onStopMessage : speechInput.toggle}
                     onMouseEnter={() => setIsVoiceHovered(true)}
                     onMouseLeave={() => setIsVoiceHovered(false)}
                     aria-label={submitActionLabel}
@@ -1274,6 +1307,7 @@ function ChatInputComponent({
                   {submitActionLabel}
                 </TooltipContent>
               </Tooltip>
+              ) : null}
             </div>
           </InputGroupAddon>
         </div>

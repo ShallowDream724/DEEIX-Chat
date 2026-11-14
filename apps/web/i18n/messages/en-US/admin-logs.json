@@ -222,7 +222,7 @@
     "result": "Result",
     "reason": "Reason",
     "caller": "Caller",
-    "model": "Model",
+    "model": "Model / service",
     "usage": "Usage",
     "billing": "Billing",
     "balanceAfter": "Balance after settlement",

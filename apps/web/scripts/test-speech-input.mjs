@@ -1,0 +1,316 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { stripTypeScriptTypes } from "node:module";
+import vm from "node:vm";
+import test from "node:test";
+import { createEncoder, getPacketInfo } from "libopus-wasm";
+
+async function load(path, names, globals = {}) {
+  const text = await readFile(new URL(path, import.meta.url), "utf8");
+  const compiled = stripTypeScriptTypes(text).replace(/^import .*;\r?\n/gm, "").replace(/^export /gm, "");
+  const scope = { exports: {}, console, Error, setTimeout, clearTimeout, setInterval, clearInterval, performance, crypto, AbortController, DOMException, TextEncoder, Blob, Float32Array, Int16Array, Uint8Array, ArrayBuffer, DataView, ...globals };
+  vm.runInNewContext(`${compiled}\nObject.assign(exports,{${names.join(",")}});`, scope);
+  return scope.exports;
+}
+const { SpeechDraftSegment } = await load("../features/chat/lib/speech-draft.ts", ["SpeechDraftSegment"]);
+
+test("active speech revisions replace one range; intentional recordings start a new paragraph", () => {
+  const segment = new SpeechDraftSegment("Existing draft.");
+  assert.equal(segment.update("Hello"), "Existing draft.\nHello");
+  assert.equal(segment.update("Hello, 世界！"), "Existing draft.\nHello, 世界！");
+  const second = new SpeechDraftSegment(segment.update("Hello, 世界！"));
+  assert.equal(second.update("Another sentence."), "Existing draft.\nHello, 世界！\nAnother sentence.");
+  assert.equal(second.cancel(), "Existing draft.\nHello, 世界！");
+  assert.equal(new SpeechDraftSegment("Draft\n").update("你好。"), "Draft\n你好。");
+});
+test("edits outside speech survive partial revisions and cancellation; edits inside stay authoritative", () => {
+  const segment = new SpeechDraftSegment("Draft"); segment.update("hello");
+  segment.reconcile("Edited draft\nhello");
+  assert.equal(segment.update("hello world"), "Edited draft\nhello world");
+  segment.reconcile("Edited draft\nhello world\nUser tail");
+  assert.equal(segment.update("hello world!"), "Edited draft\nhello world!\nUser tail");
+  assert.equal(segment.cancel(), "Edited draft\nUser tail");
+  const edited = new SpeechDraftSegment("Draft"); edited.update("partial"); edited.reconcile("Draft\nmy correction");
+  assert.equal(edited.update("late final"), "Draft\nmy correction");
+  assert.equal(edited.cancel(), "Draft\nmy correction");
+});
+
+test("capture resamples 48k to exact 16k sample limit and flushes the last partial frame", async () => {
+  const source = await readFile(new URL("../public/speech-capture-worklet.js", import.meta.url), "utf8");
+  let Processor;
+  const frames = [];
+  class Base { constructor() { this.port = { onmessage: null, postMessage: (event) => { if (event.frame) frames.push(event.frame); this.port.onmessage?.({ data: "ack" }); } }; } }
+  vm.runInNewContext(source, { AudioWorkletProcessor: Base, sampleRate: 48000, Float32Array, registerProcessor: (_name, value) => { Processor = value; } });
+  const processor = new Processor({ processorOptions: { maxSamples: 1001 } });
+  for (let i = 0; i < 50; i++) processor.process([[new Float32Array(128).fill(0.25)]]);
+  assert.equal(frames.reduce((sum, frame) => sum + frame.length, 0), 1001);
+  assert.equal(frames.at(-1).length, 41);
+  assert.ok(frames.every((frame) => frame.every((sample) => sample === 0.25)));
+  const second = new Processor({ processorOptions: { maxSamples: 16000 } });
+  const before = frames.length;
+  second.process([[new Float32Array(128).fill(0.1)]]);
+  second.port.onmessage({ data: "stop" });
+  assert.equal(frames.slice(before).reduce((sum, frame) => sum + frame.length, 0), 42);
+});
+
+test("portable WASM encoder produces a mono 20ms raw Opus packet", async () => {
+  const encoder = await createEncoder({ sampleRate: 16000, channels: 1, frameSize: 320, bitrate: 24000 });
+  try {
+    const packet = encoder.encodeFloat(new Float32Array(320));
+    const info = await getPacketInfo(packet, { sampleRate: 16000 });
+    assert.equal(info.channels, 1);
+    assert.equal(info.samples, 320);
+    assert.ok(packet.byteLength < 1275);
+  } finally { encoder.free(); }
+});
+
+function hookRuntime() {
+  let cursor = 0;
+  const slots = [];
+  const effects = [];
+  const React = {
+    useRef(value) { const index = cursor++; slots[index] ??= { current: value }; return slots[index]; },
+    useState(value) { const index = cursor++; if (!(index in slots)) slots[index] = value; return [slots[index], (next) => { slots[index] = typeof next === "function" ? next(slots[index]) : next; }]; },
+    useCallback(callback, deps) { const index = cursor++; if (!slots[index] || deps.some((value, at) => value !== slots[index].deps[at])) slots[index] = { deps, callback }; return slots[index].callback; },
+    useEffect(callback, deps) { const index = cursor++; if (!slots[index] || deps.some((value, at) => value !== slots[index].deps[at])) effects.push(() => { slots[index]?.cleanup?.(); slots[index] = { deps, cleanup: callback() }; }); },
+  };
+  return { React, render(callback) { cursor = 0; const result = callback(); while (effects.length) effects.shift()(); return result; }, cleanup() { for (const slot of slots) slot?.cleanup?.(); } };
+}
+async function setup(provider = "browser", duration = 120000) {
+  const runtime = hookRuntime();
+  const recognitions = [];
+  let draft = "Prior draft";
+  let scope = "chat:one";
+  const errors = [];
+  let stopped = 0;
+  class Recognition {
+    constructor() { recognitions.push(this); }
+    start() { this.onstart?.(); }
+    stop() { stopped++; }
+    abort() {}
+    result(text) { this.onresult?.({ results: { length: 1, item: () => ({ isFinal: true, length: 1, item: () => ({ transcript: text }) }) } }); }
+  }
+  const settings = { "chat.speech_input_provider": provider };
+  const remote = { capture: null, uploads: [], resolve: null, reject: null, sockets: [] };
+  class Socket {
+    constructor() { this.bufferedAmount = 0; remote.sockets.push(this); queueMicrotask(() => this.event("ready", 0)); }
+    event(type, sequence, text = "", sessionID = "remote") { this.onmessage?.({ data: JSON.stringify({ type, sequence, text, session_id: sessionID }) }); }
+    send(data) { if (typeof data === "string") this.sent = JSON.parse(data).type; }
+    close() {}
+  }
+  const api = await load("../features/chat/hooks/use-chat-speech-input.ts", ["useChatSpeechInput"], {
+    React: runtime.React, SpeechDraftSegment,
+    useOptionalAuthSession: () => ({ accessToken: "token" }), useUserSettings: () => ({ settings }),
+    useSpeechCapabilities: () => ({ max_recording_duration_ms: duration, asr: [{ id: provider, streaming: provider === "wetype", max_duration_ms: 120000, max_bytes: 8 * 1024 * 1024 }] }), beginRecordingActivity: () => ({ stop() {}, publishLevel() {} }),
+    startSpeechCapture: async (options) => { remote.capture = options; options.onFrame(new Float32Array(320)); return { stop: async () => options.onFrame(new Float32Array(80)), cancel() {} }; },
+    prepareSpeechCaptureContext: () => undefined,
+    pcm16Frame: (frame) => new Int16Array(frame.length), speechWav: (_frames, samples) => { remote.uploads.push(samples); return new Blob(); },
+    transcribeSpeech: () => new Promise((resolve, reject) => { remote.resolve = resolve; remote.reject = reject; }),
+    createSpeechSession: async () => ({ id: "remote", ws_url: "/speech/ws", max_duration_ms: 120000, max_bytes: 8 * 1024 * 1024 }),
+    speechResourceURL: () => "https://example.test/speech/ws", URL, WebSocket: Socket,
+    createSpeechOpusEncoder: async (packet) => ({ encode() { packet(new Uint8Array(10)); }, flush: async () => {}, close() {} }),
+    window: { isSecureContext: true, SpeechRecognition: Recognition, AudioWorkletNode: class {} }, navigator: { mediaDevices: {} }, supportsSpeechOpus: () => true,
+    requestAnimationFrame: (callback) => { queueMicrotask(callback); },
+  });
+  const render = () => runtime.render(() => api.useChatSpeechInput({ draft, scopeKey: scope, language: "en", onDraftChange: (value) => { draft = value; }, onError: (error) => errors.push(error), placeholder: "", listeningPlaceholder: "", startingPlaceholder: "" }));
+  render();
+  return { render, recognitions, errors, remote, get draft() { return draft; }, set draft(value) { draft = value; }, set scope(value) { scope = value; }, get stopped() { return stopped; }, cleanup: runtime.cleanup };
+}
+test("stop keeps browser tail and sending is exactly once; late callbacks cannot revive sent text", async () => {
+  const state = await setup();
+  try {
+    await state.render().start(); const recognition = state.recognitions[0]; recognition.result("Partial"); state.render();
+    let sends = 0;
+    const input = state.render();
+    const first = input.finishAndSend((finalDraft) => { sends++; assert.equal(finalDraft, "Prior draft\nFinal tail."); assert.equal(state.draft, "Prior draft\nFinal tail."); });
+    const second = input.finishAndSend(() => { sends++; });
+    assert.equal(sends, 0); assert.equal(state.stopped, 1);
+    recognition.result("Final tail."); recognition.onend();
+    await Promise.all([first, second]); assert.equal(sends, 1);
+    state.draft = ""; recognition.result("Late old text"); assert.equal(state.draft, "");
+  } finally { state.cleanup(); }
+});
+test("cancel only removes the current segment and changing conversations ignores late results", async () => {
+  const state = await setup();
+  try {
+    await state.render().start(); state.recognitions[0].result("Current segment"); state.render().cancel(); assert.equal(state.draft, "Prior draft");
+    await state.render().start(); const recognition = state.recognitions.at(-1); const late = recognition.onresult;
+    state.scope = "chat:two"; state.draft = "Other draft"; state.render();
+    late({ results: { length: 1, item: () => ({ length: 1, item: () => ({ transcript: "late" }) }) } });
+    assert.equal(state.draft, "Other draft");
+  } finally { state.cleanup(); }
+});
+
+test("completion events deduplicate message identity without replaying history to new subscribers", async () => {
+  const api = await load("../features/chat/lib/response-completion.ts", ["publishResponseCompletion", "subscribeResponseCompletion"]);
+  const seen = []; const stop = api.subscribeResponseCompletion((event) => seen.push(event.messageID));
+  api.publishResponseCompletion({ conversationID: "one", messageID: "reply", content: "first" });
+  api.publishResponseCompletion({ conversationID: "one", messageID: "reply", content: "duplicate" }); stop();
+  api.subscribeResponseCompletion((event) => seen.push(event.messageID));
+  assert.deepEqual(seen, ["reply"]);
+});
+
+test("DeepSeek waits for capture tail, preserves concurrent draft edits and never sends after recognition failure", async () => {
+  const state = await setup("deepseek");
+  try {
+    await state.render().start();
+    assert.deepEqual(state.errors, []);
+    let sends = 0;
+    const result = state.render().finishAndSend(() => { sends++; });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(state.remote.uploads, [400]);
+    assert.equal(sends, 0);
+    state.draft = "User edit while waiting"; state.render();
+    state.remote.resolve({ text: "Final result" });
+    await result;
+    assert.equal(state.draft, "User edit while waiting\nFinal result"); assert.equal(sends, 1);
+    await state.render().start();
+    const failure = state.render().finishAndSend(() => { sends++; });
+    await new Promise((resolve) => setTimeout(resolve, 0)); state.remote.reject(new Error("failed"));
+    await failure;
+    assert.equal(sends, 1); assert.equal(state.draft, "User edit while waiting\nFinal result");
+  } finally { state.cleanup(); }
+});
+
+test("streaming partials ignore stale sequence and identity; stop sends finish after audio flush then consumes final tail", async () => {
+  const state = await setup("wetype");
+  try {
+    await state.render().start(); const socket = state.remote.sockets[0];
+    assert.deepEqual(state.errors, []);
+    socket.event("transcript", 2, "最新 partial"); socket.event("transcript", 1, "old"); socket.event("transcript", 5, "wrong", "another-session");
+    assert.equal(state.draft, "Prior draft\n最新 partial"); state.render();
+    let sends = 0; const result = state.render().finishAndSend(() => { sends++; });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(socket.sent, "finish"); assert.equal(sends, 0);
+    socket.event("final", 3, "最后一句。"); await result;
+    assert.equal(state.draft, "Prior draft\n最后一句。"); assert.equal(sends, 1);
+    socket.event("transcript", 10, "late"); assert.equal(state.draft, "Prior draft\n最后一句。");
+  } finally { state.cleanup(); }
+});
+
+test("a site limit below ten seconds is exposed immediately and enforced by the recorder sample budget", async () => {
+  const state = await setup("deepseek", 8000);
+  try {
+    await state.render().start();
+    assert.equal(state.render().remainingMS, 8000);
+    assert.equal(state.remote.capture.maxSamples, 128000);
+    state.remote.capture.onLimit();
+    assert.equal(state.render().remainingMS, 0);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    state.remote.resolve({ text: "At the limit" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(state.render().status, "idle");
+    assert.equal(state.draft, "Prior draft\nAt the limit");
+  } finally { state.cleanup(); }
+});
+
+async function playbackSetup({ fail = false, failTimes = fail ? Infinity : 0, deferred = false, incomplete = false, statuses = [], expiredReads = 0 } = {}) {
+  const stats = { syntheses: 0, requests: [], reads: 0, contexts: 0, closed: 0, recording: false, resolve: null };
+  class Context {
+    constructor() { stats.contexts++; this.state = "running"; this.started = performance.now(); }
+    get currentTime() { return (performance.now() - this.started) / 1000; }
+    async resume() { this.state = "running"; }
+    async suspend() { this.state = "suspended"; }
+    async close() { if (this.state !== "closed") stats.closed++; this.state = "closed"; }
+    createAnalyser() { return { fftSize: 256, getFloatTimeDomainData(buffer) { buffer.fill(0); } }; }
+    createBuffer(_channels, count) { return { getChannelData: () => new Float32Array(count) }; }
+    createBufferSource() { return { connect() {}, disconnect() {}, start() {} }; }
+  }
+  const audio = new Uint8Array(44 + 480);
+  const view = new DataView(audio.buffer);
+  for (const [offset, text] of [[0, "RIFF"], [8, "WAVEfmt "], [36, "data"]]) for (let i = 0; i < text.length; i++) audio[offset + i] = text.charCodeAt(i);
+  view.setUint32(4, audio.length - 8, true); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, 24000, true); view.setUint16(34, 16, true); view.setUint32(40, 480, true);
+  const api = await load("../features/chat/lib/speech-playback.ts", ["configureSpeechPlayback", "playSpeech", "stopSpeechPlayback", "getSpeechPlaybackState", "splitSpeechText"], {
+    AudioContext: Context, document: { hidden: false }, window: { location: { origin: "https://example.test" } }, URL,
+    isRecordingActive: () => stats.recording, beginPlaybackActivity: () => ({ stop() {}, publishLevel() {} }),
+    synthesizeSpeech: (_token, _text, _voice, requestID, retry) => { stats.syntheses++; stats.requests.push({ requestID, retry }); if (stats.syntheses <= failTimes) return Promise.reject(new Error("failed")); const result = { id: `audio-${stats.syntheses}`, media_url: "/api/v1/speech/tts/audio/audio", status: statuses[stats.syntheses - 1] ?? "pending" }; return deferred ? new Promise((resolve) => { stats.resolve = () => resolve(result); }) : Promise.resolve(result); },
+    getSpeechSynthesis: async () => ({ status: incomplete ? "uncertain" : "complete" }),
+    authedFetch: async () => { stats.reads++; if (stats.reads <= expiredReads) throw Object.assign(new Error("expired"), { status: 410 }); return new Response(audio); },
+  });
+  const config = { scope: "conversation", user: "user", token: "token", voice: "stella", enabled: true };
+  api.configureSpeechPlayback(config);
+  return { api, stats, config };
+}
+
+test("TTS synthesis identity is separate from playback: repeated play reuses one synthesis and current voice changes its version", async () => {
+  const { api, stats, config } = await playbackSetup(); const errors = [];
+  await api.playSpeech("message", "Hello", (error) => errors.push(error));
+  await api.playSpeech("message", "Hello", (error) => errors.push(error));
+  assert.equal(stats.syntheses, 1); assert.equal(stats.reads, 2); assert.deepEqual(errors, []);
+  api.configureSpeechPlayback({ ...config, voice: "tide" }); await api.playSpeech("message", "Hello", (error) => errors.push(error));
+  assert.equal(stats.syntheses, 2); assert.equal(stats.closed, stats.contexts);
+  assert.throws(() => api.splitSpeechText("汉".repeat(5001)), /tooLong/);
+});
+
+test("TTS failure does not automatically resynthesize and an incomplete stream is not successful", async () => {
+  const state = await playbackSetup({ fail: true });
+  const errors = [];
+  await state.api.playSpeech("message", "Hello", (error) => errors.push(error));
+  await state.api.playSpeech("message", "Hello", (error) => errors.push(error));
+  assert.equal(state.stats.syntheses, 1); assert.equal(state.stats.reads, 0); assert.equal(errors.length, 2);
+  const partial = await playbackSetup({ incomplete: true });
+  await partial.api.playSpeech("message", "Hello", (error) => errors.push(error));
+  assert.equal(partial.api.getSpeechPlaybackState().status, "error");
+});
+
+test("switching conversation during synthesis prevents late audio playback; recording blocks synthesis", async () => {
+  const { api, stats, config } = await playbackSetup({ deferred: true });
+  const pending = api.playSpeech("message", "Hello", () => {});
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  api.configureSpeechPlayback({ ...config, scope: "other" }); stats.resolve(); await pending;
+  assert.equal(stats.reads, 0); assert.equal(stats.closed, 1);
+  stats.recording = true; await api.playSpeech("new", "Another text", () => {});
+  assert.equal(stats.syntheses, 1);
+});
+
+test("manual pause and resume reuse the active TTS stream without synthesis or playback duplication", async () => {
+  const { api, stats } = await playbackSetup();
+  const pending = api.playSpeech("message", "Hello", () => {});
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await api.playSpeech("message", "Hello", () => {});
+  assert.equal(api.getSpeechPlaybackState().status, "paused");
+  await api.playSpeech("message", "Hello", () => {});
+  assert.equal(api.getSpeechPlaybackState().status, "playing");
+  await pending;
+  assert.equal(stats.syntheses, 1); assert.equal(stats.reads, 1);
+});
+
+test("manual retry after transport failure reconciles the same request identity instead of remaining stuck or creating another paid attempt", async () => {
+  const { api, stats } = await playbackSetup({ failTimes: 1 }); const errors = [];
+  await api.playSpeech("message", "Hello", (reason) => errors.push(reason));
+  await api.playSpeech("message", "Hello", (reason) => errors.push(reason), { manual: true });
+  assert.equal(stats.syntheses, 2); assert.equal(stats.requests[0].requestID, stats.requests[1].requestID);
+  assert.equal(stats.requests[1].retry, false); assert.equal(stats.reads, 1); assert.equal(errors.length, 1);
+});
+
+test("uncertain synthesis never retries automatically; an explicit retry creates one new identity with retry permission", async () => {
+  const { api, stats } = await playbackSetup({ statuses: ["uncertain", "pending"] });
+  await api.playSpeech("message", "Hello", () => {});
+  await api.playSpeech("message", "Hello", () => {});
+  assert.equal(stats.syntheses, 1);
+  await api.playSpeech("message", "Hello", () => {}, { manual: true });
+  assert.equal(stats.syntheses, 2); assert.notEqual(stats.requests[0].requestID, stats.requests[1].requestID);
+  assert.equal(stats.requests[1].retry, true); assert.equal(stats.reads, 1);
+});
+
+test("expired metadata and a 410 media response allow a bounded fresh synthesis on manual playback", async () => {
+  const expired = await playbackSetup({ statuses: ["expired", "pending"] });
+  await expired.api.playSpeech("message", "Hello", () => {});
+  await expired.api.playSpeech("message", "Hello", () => {}, { manual: true });
+  assert.equal(expired.stats.syntheses, 2); assert.notEqual(expired.stats.requests[0].requestID, expired.stats.requests[1].requestID);
+  assert.equal(expired.stats.requests[1].retry, false);
+  const gone = await playbackSetup({ expiredReads: 1 });
+  await gone.api.playSpeech("message", "Hello", () => {}, { manual: true });
+  assert.equal(gone.stats.syntheses, 2); assert.equal(gone.stats.reads, 2);
+  assert.notEqual(gone.stats.requests[0].requestID, gone.stats.requests[1].requestID);
+  const stillGone = await playbackSetup({ expiredReads: Infinity });
+  await stillGone.api.playSpeech("message", "Hello", () => {}, { manual: true });
+  assert.equal(stillGone.stats.syntheses, 2); assert.equal(stillGone.stats.reads, 2);
+});
+
+test("long mixed-language splitting preserves every character and the per-part weighted budget", async () => {
+  const { api } = await playbackSetup(); const text = `${"中文 words! ".repeat(400)}Tail.`;
+  const parts = api.splitSpeechText(text);
+  assert.equal(parts.join(""), text.replace(/\s+/g, " ").trim());
+  for (const part of parts) assert.ok([...part].reduce((sum, character) => sum + (/\p{Script=Han}/u.test(character) ? 2 : 1), 0) <= 1800);
+});

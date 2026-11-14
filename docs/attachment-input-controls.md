@@ -62,7 +62,13 @@ MCP 图片处理器的输入总大小、单图识别结果字符数、合计识�
 
 用户消息编辑支持最终附件集合的增删替换。附件变更后仅保存会建立新分支，不调用模型、不修改原分支；取消或移除附件不删除文件库对象。保存并生成继续走新分支发送。临时会话在本次浏览器会话内保留分支及本地成品。
 
-单次发送的原生读取缓存、处理后图片缓存、供应商prompt cache、OpenAI `previous_response_id`是不同机制。Gemini原生PDF/音视频继续采用inlineData；没有新增Files API或自动创建供应商显式缓存。续接不适用时重新提供完整有效上下文与原件。
+单次发送的原生读取缓存、处理后图片缓存、供应商prompt cache、OpenAI `previous_response_id`是不同机制。Gemini原生PDF/音视频继续采用inlineData；续接不适用时重新提供完整有效上下文与原件。
+
+DeepSeek Flash 的官方地址默认支持 Files；兼容地址须以 `nativeFiles: {provider: "deepseek", enabled: true}` 明确声明，实际上游模型仍须为 `deepseek-flash`。PDF、Word、PowerPoint 采用 `rich_layout_recognition`，在三个对话协议中引用解析后的 `file_id`，文字和识别出的图进入模型。Excel 默认保留本站解析路径，可通过 `nativeFiles.spreadsheet: "native"` 改用免费 `user_data` 转换；不在每次发送时并行运行两种解析。Pro 本批不启用 Files。
+
+管理员显式限定的输入模态仍生效；Flash 预设包含 PDF 与原件能力。Files 供应商硬限制另行检查：解析文档单份 100 MiB、1,000 页，`user_data` 单份 32 MiB，整次请求最多 20 处文档引用；解析后的文字合计 8 MiB 与裁出图片的数量由上游权威校验，本地不把压缩原件字节数当作解析文本大小。
+
+上游文件缓存按用户、供应商凭据范围、不可变原件、解析用途与版本隔离，存储在 `llm_native_files`，并发使用原子租约合并上传。上游文件设置 30 天有效期；明确过期后才能重新上传解析。上传响应不明时保存 `uncertain`，之后按该次专用文件名、用途与大小查询上游恢复 `file_id`，不会因客户端超时直接重传计费。没有匹配结果时明确返回待恢复错误，可后续重试查询，保留本地原件。解析费用票据随文件记录持久化，缓存复用不重新解析或计费；页数未知使用独立标识，不把未知冒充零页。
 
 ## 分支与token观测
 
@@ -82,9 +88,13 @@ Chat01 的 PDF、音视频和通用原件经 `file_url` 交给上游工作区，
 
 OpenAI工具详情保存并展示已返回的输入、代码/命令/查询、输出与错误，支持独立Shell call/output关联、流式占位合并和结束结果更新。查看详情只读取保存结果，不重跑工具。生成产物沿用文件存储边界，不把图片Base64塞进详情。
 
-DeepSeek搜索与读取分别使用`deepseek.tool_search`、`deepseek.tool_fetch`身份，计量来自`usage.server_tool_use`成功次数；不按web_search_call项数猜测。Google搜索按实际模型代际与返回查询记录计量，grounding来源和引用独立保留。
+DeepSeek 搜索、读取、图片搜索分别使用 `deepseek.tool_search`、`deepseek.tool_fetch`、`deepseek.tool_image_search` 身份，计量来自 `usage.server_tool_use` 对应的成功次数；`web_search_requests` / `web_fetch_requests` 包含错误块，只用于展示，不据此计费。Google搜索按实际模型代际与返回查询记录计量，grounding来源和引用独立保留。
 
-DeepSeek 的请求只声明一个 Responses `web_search`；fetch 是该工具内部的独立计量项，不能作为 `web_fetch` 请求工具单独发送。旧 search/fetch 配置保存时合并启用和默认状态，保留 search 参数；Chat Completions 不派发也不预留这两项。若多个工具声明共享无法区分的计量别名但对应不同价格身份，则在派发前排除冲突声明，计费授权使用同一结果，不按声明顺序猜测归属。
+DeepSeek Flash 在 Responses、Chat Completions、Messages 分别声明 `deepseek_web_search` 和 `deepseek_read_url`，默认开启且可独立关闭；旧 `web_search` / `web_fetch` 配置规范为对应新工具，保留显式关闭状态。搜索深度仅由规范化后的 thinking 决定，不新增深度控件。thinking 与搜索同时开启时，上游不会独立执行 read_url；本站只对当前用户明确给出的 HTTP/HTTPS 链接调用独立 Fetch（最多 10 个不同 URL，轮内去重），先按冻结价格预留，成功取得正文后计一次读取，再将有界正文纳入上下文预算。没有链接的消息不等待 Fetch。若多个工具声明共享无法区分的计量别名但对应不同价格身份，则在派发前排除冲突声明，计费授权使用同一结果，不按声明顺序猜测归属。
+
+上游返回的 `kind`、`signature` 等续接块由服务器保存并原样回传；普通会话沿消息祖先与分支保存，临时会话只使用按用户、session、实际路由和消息/附件祖先指纹隔离的 30 分钟内存缓存（最多 128 项、16 MiB），不信任客户端提交的原始工具签名。HTTP 200 中的生成错误仍按失败处理，并保留已经确认的 token 与成功工具用量供幂等结算。
+
+独立 Fetch 的正文受单页 2 MiB、单轮合计 4 MiB 保护，成功计量先于本地保护与后续模型调用；超过保护不会截取正文冒充完整结果。已读正文随服务器私有状态沿原消息保存，后续没有 URL 的提问可以复用同一内容，不重新抓取或收费。
 
 请求授权冻结工具价目，实际启用工具以明确身份参与预留和结算；过程中改价不追溯本轮。免费token模型调用收费原生工具仍需对应预算。至少预留每个选中工具一次操作，最终按实际成功操作计费；供应商自主多次操作且无次数上界时，最终费用可能超过这一最低预留。沿用已有RefNo与幂等结算，不将未获准的同名供应商工具代入价目。
 

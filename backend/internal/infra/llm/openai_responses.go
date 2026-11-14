@@ -229,6 +229,9 @@ func responsesToolsIncludeType(tools []map[string]any, toolType string) bool {
 func buildResponsesAPIInput(messages []portllm.Message, promptCache *openAIPromptCacheConfig) []map[string]any {
 	items := make([]map[string]any, 0, len(messages))
 	for _, msg := range messages {
+		if normalizeRole(msg.Role) == "assistant" {
+			items = append(items, deepSeekStateBlocks(msg.ProviderStateJSON, portllm.AdapterOpenAIResponses)...)
+		}
 		if len(msg.ToolCalls) > 0 {
 			for _, item := range msg.ToolCalls {
 				args := strings.TrimSpace(item.ArgumentsJSON)
@@ -291,7 +294,14 @@ func buildResponsesAPIContent(msg portllm.Message, promptCache *openAIPromptCach
 			}
 			appendOpenAIPromptCacheBreakpoint(block, part.CacheControl, promptCache)
 			parts = append(parts, block)
-		case portllm.ContentPartDocument:
+		case portllm.ContentPartDocument, portllm.ContentPartAttachment:
+			if part.ProviderFileID != "" {
+				parts = append(parts, map[string]any{"type": "input_file", "file_id": part.ProviderFileID})
+				continue
+			}
+			if part.Kind == portllm.ContentPartAttachment {
+				continue
+			}
 			if normalizeRole(msg.Role) == "assistant" || len(part.Data) == 0 {
 				continue
 			}
@@ -547,6 +557,9 @@ func mergeResponsesStreamOutputItem(
 		return nil
 	}
 	call := parseResponseServerToolCall(item)
+	if getString(item["type"]) == "web_search_call" && getString(item["kind"]) != "" {
+		appendDeepSeekState(result, portllm.AdapterOpenAIResponses, item)
+	}
 	call = appendResponsesServerToolCall(result, call)
 	result.Citations = appendUniqueStrings(result.Citations, parseResponseCitations(item)...)
 	if onEvent == nil {
@@ -806,6 +819,9 @@ func mergeResponsesOutputItem(result *portllm.GenerateOutput, item map[string]an
 		return ""
 	}
 	itemType := strings.TrimSpace(getString(item["type"]))
+	if itemType == "web_search_call" && getString(item["kind"]) != "" {
+		appendDeepSeekState(result, portllm.AdapterOpenAIResponses, item)
+	}
 	switch {
 	case itemType == "reasoning":
 		mergeReasoningOutput(&result.Reasoning, parseReasoningOutputItem(item))
@@ -1156,7 +1172,7 @@ func collectResponseCitationURLs(raw any, result *[]string) {
 	case map[string]any:
 		itemType := strings.TrimSpace(getString(value["type"]))
 		switch itemType {
-		case "url_citation", "file_citation":
+		case "url_citation", "file_citation", "web_search_result_location":
 			if text := textutil.FirstNonEmpty(
 				getString(value["url"]),
 				getString(value["uri"]),

@@ -27,7 +27,8 @@ import (
 //  4. 大小、页数与数量在保守上限内。
 //
 // 已有协议继续以内联字节发送。支持通用原件的路由可在传输准备阶段把可信引用
-// 转为 HTTPS 授权地址；不使用供应商 Files API。没有原生能力时仍需可用的文本提取路径。
+// 转为 HTTPS 授权地址；明确支持 DeepSeek Files 的 Flash 路由上传并缓存私有 file_id。
+// 没有原生能力时仍需可用的文本提取路径。
 // 原生预算不足时停止发送；音频和视频没有文本回退，历史文件同样需要可用的处理路径。
 // 策略按路由计算：故障转移到另一条路由时会重新判断，不会把原生内容块发给不支持它的协议。
 
@@ -102,11 +103,13 @@ func nativeInputMIME(att AttachmentInput) string {
 
 // nativeInputPolicy 是某条路由上可以原生发送的输入类型。
 type nativeInputPolicy struct {
-	Attachment       bool
-	HTTPS            bool
-	Budget           nativeInputBudget
-	InputLimits      inputlimits.Limits
-	budgetConfigured bool
+	DeepSeekFiles       bool
+	DeepSeekSpreadsheet bool
+	Attachment          bool
+	HTTPS               bool
+	Budget              nativeInputBudget
+	InputLimits         inputlimits.Limits
+	budgetConfigured    bool
 	// ImageUnsupported 为 true 时模型声明不支持图片，图片不以图片内容块发送；能力未知时保持既有行为（发送）。
 	// 用否定形式让零值表示「照常发送」。
 	ImageUnsupported bool
@@ -141,7 +144,7 @@ func (p nativeInputPolicy) withoutPDFPageBudget() nativeInputPolicy {
 }
 
 func inlineRequestByteLimit(p nativeInputPolicy) int64 {
-	if p.HTTPS {
+	if p.HTTPS || p.DeepSeekFiles {
 		return 0
 	}
 	return p.InputLimits.RequestBytes
@@ -149,6 +152,9 @@ func inlineRequestByteLimit(p nativeInputPolicy) int64 {
 
 // accepts 判断附件能否在该路由上原生发送（不含预算）。
 func (p nativeInputPolicy) accepts(att AttachmentInput) bool {
+	if p.DeepSeekFiles && deepSeekNativeDocument(att, p.DeepSeekSpreadsheet) {
+		return true
+	}
 	if p.Attachment && !isImageOriginal(att) {
 		return true
 	}
@@ -208,6 +214,13 @@ func resolveNativeInputPolicy(route *channel.ResolvedRoute, configuration ...str
 		policy.VideoMIMEs = support.videoMIMEs
 	}
 	if policy.Attachment {
+		policy.PDF = true
+	}
+	policy.DeepSeekFiles, policy.DeepSeekSpreadsheet = deepSeekNativeFilesPolicy(route)
+	if modalities.Source == domainchannel.InputModalitiesSourceExplicit && !modalities.Supports(domainchannel.InputModalityPDF) && !modalities.Supports(domainchannel.InputModalityAttachment) {
+		policy.DeepSeekFiles, policy.DeepSeekSpreadsheet = false, false
+	}
+	if policy.DeepSeekFiles {
 		policy.PDF = true
 	}
 	return policy
@@ -618,6 +631,9 @@ func (s *Service) loadNativeInputParts(ctx context.Context, attachments []Attach
 // contextPart applies delivery semantics to a value copy, never the shared file
 // cache. A failover to a direct multimodal route must estimate its own input.
 func (p nativeInputPolicy) contextPart(part llm.ContentPart) llm.ContentPart {
+	if p.DeepSeekFiles && (part.Kind == llm.ContentPartDocument || part.Kind == llm.ContentPartAttachment) {
+		part.ParsedDocument = true
+	}
 	switch part.Kind {
 	case llm.ContentPartDocument, llm.ContentPartAudio, llm.ContentPartVideo, llm.ContentPartAttachment:
 		part.WorkspaceFile = p.Attachment

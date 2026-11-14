@@ -17,27 +17,28 @@ import (
 )
 
 type persistMessageGenerationInput struct {
-	SendInput                 SendMessageInput
-	Conversation              *model.Conversation
-	UserMessage               *model.Message
-	AssistantMessage          *model.Message
-	AssistantText             string
-	AssistantReasoningContent string
-	GeneratedImages           []llm.GeneratedImage
-	GeneratedFiles            []llm.GeneratedFile
-	ArtifactRoute             llm.RouteConfig
-	InputTokens               int64
-	CacheReadTokens           int64
-	CacheWriteTokens          int64
-	OutputTokens              int64
-	ReasoningTokens           int64
-	AssistantLatency          int64
-	ResponseID                string
-	StatefulPromptFingerprint string
-	ToolCallRows              []model.ToolCall
-	PersistedToolCallKeys     map[string]struct{}
-	Route                     *channel.ResolvedRoute
-	ReuseUserMessage          bool
+	SendInput                  SendMessageInput
+	Conversation               *model.Conversation
+	UserMessage                *model.Message
+	AssistantMessage           *model.Message
+	AssistantText              string
+	AssistantReasoningContent  string
+	AssistantProviderStateJSON string
+	GeneratedImages            []llm.GeneratedImage
+	GeneratedFiles             []llm.GeneratedFile
+	ArtifactRoute              llm.RouteConfig
+	InputTokens                int64
+	CacheReadTokens            int64
+	CacheWriteTokens           int64
+	OutputTokens               int64
+	ReasoningTokens            int64
+	AssistantLatency           int64
+	ResponseID                 string
+	StatefulPromptFingerprint  string
+	ToolCallRows               []model.ToolCall
+	PersistedToolCallKeys      map[string]struct{}
+	Route                      *channel.ResolvedRoute
+	ReuseUserMessage           bool
 	// SkipEmbed 将消息向量化推迟到审核屏障通过之后。
 	SkipEmbed bool
 }
@@ -98,6 +99,7 @@ type persistMessageToolCallsInput struct {
 }
 
 func (s *Service) persistSuccessfulMessageGeneration(ctx context.Context, input persistMessageGenerationInput) error {
+	input.AssistantMessage.ProviderStateJSON = input.AssistantProviderStateJSON
 	if input.ReuseUserMessage {
 		input.AssistantMessage.InputTokens = input.InputTokens
 		input.AssistantMessage.CacheReadTokens = input.CacheReadTokens
@@ -133,17 +135,18 @@ func (s *Service) persistSuccessfulMessageGeneration(ctx context.Context, input 
 		ctx,
 		input.AssistantMessage.ID,
 		repository.AssistantMessageCompletionUpdate{
-			Content:          input.AssistantText,
-			ReasoningContent: input.AssistantReasoningContent,
-			KnowledgeSources: input.AssistantMessage.KnowledgeSources,
-			InputTokens:      assistantCompletionInputTokens(input),
-			OutputTokens:     input.OutputTokens,
-			CacheReadTokens:  assistantCompletionCacheReadTokens(input),
-			CacheWriteTokens: assistantCompletionCacheWriteTokens(input),
-			ReasoningTokens:  input.ReasoningTokens,
-			LatencyMS:        input.AssistantLatency,
-			Status:           "success",
-			ReasoningEffort:  input.AssistantMessage.ReasoningEffort,
+			Content:           input.AssistantText,
+			ReasoningContent:  input.AssistantReasoningContent,
+			ProviderStateJSON: input.AssistantProviderStateJSON,
+			KnowledgeSources:  input.AssistantMessage.KnowledgeSources,
+			InputTokens:       assistantCompletionInputTokens(input),
+			OutputTokens:      input.OutputTokens,
+			CacheReadTokens:   assistantCompletionCacheReadTokens(input),
+			CacheWriteTokens:  assistantCompletionCacheWriteTokens(input),
+			ReasoningTokens:   input.ReasoningTokens,
+			LatencyMS:         input.AssistantLatency,
+			Status:            "success",
+			ReasoningEffort:   input.AssistantMessage.ReasoningEffort,
 		},
 	); err != nil {
 		return err
@@ -259,18 +262,19 @@ func (s *Service) persistAssistantAttachmentsIfPresent(ctx context.Context, inpu
 			ctx,
 			input.AssistantMessage.ID,
 			repository.AssistantMessageCompletionUpdate{
-				ContentType:      contentType,
-				Content:          content,
-				ReasoningContent: input.AssistantReasoningContent,
-				KnowledgeSources: input.AssistantMessage.KnowledgeSources,
-				InputTokens:      input.InputTokens,
-				OutputTokens:     input.OutputTokens,
-				CacheReadTokens:  input.CacheReadTokens,
-				CacheWriteTokens: input.CacheWriteTokens,
-				ReasoningTokens:  input.ReasoningTokens,
-				LatencyMS:        input.AssistantLatency,
-				Status:           "success",
-				ReasoningEffort:  input.AssistantMessage.ReasoningEffort,
+				ContentType:       contentType,
+				Content:           content,
+				ReasoningContent:  input.AssistantReasoningContent,
+				ProviderStateJSON: input.AssistantProviderStateJSON,
+				KnowledgeSources:  input.AssistantMessage.KnowledgeSources,
+				InputTokens:       input.InputTokens,
+				OutputTokens:      input.OutputTokens,
+				CacheReadTokens:   input.CacheReadTokens,
+				CacheWriteTokens:  input.CacheWriteTokens,
+				ReasoningTokens:   input.ReasoningTokens,
+				LatencyMS:         input.AssistantLatency,
+				Status:            "success",
+				ReasoningEffort:   input.AssistantMessage.ReasoningEffort,
 			},
 			normalized.AttachmentRows,
 		); err != nil {
@@ -287,15 +291,16 @@ func (s *Service) persistAssistantAttachmentsIfPresent(ctx context.Context, inpu
 			},
 			input.AssistantMessage.ID,
 			repository.AssistantMessageCompletionUpdate{
-				ContentType:      contentType,
-				Content:          content,
-				ReasoningContent: input.AssistantReasoningContent,
-				KnowledgeSources: input.AssistantMessage.KnowledgeSources,
-				OutputTokens:     input.OutputTokens,
-				ReasoningTokens:  input.ReasoningTokens,
-				LatencyMS:        input.AssistantLatency,
-				Status:           "success",
-				ReasoningEffort:  input.AssistantMessage.ReasoningEffort,
+				ContentType:       contentType,
+				Content:           content,
+				ReasoningContent:  input.AssistantReasoningContent,
+				ProviderStateJSON: input.AssistantProviderStateJSON,
+				KnowledgeSources:  input.AssistantMessage.KnowledgeSources,
+				OutputTokens:      input.OutputTokens,
+				ReasoningTokens:   input.ReasoningTokens,
+				LatencyMS:         input.AssistantLatency,
+				Status:            "success",
+				ReasoningEffort:   input.AssistantMessage.ReasoningEffort,
 			},
 			normalized.AttachmentRows,
 		); err != nil {

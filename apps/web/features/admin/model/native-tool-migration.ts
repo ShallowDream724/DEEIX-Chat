@@ -4,7 +4,7 @@ const DEEPSEEK_SEARCH_KEY = "deepseek.tool_search";
 const LEGACY_DEEPSEEK_FETCH_KEY = "deepseek.tool_fetch";
 
 export function canonicalNativeToolKey(key: string): string {
-  return key === LEGACY_DEEPSEEK_FETCH_KEY ? DEEPSEEK_SEARCH_KEY : key;
+  return key;
 }
 
 function configuredToolKey(tool: Record<string, unknown>): string {
@@ -12,30 +12,17 @@ function configuredToolKey(tool: Record<string, unknown>): string {
   return key || (typeof tool.toolKey === "string" ? tool.toolKey.trim() : "");
 }
 
-/** Fetch now runs inside DeepSeek's Responses search tool. Its old settings
- * contribute selection state; only the search declaration supplies parameters. */
+/** Preserve independent search/read selections while migrating the wire names. */
 export function mergeLegacyDeepSeekNativeTools(tools: Record<string, unknown>[]): Record<string, unknown>[] {
-  if (!tools.some((tool) => configuredToolKey(tool) === LEGACY_DEEPSEEK_FETCH_KEY)) {
-    return tools;
-  }
-
-  const isDeepSeekWebTool = (tool: Record<string, unknown>) =>
-    canonicalNativeToolKey(configuredToolKey(tool)) === DEEPSEEK_SEARCH_KEY;
-  const firstIndex = tools.findIndex(isDeepSeekWebTool);
-  const searchTools = tools.filter((tool) => configuredToolKey(tool) === DEEPSEEK_SEARCH_KEY);
-  const search = searchTools.find((tool) => tool.enabled !== false) ?? searchTools[0];
-  const enabledTools = tools.filter((tool) => isDeepSeekWebTool(tool) && tool.enabled !== false);
-  const canonicalSearch = {
-    id: search?.id,
-    key: DEEPSEEK_SEARCH_KEY,
-    provider: search?.provider || "DeepSeek",
-    label: search?.label || "DeepSeek Web Search",
-    description: search?.description,
-    protocols: ["openai_responses"],
-    type: "web_search",
-    payload: { ...(isRecord(search?.payload) ? search.payload : {}), type: "web_search" },
-    enabled: enabledTools.length > 0,
-    defaultEnabled: enabledTools.some((tool) => tool.defaultEnabled === true),
-  };
-  return tools.flatMap((tool, index) => index === firstIndex ? [canonicalSearch] : isDeepSeekWebTool(tool) ? [] : [tool]);
+  return tools.map((tool) => {
+    const key = configuredToolKey(tool);
+    if (key !== DEEPSEEK_SEARCH_KEY && key !== LEGACY_DEEPSEEK_FETCH_KEY) return tool;
+    const type = key === DEEPSEEK_SEARCH_KEY ? "deepseek_web_search" : "deepseek_read_url";
+    const oldType = typeof tool.type === "string" ? tool.type : isRecord(tool.payload) ? tool.payload.type : "";
+    const legacy = oldType === "web_search" || oldType === "web_fetch" || oldType === "tool_fetch";
+    const protocols = legacy || (!tool.protocol && !Array.isArray(tool.protocols))
+      ? ["openai_responses", "openai_chat_completions", "anthropic_messages"]
+      : tool.protocols;
+    return { ...tool, key, provider: tool.provider || "DeepSeek", ...(protocols ? { protocols } : {}), type, payload: { ...(isRecord(tool.payload) ? tool.payload : {}), type } };
+  });
 }

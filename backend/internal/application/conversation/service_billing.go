@@ -123,6 +123,7 @@ func (s *Service) RenewSendMessageUsageAuthorization(ctx context.Context, author
 // usageBudgetEstimate 描述上游调用前已确定的请求形状，用于成本预估与预算校验。
 // 工具循环中再次调用时，字段是本条消息已产生的用量与下一次调用预估之和。
 type usageBudgetEstimate struct {
+	NativeToolUsage  map[string]int64
 	InputTokens      int64
 	CacheReadTokens  int64
 	CacheWriteTokens int64
@@ -156,6 +157,19 @@ func (s *Service) ensureUsageBudgetCoversEstimate(
 		return nil
 	}
 	nativeToolEstimate := s.billingSvc.AuthorizeNativeTools(authorization, authorizedNativeToolKeys(route.Protocol, options, route.ModelCapabilitiesJSON))
+	for key, count := range estimate.NativeToolUsage {
+		if !authorization.NativeToolKeys[key] || count <= 1 {
+			continue
+		}
+		price := authorization.NativeToolPricing[key].NanousdPerCall
+		if price <= 0 {
+			continue
+		}
+		if count-1 > (int64(^uint64(0)>>1)-nativeToolEstimate)/price {
+			return fmt.Errorf("native tool reservation exceeds supported amount")
+		}
+		nativeToolEstimate += price * (count - 1)
+	}
 	if model, selected := selectedNativeImageModel(route.Protocol, options, route.ModelCapabilitiesJSON); selected {
 		_, err := s.billingSvc.AuthorizeImageTool(authorization, model)
 		if err != nil {
@@ -184,6 +198,9 @@ func (s *Service) ensureUsageBudgetCoversEstimate(
 	})
 	if err != nil {
 		return err
+	}
+	if requiredNanousd < 0 || nativeToolEstimate > int64(^uint64(0)>>1)-requiredNanousd {
+		return fmt.Errorf("combined usage reservation exceeds supported amount")
 	}
 	return s.billingSvc.EnsureUsageAuthorizationBudget(ctx, authorization, requiredNanousd+nativeToolEstimate)
 }

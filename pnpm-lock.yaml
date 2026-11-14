@@ -146,6 +146,9 @@ importers:
       katex:
         specifier: ^0.18.11
         version: 0.18.11
+      libopus-wasm:
+        specifier: 0.4.1
+        version: 0.4.1
       lucide-react:
         specifier: ^1.51.0
         version: 1.51.0(@types/react@19.2.18)(react@19.2.8)
@@ -2789,6 +2792,10 @@ packages:
 
   layout-base@2.0.1:
     resolution: {integrity: sha512-dp3s92+uNI1hWIpPGH3jK2kxE2lMjdXdr+DH8ynZHpd6PUlH6x6cbuXnoMmiNumznqaNO31xu9e79F0uuZ0JFg==}
+
+  libopus-wasm@0.4.1:
+    resolution: {integrity: sha512-dt2u6KyBe1IONzZA2Q9TXQbmLsZ6l1vLqgt4n9XC/sE70BegLgwC/hcbZp41aJgURAqalYdnPg0wGSI2IwHyvA==}
+    engines: {node: '>=22'}
 
   lie@3.3.0:
     resolution: {integrity: sha512-UaiMJzeWRlEujzAuw5LokY1L5ecNQYZKfmyZ9L7wDHb/p5etKaxXhohBcrw0EYby+G/NA52vRSN4N39dxHAIwQ==}
@@ -6185,6 +6192,8 @@ snapshots:
   layout-base@1.0.2: {}
 
   layout-base@2.0.1: {}
+
+  libopus-wasm@0.4.1: {}
 
   lie@3.3.0:
     dependencies:

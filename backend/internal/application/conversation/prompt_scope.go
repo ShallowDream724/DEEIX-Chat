@@ -113,8 +113,9 @@ func historyMessagesFromDomain(messages []model.Message, options historyMessageO
 			continue
 		}
 		message := llm.Message{
-			Role:    item.Role,
-			Content: item.Content,
+			Role:              item.Role,
+			Content:           item.Content,
+			ProviderStateJSON: item.ProviderStateJSON,
 		}
 		if options.ReasoningContentPassback && item.Role == "assistant" {
 			message.ReasoningContent = item.ReasoningContent
@@ -144,6 +145,9 @@ func mergeConsecutiveSameRoleMessages(messages []llm.Message) []llm.Message {
 }
 
 func mergeableSameRolePair(left llm.Message, right llm.Message) bool {
+	if left.ProviderStateJSON != "" || right.ProviderStateJSON != "" {
+		return false
+	}
 	role := strings.ToLower(strings.TrimSpace(left.Role))
 	if role != strings.ToLower(strings.TrimSpace(right.Role)) {
 		return false

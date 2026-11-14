@@ -1,0 +1,21 @@
+{
+  "sections": { "general": "语音", "input": "语音输入", "deepseek": "DeepSeek", "pricing": "计费" },
+  "fields": {
+    "enabled": { "label": "启用语音服务", "description": "允许使用本站提供的语音输入和朗读回复。" },
+    "max_recording_seconds": { "label": "单段录音时长", "description": "10–1800 秒。实际时长同时受所选渠道限制。" },
+    "max_concurrent_per_user": { "label": "每用户并发上限", "description": "每位用户同时进行的语音请求数，范围 1–8。" },
+    "doubao_enabled": { "label": "豆包输入法", "description": "允许使用豆包输入法进行语音输入。" },
+    "wetype_enabled": { "label": "微信输入法", "description": "允许使用微信输入法进行语音输入。" },
+    "deepseek_asr_enabled": { "label": "语音输入", "description": "录音结束后识别文字，单段最长 120 秒。" },
+    "deepseek_tts_enabled": { "label": "朗读回复", "description": "允许将回复转换为语音播放。" },
+    "deepseek_base_url": { "label": "服务地址", "description": "DeepSeek 语音服务的 API 地址。" },
+    "deepseek_api_key": { "label": "API Key", "description": "语音输入与朗读共用此密钥，留空保留已保存的密钥。" },
+    "asr_cny_per_hour": { "label": "语音输入费率", "description": "元/小时，按实际音频时长计费。设为 0 时免费。" },
+    "tts_cny_per_10000_characters": { "label": "朗读费率", "description": "元/万计费字符，汉字按 2 个字符计算。设为 0 时免费。" }
+  },
+  "sessionExpired": "登录已过期，请重新登录。",
+  "loadFailed": "加载语音设置失败",
+  "saveFailed": "保存失败",
+  "saved": "设置已更新",
+  "unknownError": "未知错误"
+}

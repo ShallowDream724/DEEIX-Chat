@@ -13,6 +13,7 @@ import {
 import type { ChatAreaMessage } from "@/features/chat/types/messages";
 import { cn } from "@/lib/utils";
 import { useScrollFadeFallbackRef } from "@/shared/hooks/use-scroll-fade-fallback-ref";
+import { useChatMediaRailFeedback } from "@/features/chat/hooks/use-chat-media-rail-feedback";
 
 const QUESTION_PREVIEW_MAX_LENGTH = 240;
 const ANSWER_PREVIEW_MAX_LENGTH = 420;
@@ -244,6 +245,8 @@ function ChatMessagePositionRailComponent({
   const currentItem = items[currentIndex >= 0 ? currentIndex : items.length - 1] ?? null;
   const currentItemID = currentItem?.id ?? "";
   const previewItem = hoveredID ? items.find((item) => item.id === hoveredID) : null;
+  const railSignature = React.useMemo(() => items.map((item) => item.id).join("\u0000"), [items]);
+  useChatMediaRailFeedback(railViewportRef, railSignature);
 
   const centerCurrentRailItem = React.useCallback(() => {
     const railViewport = railViewportRef.current;
@@ -365,7 +368,7 @@ function ChatMessagePositionRailComponent({
                 aria-label={item.question}
                 tabIndex={-1}
               >
-                <span className={lineClassName} style={{ width: `${lineWidthRem}rem` }} />
+                <span data-media-rail-line="" className={cn(lineClassName, "origin-left")} style={{ width: `${lineWidthRem}rem` }} />
               </button>
             </div>
           );

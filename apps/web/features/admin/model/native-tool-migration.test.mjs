@@ -1,54 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mergeLegacyDeepSeekNativeTools } from "./native-tool-migration.ts";
+import { canonicalNativeToolKey, mergeLegacyDeepSeekNativeTools } from "./native-tool-migration.ts";
 
-const search = {
-  key: "deepseek.tool_search",
-  protocols: ["openai_responses"],
-  enabled: true,
-  defaultEnabled: false,
-  payload: { type: "web_search", allowed_domains: ["example.org"] },
-};
-const fetch = {
-  toolKey: "deepseek.tool_fetch",
-  protocol: "openai_chat_completions",
-  enabled: true,
-  defaultEnabled: true,
-  payload: { type: "web_fetch", fetch_only: true },
-};
-
-test("enabled legacy fetch survives a disabled search without losing search parameters", () => {
-  for (const tools of [[{ ...search, enabled: false }, fetch], [fetch, { ...search, enabled: false }]]) {
-    const result = mergeLegacyDeepSeekNativeTools(tools);
-    assert.equal(result.length, 1);
-    const [merged] = result;
-    assert.equal(merged.key, search.key);
-    assert.deepEqual(merged.protocols, ["openai_responses"]);
-    assert.deepEqual(merged.payload, search.payload);
-    assert.equal(merged.enabled, true);
-    assert.equal(merged.defaultEnabled, true);
-  }
-});
-
-test("only enabled legacy declarations contribute to the merged default", () => {
-  const cases = [
-    [search, fetch, true, true],
-    [search, { ...fetch, enabled: false }, true, false],
-    [{ ...search, enabled: false, defaultEnabled: true }, { ...fetch, defaultEnabled: false }, true, false],
-    [{ ...search, enabled: false }, { ...fetch, enabled: false }, false, false],
+test("legacy search and read selections keep independent enabled/default state", () => {
+  const input = [
+    { key: "deepseek.tool_search", enabled: false, defaultEnabled: false, payload: { type: "web_search" } },
+    { toolKey: "deepseek.tool_fetch", enabled: true, defaultEnabled: true, payload: { type: "web_fetch" } },
+    { key: "openai.web_search", payload: { type: "web_search" } },
   ];
-  for (const [searchTool, fetchTool, enabled, defaultEnabled] of cases) {
-    const [merged] = mergeLegacyDeepSeekNativeTools([searchTool, fetchTool]);
-    assert.equal(merged.enabled, enabled);
-    assert.equal(merged.defaultEnabled, defaultEnabled);
-  }
+  const result = mergeLegacyDeepSeekNativeTools(input);
+  assert.equal(result.length, 3);
+  assert.equal(result[0].key, "deepseek.tool_search");
+  assert.equal(result[0].enabled, false);
+  assert.equal(result[0].defaultEnabled, false);
+  assert.equal(result[0].payload.type, "deepseek_web_search");
+  assert.equal(result[1].key, "deepseek.tool_fetch");
+  assert.equal(result[1].enabled, true);
+  assert.equal(result[1].defaultEnabled, true);
+  assert.equal(result[1].payload.type, "deepseek_read_url");
+  assert.deepEqual(result[1].protocols, ["openai_responses", "openai_chat_completions", "anthropic_messages"]);
+  assert.deepEqual(result[2], input[2]);
+  assert.equal(canonicalNativeToolKey("deepseek.tool_fetch"), "deepseek.tool_fetch");
 });
 
-test("fetch-only settings migrate to one canonical search without importing fetch parameters", () => {
-  const [merged, other] = mergeLegacyDeepSeekNativeTools([fetch, { key: "openai.web_search" }]);
-  assert.equal(merged.key, "deepseek.tool_search");
-  assert.deepEqual(merged.payload, { type: "web_search" });
-  assert.equal(merged.enabled, true);
-  assert.equal(merged.defaultEnabled, true);
-  assert.deepEqual(other, { key: "openai.web_search" });
+test("a read-only legacy capability never enables search", () => {
+  const [read] = mergeLegacyDeepSeekNativeTools([{ key: "deepseek.tool_fetch", enabled: true, defaultEnabled: false }]);
+  assert.equal(read.key, "deepseek.tool_fetch");
+  assert.equal(read.type, "deepseek_read_url");
+  assert.equal(read.defaultEnabled, false);
 });

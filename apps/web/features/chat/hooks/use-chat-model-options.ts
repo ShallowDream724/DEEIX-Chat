@@ -124,7 +124,7 @@ function resolveNativeTools(raw: string): ModelNativeToolConfig[] {
         label: normalizeNativeToolString(source.label) || type || key,
         description: normalizeNativeToolString(source.description) || undefined,
         enabled: source.enabled !== false,
-        defaultEnabled: source.defaultEnabled === true,
+        defaultEnabled: source.defaultEnabled === true || (source.defaultEnabled === undefined && (key === "deepseek.tool_search" || key === "deepseek.tool_fetch")),
         payload,
       }];
     }).filter((item) => item.enabled);
@@ -137,7 +137,7 @@ function resolveNativeTools(raw: string): ModelNativeToolConfig[] {
     type: "",
     label: key,
     enabled: true,
-    defaultEnabled: false,
+    defaultEnabled: key === "deepseek.tool_search" || key === "deepseek.tool_fetch",
     payload: {},
   }));
 }
@@ -148,6 +148,7 @@ function mergeDefaultNativeTools(
   catalog: ModelOptionPolicy["nativeTools"],
   modelProtocols: string[],
 ): ConversationOptions {
+  if (Object.hasOwn(defaultOptions, "tools")) return defaultOptions;
   const currentTools = Array.isArray(defaultOptions.tools)
     ? defaultOptions.tools.filter((item) => item !== null && typeof item === "object" && !Array.isArray(item))
     : [];

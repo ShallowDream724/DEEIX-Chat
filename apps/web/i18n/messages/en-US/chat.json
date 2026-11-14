@@ -287,6 +287,15 @@
     "generating": "Generating… the preview appears once the code is complete.",
     "security": "The preview runs in an isolated sandbox with external network, forms, popups, parent page access, and storage access restricted."
   },
+  "speech": {
+    "play": "Read aloud",
+    "retry": "Retry reading",
+    "pause": "Pause reading",
+    "resume": "Resume reading",
+    "loading": "Preparing audio…",
+    "failed": "Could not read this reply. Try again later.",
+    "tooLong": "This reply is too long to read aloud."
+  },
   "messages": {
     "debugRequest": "Request",
     "debugResponse": "Response",
@@ -622,6 +631,12 @@
     "editQueuedMessage": "Edit queued message",
     "deleteQueuedMessage": "Delete queued message",
     "voiceInput": "Voice input",
+    "voiceCancel": "Cancel",
+    "voiceStop": "Stop",
+    "voiceSend": "Send",
+    "voiceTranscribing": "Transcribing…",
+    "voiceRecording": "Recording",
+    "voiceRemaining": "{seconds}s left",
     "cancelVoiceInput": "Cancel voice input",
     "voiceUnsupported": "Voice input is not supported by this browser",
     "voiceErrorTitle": "Voice input stopped",

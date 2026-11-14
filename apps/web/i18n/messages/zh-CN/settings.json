@@ -351,6 +351,19 @@
     }
   },
   "chatPage": {
+    "speech": {
+      "sectionTitle": "语音",
+      "inputTitle": "语音输入",
+      "inputDescription": "选择语音输入使用的识别来源。",
+      "browser": "浏览器语音输入",
+      "unavailable": "当前不可用",
+      "autoReadTitle": "自动朗读回复",
+      "autoReadDescription": "新回复完成后自动朗读。",
+      "voiceTitle": "朗读音色",
+      "voiceDescription": "选择朗读回复时使用的声音。",
+      "stella": "海星",
+      "tide": "暗潮"
+    },
     "defaultModel": {
       "sectionTitle": "基础会话",
       "title": "新会话默认模型",
@@ -576,7 +589,7 @@
       },
       "columns": {
         "time": "时间",
-        "model": "模型",
+        "model": "模型 / 服务",
         "baseBilling": "基础计费",
         "serviceBilling": "服务计费",
         "balanceAfter": "结算后余额",

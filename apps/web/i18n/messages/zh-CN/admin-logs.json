@@ -124,7 +124,7 @@
   },
   "tabs": {
     "audit": "操作审计",
-    "usage": "模型调用",
+    "usage": "用量",
     "auth": "认证安全",
     "orders": "订单记录",
     "redemptions": "兑换记录",
@@ -147,7 +147,7 @@
     "types": {
       "audit": "操作审计",
       "auth": "认证安全",
-      "usage": "模型调用",
+      "usage": "用量",
       "orders": "订单记录",
       "conversation": "对话事件",
       "moderation": "审核事件",
@@ -222,7 +222,7 @@
     "result": "结果",
     "reason": "原因",
     "caller": "调用人",
-    "model": "模型",
+    "model": "模型 / 服务",
     "usage": "用量",
     "billing": "计费",
     "balanceAfter": "结算后余额",

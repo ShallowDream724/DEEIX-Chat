@@ -62,7 +62,7 @@ export function nativeToolVisualOptionsFromConfigs(
       label: tool.label,
       description: tool.description,
       enabled: true,
-      defaultEnabled: false,
+      defaultEnabled: tool.provider === "DeepSeek" ? tool.defaultEnabled : false,
       payload: tool.payload,
     }));
   const visualOptions = new Map<string, NativeToolVisualOption>();
@@ -155,6 +155,7 @@ export function setProviderToolEnabled(
   }
 
   if (nextTools.length === 0) {
+    if (definitions.some((definition) => definition.toolKey.startsWith("deepseek."))) return { ...options, tools: [] };
     const { tools: _tools, ...rest } = options;
     return rest;
   }

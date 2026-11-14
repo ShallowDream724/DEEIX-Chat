@@ -16,6 +16,7 @@ import { MessageAttachmentRow } from "@/features/chat/components/message/message
 import { MessageKnowledgeSources } from "@/features/chat/components/message/message-knowledge-sources";
 import type { AssistantReaction } from "@/features/chat/components/message/message-meta";
 import { AssistantMessageMeta } from "@/features/chat/components/message/message-meta";
+import { SpeechPlaybackButton } from "@/features/chat/components/message/speech-playback-button";
 import { MessageAgentTrace, MessageProcessTrace } from "@/features/chat/components/message/message-process-trace";
 import { UpstreamExchangeDetails } from "@/features/chat/components/message/message-upstream-debug";
 import { useChatInlineVideoSource } from "@/features/chat/hooks/use-chat-inline-video-source";
@@ -533,6 +534,7 @@ export function ChatMessageBot({
         readOnly={readOnly}
         alwaysVisible={readOnly}
         showBranchNavigator={showBranchNavigator}
+        speechAction={!readOnly ? <SpeechPlaybackButton messageID={item.publicID} text={item.content} disabled={Boolean(item.isPending || item.isStreaming || (item.status && item.status !== "success"))} /> : undefined}
       />
     </div>
   );

@@ -69,6 +69,7 @@
     "date-fns": "^4.1.0",
     "docx-preview": "^0.3.7",
     "katex": "^0.18.11",
+    "libopus-wasm": "0.4.1",
     "lucide-react": "^1.51.0",
     "modern-screenshot": "4.6.5",
     "motion": "^12.38.0",

@@ -95,6 +95,9 @@ func (s *Service) prepareRouteGeneration(ctx context.Context, input routeGenerat
 	}
 
 	llmMessages := promptPlan.Messages
+	if strings.EqualFold(strings.TrimSpace(route.UpstreamModel), "deepseek-flash") {
+		llmMessages = restoreDeepSeekURLContext(llmMessages)
+	}
 	filteredOptions, reasoningEffort := resolveChatModelOptions(messageInput.Options, route.Protocol, modelOptionPolicyConfig{
 		Mode:                  cfg.ModelOptionPolicyMode,
 		AllowedPathsJSON:      cfg.ModelOptionAllowedPaths,
@@ -103,6 +106,7 @@ func (s *Service) prepareRouteGeneration(ctx context.Context, input routeGenerat
 		CatalogReasoning:      route.CatalogReasoning,
 		Controls:              messageInput.Controls,
 	})
+	filteredOptions = restrictDeepSeekToolsForRoute(route, filteredOptions)
 	filteredOptions = withMessageRouteReasoningPassbackOptions(
 		filteredOptions,
 		messageInput.Options,
@@ -118,6 +122,7 @@ func (s *Service) prepareRouteGeneration(ctx context.Context, input routeGenerat
 		llmMessages,
 	)
 	generateInput := llm.GenerateInput{
+		UserID:                 messageInput.UserID,
 		RequestID:              strings.TrimSpace(messageInput.RequestID),
 		ConversationID:         messageInput.ConversationID,
 		ConversationPublicID:   strings.TrimSpace(conversation.PublicID),
@@ -128,6 +133,7 @@ func (s *Service) prepareRouteGeneration(ctx context.Context, input routeGenerat
 		Options:                filteredOptions,
 		NativeToolKeys:         authorizedNativeToolKeys(route.Protocol, filteredOptions, route.ModelCapabilitiesJSON),
 	}
+	generateInput.NativeFiles, _ = deepSeekNativeFilesPolicy(route)
 	generateInput = enforceRouteGeneratePolicy(route.Protocol, generateInput)
 	plan.contextMeter = contextInputMeter{
 		identity: contextObservationRouteIdentity(route, gen.statefulContextConfig),
@@ -198,6 +204,8 @@ func (s *Service) prepareRouteGeneration(ctx context.Context, input routeGenerat
 // messageGenerationRunner 执行一条消息内的每次上游 LLM 调用，并累计跨调用的运行观测：
 // 请求计数、用量、可见输出、首字延迟与后台 Responses 恢复状态。中断收尾与最终结果都从这里读取。
 type messageGenerationRunner struct {
+	route           *channel.ResolvedRoute
+	nativeURLInput  deepSeekURLInput
 	nativeToolUsage map[string]int64
 	service         *Service
 	input           SendMessageInput
@@ -408,6 +416,25 @@ func (c *generationCall) handleStreamEvent(generationCtx context.Context, curren
 // fullMessages 是本次调用对应的完整上下文，有状态续传时用于估算上游实际计费的输入规模。
 func (r *messageGenerationRunner) generate(ctx context.Context, currentInput llm.GenerateInput, fullMessages []llm.Message) (*llm.GenerateOutput, error) {
 	currentInput = enforceRouteGeneratePolicy(r.routeConfig.Protocol, currentInput)
+	var fetchBudget deepSeekURLBudget
+	if !r.nativeURLInput.prepared && len(deepSeekExplicitURLs(currentInput)) > 0 {
+		fetchBudget = deepSeekURLBudget{route: r.route, estimate: followUpUsageBudgetEstimate(r.usage.billedUsage(), r.contextMeter.estimate(fullContextObservationInput(currentInput, fullMessages)), currentInput.Options)}
+	}
+	preparedInput, fetchUsage, fetchCalls, fetchErr := r.service.prepareDeepSeekURLInput(ctx, r.routeConfig, currentInput, r.input.UsageAuthorization, &r.nativeURLInput, fetchBudget)
+	if len(fetchUsage) > 0 {
+		r.nativeToolUsage = addServerSideToolUsage(r.nativeToolUsage, fetchUsage)
+		r.attemptHadSideEffect = true
+	}
+	if len(fetchCalls) > 0 {
+		appendUpstreamServerToolTrace(r.traceRecorder, upstreamServerToolCallRows(&llm.GenerateOutput{ServerToolCalls: fetchCalls}, r.runID))
+	}
+	if fetchErr != nil {
+		return nil, fetchErr
+	}
+	if len(r.nativeURLInput.parts) > 0 {
+		currentInput = preparedInput
+		fullMessages = cloneLLMMessages(currentInput.Messages)
+	}
 	// The retained context shares the media budget even when Responses sends
 	// only a delta. Validate before recording an attempted upstream call.
 	fullInput := fullContextObservationInput(currentInput, fullMessages)
@@ -418,6 +445,17 @@ func (r *messageGenerationRunner) generate(ctx context.Context, currentInput llm
 	estimatedInputTokens := r.contextMeter.estimateDescribed(current)
 	if err := r.contextBudget.evaluate(fullInput, estimatedInputTokens).err(); err != nil {
 		return nil, err
+	}
+	if len(r.nativeURLInput.parts) > 0 {
+		estimate := followUpUsageBudgetEstimate(r.usage.billedUsage(), estimatedInputTokens, currentInput.Options)
+		estimate.NativeToolUsage = addServerSideToolUsage(nil, r.nativeToolUsage)
+		if estimate.NativeToolUsage == nil {
+			estimate.NativeToolUsage = map[string]int64{}
+		}
+		estimate.NativeToolUsage["deepseek.tool_fetch"]++ // reserve the next hosted operation as well
+		if err := r.service.ensureUsageBudgetCoversEstimate(ctx, r.input.UsageAuthorization, r.route, currentInput.Options, estimate); err != nil {
+			return nil, err
+		}
 	}
 	transportInput, releaseTransport, transportErr := r.service.prepareAttachmentTransport(ctx, r.routeConfig.Protocol, r.input.UserID, currentInput)
 	if transportErr != nil {
@@ -537,6 +575,9 @@ func (r *messageGenerationRunner) generate(ctx context.Context, currentInput llm
 		if generateErr == nil {
 			generateErr = call.finalizeNonStreamingOutput(output, true)
 		}
+	}
+	if output != nil {
+		output.ProviderStateJSON = withDeepSeekURLContext(output.ProviderStateJSON, r.routeConfig.Protocol, r.nativeURLInput.parts)
 	}
 	if generateErr == nil {
 		r.completedLLMCallCount++

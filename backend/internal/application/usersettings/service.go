@@ -36,6 +36,9 @@ var allowedKeys = map[string]string{
 	"chat.content_width":                        "compact",
 	"chat.default_mcp_tool_ids":                 "[]",
 	"chat.model_control_placements":             "{}",
+	"chat.speech_input_provider":                "browser",
+	"chat.auto_read_replies":                    "false",
+	"chat.speech_voice":                         "stella",
 }
 
 // boolKeys 取值只能是 "true" / "false"。
@@ -56,18 +59,30 @@ var boolKeys = map[string]bool{
 	"chat.preserve_conversation_drafts":         true,
 	"chat.reuse_model_options":                  true,
 	"chat.reasoning_content_passback":           true,
+	"chat.auto_read_replies":                    true,
 }
 
 // enumKeys 枚举 key 的合法值集合。
 var enumKeys = map[string]map[string]bool{
-	"chat.file_mode":     {"auto": true, "full_context": true, "rag": true},
-	"chat.send_on_enter": {"enter": true, "ctrl_enter": true, "meta_enter": true},
-	"chat.input_height":  {"compact": true, "standard": true, "loose": true},
-	"chat.content_width": {"compact": true, "standard": true, "wide": true},
+	"chat.file_mode":             {"auto": true, "full_context": true, "rag": true},
+	"chat.send_on_enter":         {"enter": true, "ctrl_enter": true, "meta_enter": true},
+	"chat.input_height":          {"compact": true, "standard": true, "loose": true},
+	"chat.content_width":         {"compact": true, "standard": true, "wide": true},
+	"chat.speech_input_provider": {"browser": true, "deepseek": true, "doubao-ime": true, "wetype": true},
 }
 
 // validateValue 校验 key 对应 value 的合法性。
 func validateValue(key, value string) error {
+	if key == "chat.speech_voice" {
+		if len(value) == 0 || len(value) > 80 {
+			return settingValidationError(ErrInvalidSettingValue, "invalid speech voice")
+		}
+		for _, r := range value {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.') {
+				return settingValidationError(ErrInvalidSettingValue, "invalid speech voice")
+			}
+		}
+	}
 	if key == "chat.default_mcp_tool_ids" {
 		return validateDefaultMCPToolIDs(value, key)
 	}

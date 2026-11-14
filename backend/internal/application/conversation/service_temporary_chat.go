@@ -127,7 +127,11 @@ func (s *Service) StreamTemporaryChat(
 	cacheKey := temporaryContextObservationKey{
 		userID: input.UserID, session: contextObservationHash(strings.TrimSpace(input.SessionID)), route: meter.identity,
 	}
+	s.temporaryProviderState.restore(cacheKey, messages, time.Now())
 	cacheKey.ancestry, meter.prior = s.temporaryContextCache.ancestors(cacheKey, messages, time.Now())
+	if strings.EqualFold(strings.TrimSpace(route.UpstreamModel), "deepseek-flash") {
+		messages = restoreDeepSeekURLContext(messages)
+	}
 	uiComponents, err := s.resolveUIComponents(ctx, input.UserID, routeUIComponentIDs(route, input.UIComponentIDs))
 	if err != nil {
 		return nil, err
@@ -184,7 +188,9 @@ func (s *Service) StreamTemporaryChat(
 		Controls:              input.Controls,
 	})
 	filteredOptions = stripTemporaryChatProviderStateOptions(filteredOptions)
+	filteredOptions = restrictDeepSeekToolsForRoute(route, filteredOptions)
 	generateInput := llm.GenerateInput{
+		UserID:         input.UserID,
 		RequestID:      strings.TrimSpace(input.RequestID),
 		Messages:       messages,
 		Tools:          toolRuntime.definitions,
@@ -192,6 +198,7 @@ func (s *Service) StreamTemporaryChat(
 		NativeToolKeys: authorizedNativeToolKeys(route.Protocol, filteredOptions, route.ModelCapabilitiesJSON),
 		Ephemeral:      true,
 	}
+	generateInput.NativeFiles, _ = deepSeekNativeFilesPolicy(route)
 	generateInput = enforceRouteGeneratePolicy(route.Protocol, generateInput)
 	applyOpenAIResponsesInstructions(route, routeConfig.Endpoint, &generateInput)
 	estimatedInputTokens := meter.estimate(generateInput)
@@ -247,7 +254,7 @@ func (s *Service) StreamTemporaryChat(
 	})
 	output := generation.Output
 	if generateErr != nil {
-		if output == nil || output.Text == "" && generation.Usage == (llm.Usage{}) && generation.LLMCallCount == 0 {
+		if output == nil || output.Text == "" && generation.Usage == (llm.Usage{}) && generation.LLMCallCount == 0 && len(output.ServerSideToolUsage) == 0 {
 			if moderationCoord != nil {
 				moderationCoord.WaitInputOnly(ctx)
 			}
@@ -380,6 +387,7 @@ func (s *Service) StreamTemporaryChat(
 	}
 	if result.Moderation == nil || !result.Moderation.Blocked {
 		cacheKey.ancestry = extendTemporaryContextAncestry(cacheKey.ancestry, llm.Message{Role: "assistant", Content: result.AssistantMessage.Content})
+		s.temporaryProviderState.put(cacheKey, output.ProviderStateJSON, now)
 		s.temporaryContextCache.put(cacheKey, generation.InitialObservation, now)
 	}
 	return result, nil

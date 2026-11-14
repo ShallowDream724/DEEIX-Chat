@@ -57,6 +57,7 @@ func buildPromptStateFingerprint(input promptStateFingerprintInput) string {
 			}
 		}
 		writeFingerprintField(hasher, "reasoning_content", message.ReasoningContent)
+		writeFingerprintField(hasher, "provider_state", message.ProviderStateJSON)
 		for _, call := range message.ToolCalls {
 			writeFingerprintField(hasher, "tool_call_id", call.ToolCallID)
 			writeFingerprintField(hasher, "tool_call_type", call.ToolType)

@@ -11,6 +11,9 @@ type ChatPreferences = {
   autoExpandToolCalls: boolean;
   deleteFilesByDefault: boolean;
   reuseModelOptions: boolean;
+  speechInputProvider: string;
+  autoReadReplies: boolean;
+  speechVoice: string;
 };
 
 type ChatPreferencesState = ChatPreferences & {
@@ -24,6 +27,9 @@ const DEFAULT_CHAT_PREFERENCES: ChatPreferences = {
   autoExpandToolCalls: true,
   deleteFilesByDefault: false,
   reuseModelOptions: true,
+  speechInputProvider: "browser",
+  autoReadReplies: false,
+  speechVoice: "stella",
 };
 
 function resolveChatPreferences(settings: Record<string, string>): ChatPreferences {
@@ -34,6 +40,9 @@ function resolveChatPreferences(settings: Record<string, string>): ChatPreferenc
     autoExpandToolCalls: settings["chat.auto_expand_tool_calls"] !== "false",
     deleteFilesByDefault: settings["chat.delete_conversation_files_by_default"] === "true",
     reuseModelOptions: settings["chat.reuse_model_options"] !== "false",
+    speechInputProvider: settings["chat.speech_input_provider"] || "browser",
+    autoReadReplies: settings["chat.auto_read_replies"] === "true",
+    speechVoice: settings["chat.speech_voice"] || "stella",
   };
 }
 

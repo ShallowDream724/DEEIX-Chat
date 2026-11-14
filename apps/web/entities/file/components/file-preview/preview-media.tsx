@@ -1,6 +1,6 @@
 "use client";
 
-import { FileAudio2, Maximize2, Minimize2, Pause, Play } from "lucide-react";
+import { Loader2, Maximize2, Minimize2, Pause, Play } from "lucide-react";
 import Image from "next/image";
 import { useTranslations } from "next-intl";
 import * as React from "react";
@@ -8,6 +8,7 @@ import { createPortal } from "react-dom";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { registerMediaActivity } from "@/shared/lib/media-activity";
 import { FileScaleSelect, useFileScale, useFileScaleGestures } from "@/entities/file/components/file-preview/file-scale";
 
 type PreviewMediaProps = {
@@ -96,6 +97,8 @@ export function PreviewMedia({
   const videoControlsHideTimerRef = React.useRef<number | null>(null);
   const imageCenterKeyRef = React.useRef("");
   const [playing, setPlaying] = React.useState(false);
+  const [mediaLoading, setMediaLoading] = React.useState(true);
+  const [mediaError, setMediaError] = React.useState<"unsupported" | "failed" | "blocked" | null>(null);
   const [videoControlsVisible, setVideoControlsVisible] = React.useState(true);
   const [duration, setDuration] = React.useState(0);
   const [currentTime, setCurrentTime] = React.useState(0);
@@ -216,8 +219,17 @@ export function PreviewMedia({
     }
 
     setPlaying(false);
+    setMediaLoading(true);
+    setMediaError(null);
     setDuration(0);
     setCurrentTime(0);
+    const media = mediaRef.current;
+    if (!media) return;
+    const unregister = registerMediaActivity(media, kind);
+    return () => {
+      media.pause();
+      unregister();
+    };
   }, [kind, source]);
 
   const clearVideoControlsHideTimer = React.useCallback(() => {
@@ -322,16 +334,24 @@ export function PreviewMedia({
     }
 
     let frameID = 0;
-    const updateProgressVisual = () => {
+    let lastDrawAt = 0;
+    const updateProgressVisual = (now: number) => {
+      if (document.hidden) { frameID = 0; return; }
       const media = mediaRef.current;
-      if (media) {
+      if (media && now - lastDrawAt >= 1000 / 30) {
         syncMediaProgressVisual(media);
+        lastDrawAt = now;
       }
       frameID = window.requestAnimationFrame(updateProgressVisual);
     };
-    frameID = window.requestAnimationFrame(updateProgressVisual);
+    const handleVisibilityChange = () => {
+      if (frameID) window.cancelAnimationFrame(frameID);
+      frameID = document.hidden ? 0 : window.requestAnimationFrame(updateProgressVisual);
+    };
+    handleVisibilityChange();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
 
-    return () => window.cancelAnimationFrame(frameID);
+    return () => { window.cancelAnimationFrame(frameID); document.removeEventListener("visibilitychange", handleVisibilityChange); };
   }, [kind, playing, syncMediaProgressVisual]);
 
   const syncMediaMetrics = React.useCallback((media: HTMLAudioElement | HTMLVideoElement) => {
@@ -341,6 +361,7 @@ export function PreviewMedia({
   }, [syncMediaProgress]);
 
   const handleMediaLoadedMetadata = React.useCallback((event: React.SyntheticEvent<HTMLAudioElement | HTMLVideoElement>) => {
+    setMediaLoading(false);
     syncMediaMetrics(event.currentTarget);
   }, [syncMediaMetrics]);
 
@@ -349,6 +370,7 @@ export function PreviewMedia({
   }, [syncMediaProgress]);
 
   const handleMediaPlay = React.useCallback((event: React.SyntheticEvent<HTMLAudioElement | HTMLVideoElement>) => {
+    setMediaError(null);
     syncMediaProgress(event.currentTarget);
     setPlaying(true);
   }, [syncMediaProgress]);
@@ -370,11 +392,29 @@ export function PreviewMedia({
     }
 
     if (media.paused) {
-      await media.play();
+      try {
+        await media.play();
+      } catch (error) {
+        setMediaLoading(false);
+        setMediaError(error instanceof DOMException && error.name === "NotAllowedError" ? "blocked" : "failed");
+      }
     } else {
       media.pause();
     }
   }, []);
+
+  const handleMediaError = React.useCallback((event: React.SyntheticEvent<HTMLAudioElement | HTMLVideoElement>) => {
+    setPlaying(false);
+    setMediaLoading(false);
+    setMediaError(event.currentTarget.error?.code === MediaError.MEDIA_ERR_SRC_NOT_SUPPORTED ? "unsupported" : "failed");
+  }, []);
+
+  const mediaStatus = mediaError ? (
+    <div role="status" className="mt-3 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+      <span>{tPreview(mediaError === "unsupported" ? "mediaUnsupported" : mediaError === "blocked" ? "mediaPlaybackBlocked" : "mediaLoadFailed")}</span>
+      <a href={source} download={alt || true} className="underline underline-offset-2">{tPreview("downloadMedia")}</a>
+    </div>
+  ) : mediaLoading ? <p role="status" className="mt-3 text-center text-xs text-muted-foreground">{tPreview("loadingMedia")}</p> : null;
 
   const handleSeek = React.useCallback((value: string) => {
     const media = mediaRef.current;
@@ -583,6 +623,10 @@ export function PreviewMedia({
                   onPlay={handleMediaPlay}
                   onPause={handleMediaPause}
                   onEnded={handleMediaEnded}
+                  onError={handleMediaError}
+                  onWaiting={() => setMediaLoading(true)}
+                  onCanPlay={() => setMediaLoading(false)}
+                  onPlaying={() => setMediaLoading(false)}
                 />
 
                 {!playing ? (
@@ -598,8 +642,9 @@ export function PreviewMedia({
                         : "size-12 bg-neutral-950/75 hover:bg-neutral-950/90",
                     )}
                     onClick={() => void togglePlay()}
+                      disabled={mediaError === "unsupported"}
                   >
-                    <Play className={cn("ml-0.5", inline ? "size-4.5" : "size-5")} strokeWidth={1.9} />
+                    {mediaLoading ? <Loader2 className="size-5 animate-spin motion-reduce:animate-none" /> : <Play className={cn("ml-0.5", inline ? "size-4.5" : "size-5")} strokeWidth={1.9} />}
                   </Button>
                 ) : null}
 
@@ -649,11 +694,12 @@ export function PreviewMedia({
                         />
                         <input
                           type="range"
+                          aria-label={tPreview("seekMedia")}
                           min={0}
                           max={Math.max(duration, 0)}
                           step={0.1}
                           value={Math.min(currentTime, duration || 0)}
-                          className="absolute -inset-y-2 inset-x-0 h-5 w-full cursor-pointer appearance-none opacity-0"
+                          className="absolute -inset-y-2 inset-x-0 h-5 w-full cursor-pointer appearance-none opacity-0 focus-visible:opacity-100"
                           onChange={(event) => handleSeek(event.target.value)}
                         />
                       </div>
@@ -676,6 +722,7 @@ export function PreviewMedia({
                 </div>
               </div>
             </div>
+            {mediaStatus}
           </div>
         </div>
       ) : (
@@ -690,19 +737,21 @@ export function PreviewMedia({
               onPlay={handleMediaPlay}
               onPause={handleMediaPause}
               onEnded={handleMediaEnded}
+              onError={handleMediaError}
+              onWaiting={() => setMediaLoading(true)}
+              onCanPlay={() => setMediaLoading(false)}
+              onPlaying={() => setMediaLoading(false)}
             />
             <div className="relative mx-auto flex w-full max-w-[520px] items-center gap-4 rounded-md bg-neutral-950/88 px-4 py-4 text-neutral-50">
               <div className="flex shrink-0 flex-col items-center">
                 <div className="group relative flex size-20 items-center justify-center overflow-hidden rounded-md bg-neutral-900">
-                  <div className="relative z-10 flex items-center justify-center rounded-full">
-                    <FileAudio2 className="size-8" />
-                  </div>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
-                    aria-label={playing ? tPreview("pauseVideo") : tPreview("playVideo")}
-                    className="absolute inset-0 z-20 size-full rounded-md bg-neutral-950/55 text-neutral-50 opacity-0 backdrop-blur-md transition-opacity duration-200 hover:bg-neutral-950/70 hover:text-neutral-50 group-hover:opacity-100 focus-visible:opacity-100"
+                    aria-label={playing ? tPreview("pauseAudio") : tPreview("playAudio")}
+                    disabled={mediaError === "unsupported"}
+                    className="absolute inset-0 z-20 size-full rounded-md bg-neutral-950/55 text-neutral-50 backdrop-blur-md hover:bg-neutral-950/70 hover:text-neutral-50 focus-visible:ring-2 focus-visible:ring-white/80"
                     onClick={() => void togglePlay()}
                   >
                     {playing ? <Pause className="size-8" strokeWidth={1.8} /> : <Play className="ml-1 size-8" strokeWidth={1.8} />}
@@ -725,11 +774,12 @@ export function PreviewMedia({
                     />
                     <input
                       type="range"
+                      aria-label={tPreview("seekMedia")}
                       min={0}
                       max={Math.max(duration, 0)}
                       step={0.1}
                       value={Math.min(currentTime, duration || 0)}
-                      className="absolute inset-0 h-full w-full cursor-pointer appearance-none opacity-0"
+                      className="absolute -inset-y-2 inset-x-0 h-5 w-full cursor-pointer appearance-none opacity-0 focus-visible:opacity-100"
                       onChange={(event) => handleSeek(event.target.value)}
                     />
                   </div>
@@ -742,6 +792,7 @@ export function PreviewMedia({
 
               </div>
             </div>
+            {mediaStatus}
           </div>
         </div>
       )}

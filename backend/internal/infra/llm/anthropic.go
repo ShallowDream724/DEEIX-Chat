@@ -114,6 +114,16 @@ func buildAnthropicRequestBody(model string, input portllm.GenerateInput, stream
 			}
 		}
 		content, marked := buildAnthropicContent(msg, cacheFor)
+		if normalizeAnthropicRole(msg.Role) == "assistant" {
+			if prior := deepSeekStateBlocks(msg.ProviderStateJSON, portllm.AdapterAnthropicMessages); len(prior) > 0 {
+				switch current := content.(type) {
+				case []map[string]any:
+					content = append(prior, current...)
+				case string:
+					content = append(prior, map[string]any{"type": "text", "text": current})
+				}
+			}
+		}
 		explicitCacheControl = explicitCacheControl || marked
 		anthropicMessages = append(anthropicMessages, map[string]any{
 			"role":    normalizeAnthropicRole(msg.Role),
@@ -625,7 +635,14 @@ func buildAnthropicContent(msg portllm.Message, cacheFor func(*portllm.CacheCont
 				marked = true
 			}
 			blocks = append(blocks, block)
-		case portllm.ContentPartDocument:
+		case portllm.ContentPartDocument, portllm.ContentPartAttachment:
+			if part.ProviderFileID != "" {
+				blocks = append(blocks, map[string]any{"type": "document", "source": map[string]any{"type": "file", "file_id": part.ProviderFileID}})
+				continue
+			}
+			if part.Kind == portllm.ContentPartAttachment {
+				continue
+			}
 			if len(part.Data) == 0 {
 				continue
 			}
@@ -746,6 +763,10 @@ func (c *Client) newAnthropicRequest(
 		req.Header.Set("x-api-key", apiKey)
 	}
 	setAdditionalHeadersForInput(req, route.HeadersJSON, input)
+	if input != nil && input.NativeFiles {
+		betas := appendUniqueStrings(strings.Split(req.Header.Get("anthropic-beta"), ","), "files-api-2025-04-14")
+		req.Header.Set("anthropic-beta", strings.Trim(strings.Join(betas, ","), ","))
+	}
 	return req, nil
 }
 
@@ -863,7 +884,7 @@ func (c *Client) generateAnthropic(
 	debug := upstreamDebugSnapshot(req, payload, resp, body)
 	output, err := parseAnthropicResponse(body, newAnthropicToolClassifier(requestBody, input.Tools))
 	if err != nil {
-		return nil, portllm.MarkRequestAccepted(attachUpstreamDebug(err, debug))
+		return output, portllm.MarkRequestAccepted(attachUpstreamDebug(err, debug))
 	}
 	output.Debug = debug
 	return output, nil
@@ -902,6 +923,15 @@ func parseAnthropicResponse(body []byte, classifier anthropicToolClassifier) (*p
 		ServerToolCalls:     parseAnthropicServerToolUse(parsed),
 		ServerSideToolUsage: parseAnthropicServerSideToolUsage(parsed),
 		RawJSON:             string(body),
+		Citations:           parseResponseCitations(parsed),
+	}
+	for _, raw := range asSlice(parsed["content"]) {
+		if block := asMap(raw); isDeepSeekNativeBlock(block) {
+			appendDeepSeekState(result, portllm.AdapterAnthropicMessages, block)
+		}
+	}
+	if len(asMap(parsed["error"])) > 0 {
+		return result, parseAnthropicError(502, body, nil)
 	}
 	return result, nil
 }
@@ -949,16 +979,46 @@ func parseAnthropicUsage(parsed map[string]any) portllm.Usage {
 	if cacheCreationInputTokens <= 0 {
 		cacheCreationInputTokens = getInt64FromPath(parsed, "usage", "cache_creation_input_tokens")
 	}
+	reasoningTokens := getInt64FromPath(parsed, "usage", "output_tokens_details", "thinking_tokens")
 	return portllm.Usage{
 		InputTokens:        getInt64FromPath(parsed, "usage", "input_tokens"),
-		OutputTokens:       getInt64FromPath(parsed, "usage", "output_tokens"),
+		OutputTokens:       visibleOutputTokens(getInt64FromPath(parsed, "usage", "output_tokens"), reasoningTokens),
+		ReasoningTokens:    reasoningTokens,
 		CacheReadTokens:    cacheReadInputTokens,
 		CacheWriteTokens:   cacheCreationInputTokens,
 		CacheWrite5mTokens: cacheCreation5mInputTokens,
 		CacheWrite1hTokens: cacheCreation1hInputTokens,
 		Speed:              strings.TrimSpace(getStringFromPath(parsed, "usage", "speed")),
+		ServiceTier:        strings.TrimSpace(getStringFromPath(parsed, "usage", "service_tier")),
 		RawUsageJSON:       rawUsageJSONFromPath(parsed, "usage"),
 	}
+}
+
+func mergeAnthropicUsageSnapshot(result *portllm.GenerateOutput, parsed map[string]any) {
+	raw := asMap(parsed["usage"])
+	if len(raw) == 0 {
+		return
+	}
+	current := parseAnthropicUsage(parsed)
+	if raw["input_tokens"] != nil {
+		result.Usage.InputTokens = current.InputTokens
+	}
+	if raw["output_tokens"] != nil {
+		result.Usage.OutputTokens = current.OutputTokens
+		result.Usage.ReasoningTokens = current.ReasoningTokens
+	}
+	if raw["cache_read_input_tokens"] != nil {
+		result.Usage.CacheReadTokens = current.CacheReadTokens
+	}
+	if raw["cache_creation_input_tokens"] != nil || raw["cache_creation"] != nil {
+		result.Usage.CacheWriteTokens = current.CacheWriteTokens
+		result.Usage.CacheWrite5mTokens = current.CacheWrite5mTokens
+		result.Usage.CacheWrite1hTokens = current.CacheWrite1hTokens
+	}
+	if current.ServiceTier != "" {
+		result.Usage.ServiceTier = current.ServiceTier
+	}
+	result.Usage.RawUsageJSON = portllm.MergeRawUsageJSON(result.Usage.RawUsageJSON, current.RawUsageJSON)
 }
 
 func parseAnthropicServerSideToolUsage(parsed map[string]any) map[string]int64 {
@@ -1252,6 +1312,9 @@ func applyAnthropicStreamEvent(
 
 	case "content_block_start":
 		block := asMap(parsed["content_block"])
+		if isDeepSeekNativeBlock(block) {
+			appendDeepSeekState(result, portllm.AdapterAnthropicMessages, block)
+		}
 		index := anthropicContentBlockIndex(parsed)
 		switch strings.TrimSpace(getString(block["type"])) {
 		case "tool_use":
@@ -1314,6 +1377,9 @@ func applyAnthropicStreamEvent(
 
 	case "content_block_delta":
 		delta := asMap(parsed["delta"])
+		if getString(delta["type"]) == "citations_delta" {
+			result.Citations = appendUniqueStrings(result.Citations, parseResponseCitations(delta)...)
+		}
 		deltaType := strings.TrimSpace(getString(delta["type"]))
 		if deltaType == "text_delta" {
 			text := getString(delta["text"])
@@ -1403,14 +1469,13 @@ func applyAnthropicStreamEvent(
 		_, _ = markAnthropicStreamToolCallComplete(result, index)
 
 	case "message_delta":
+		mergeAnthropicUsageSnapshot(result, parsed)
 		// message_delta 包含最终 output_tokens
 		if serverSideToolUsage := parseAnthropicServerSideToolUsage(parsed); len(serverSideToolUsage) > 0 {
 			result.ServerSideToolUsage = serverSideToolUsage
 		}
 		deltaUsage := asMap(parsed["usage"])
-		if out := toInt64(deltaUsage["output_tokens"]); out > 0 {
-			result.Usage.OutputTokens = out
-			result.Usage.RawUsageJSON = portllm.MergeRawUsageJSON(result.Usage.RawUsageJSON, rawUsageJSONFromPath(parsed, "usage"))
+		if len(deltaUsage) > 0 {
 			if onEvent != nil {
 				return onEvent(portllm.GenerateStreamEvent{
 					Usage:      result.Usage,
@@ -1423,6 +1488,12 @@ func applyAnthropicStreamEvent(
 		return errAnthropicStreamDone
 
 	case "error":
+		if len(asMap(parsed["usage"])) > 0 {
+			mergeAnthropicUsageSnapshot(result, parsed)
+			if usage := parseAnthropicServerSideToolUsage(parsed); usage != nil {
+				result.ServerSideToolUsage = usage
+			}
+		}
 		errBlock := asMap(parsed["error"])
 		msg := strings.TrimSpace(getString(errBlock["message"]))
 		if msg == "" {

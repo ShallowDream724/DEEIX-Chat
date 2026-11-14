@@ -82,6 +82,8 @@ type InputFileReference struct {
 
 // ContentPart 表示多模态消息中的一个内容片段。
 type ContentPart struct {
+	// ProviderFileID is assigned only by an authorized provider preparation step.
+	ProviderFileID string `json:"-"`
 	// SourceFileIDs identifies source attachments for tracing; it is never sent upstream.
 	SourceFileIDs []string            `json:"-"`
 	Kind          string              // text | image | audio | video | file | document
@@ -92,9 +94,12 @@ type ContentPart struct {
 	// WorkspaceFile marks an original file handed to a provider-managed workspace.
 	// Its bytes/pages are not an instruction to inject the whole decoded content
 	// into the prompt. Size/page budgets still use Kind and the source metadata.
-	WorkspaceFile bool          `json:"-"`
-	FileName      string        // Kind=file / audio / video / document 时的文件显示名
-	CacheControl  *CacheControl // 支持块级缓存的 adapter 可读取该提示
+	WorkspaceFile bool `json:"-"`
+	// ParsedDocument means a provider expands the whole attachment into the prompt.
+	// It retains the original type for byte budgets and differs from a workspace manifest.
+	ParsedDocument bool          `json:"-"`
+	FileName       string        // Kind=file / audio / video / document 时的文件显示名
+	CacheControl   *CacheControl // 支持块级缓存的 adapter 可读取该提示
 	// PageCount 为 Kind=document 时的页数（未知为 0），用于上下文预算估算。
 	PageCount int
 	// DurationSeconds 为 Kind=audio / video 时的时长（未知为 0），用于上下文预算估算。
@@ -121,17 +126,21 @@ type CacheControl struct {
 // Message 定义发送给上游的消息结构。
 // Parts 非空时覆盖 Content 用于多模态内容。
 type Message struct {
-	Role             string
-	Content          string        // 纯文本消息内容（Parts 为空时使用）
-	Parts            []ContentPart // 多模态内容片段（设置后优先于 Content）
-	ReasoningContent string        // OpenAI-compatible thinking mode 的 reasoning_content 回灌字段
-	ToolCalls        []ToolCall    // assistant 请求执行的工具调用
-	ToolResults      []ToolResult  // 工具执行结果，用于回灌下一轮模型调用
-	CacheControl     *CacheControl // 支持块级缓存的 adapter 可读取该提示
+	ProviderStateJSON string `json:"-"` // Server-owned provider continuation blocks; never caller options.
+	Role              string
+	Content           string        // 纯文本消息内容（Parts 为空时使用）
+	Parts             []ContentPart // 多模态内容片段（设置后优先于 Content）
+	ReasoningContent  string        // OpenAI-compatible thinking mode 的 reasoning_content 回灌字段
+	ToolCalls         []ToolCall    // assistant 请求执行的工具调用
+	ToolResults       []ToolResult  // 工具执行结果，用于回灌下一轮模型调用
+	CacheControl      *CacheControl // 支持块级缓存的 adapter 可读取该提示
 }
 
 // GenerateInput 定义上游推理请求入参。
 type GenerateInput struct {
+	UserID uint
+	// NativeFiles enables the explicitly resolved provider Files capability.
+	NativeFiles            bool
 	RequestID              string
 	ConversationID         uint
 	ConversationPublicID   string
@@ -298,6 +307,7 @@ type ProcessItemReference struct {
 
 // GenerateOutput 定义上游推理结果。
 type GenerateOutput struct {
+	ProviderStateJSON string `json:"-"`
 	// ContentNormalized means the adapter has already separated wire markers and
 	// reasoning from literal answer text. Generic think-tag extraction must not run again.
 	ContentNormalized   bool

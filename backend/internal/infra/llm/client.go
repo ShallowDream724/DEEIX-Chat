@@ -37,7 +37,9 @@ const upstreamRequestIDHeaderTemplate = "${DEEIX_UPSTREAM_REQUEST_ID}"
 
 // Client 负责跨厂商共享的 HTTP client、adapter 路由和上游调试能力。
 type Client struct {
-	httpClients *outboundhttp.Pool
+	nativeFiles       portllm.NativeFileStore
+	nativeFileBilling portllm.NativeFileBilling
+	httpClients       *outboundhttp.Pool
 	// untrustedClients 只服务用户自配端点：始终强制 SSRF 防护、不授予端点信任、不跟随重定向。
 	untrustedClients *outboundhttp.Pool
 	adapters         map[string]transportAdapter
@@ -661,8 +663,14 @@ func (c *Client) CloseIdleConnections() {
 
 // Generate 调用上游适配器并解析响应（非流式）。
 func (c *Client) Generate(ctx context.Context, route portllm.RouteConfig, input portllm.GenerateInput) (*portllm.GenerateOutput, error) {
+	input = retainDeepSeekStateForRoute(route, input)
 	if err := validateInputMedia(route, input); err != nil {
 		return nil, err
+	}
+	var preparationErr error
+	input, preparationErr = c.prepareDeepSeekFiles(ctx, route, input)
+	if preparationErr != nil {
+		return nil, preparationErr
 	}
 	adapter, err := c.adapterFor(route)
 	if err != nil {
@@ -680,8 +688,14 @@ func (c *Client) GenerateStream(
 	input portllm.GenerateInput,
 	onEvent func(portllm.GenerateStreamEvent) error,
 ) (*portllm.GenerateOutput, error) {
+	input = retainDeepSeekStateForRoute(route, input)
 	if err := validateInputMedia(route, input); err != nil {
 		return nil, err
+	}
+	var preparationErr error
+	input, preparationErr = c.prepareDeepSeekFiles(ctx, route, input)
+	if preparationErr != nil {
+		return nil, preparationErr
 	}
 	adapter, err := c.adapterFor(route)
 	if err != nil {
@@ -820,13 +834,14 @@ func normalizeMessages(messages []portllm.Message) []portllm.Message {
 			continue
 		}
 		normalized = append(normalized, portllm.Message{
-			Role:             normalizeRole(item.Role),
-			Content:          item.Content,
-			Parts:            item.Parts,
-			ReasoningContent: item.ReasoningContent,
-			ToolCalls:        item.ToolCalls,
-			ToolResults:      item.ToolResults,
-			CacheControl:     item.CacheControl,
+			Role:              normalizeRole(item.Role),
+			Content:           item.Content,
+			Parts:             item.Parts,
+			ReasoningContent:  item.ReasoningContent,
+			ProviderStateJSON: item.ProviderStateJSON,
+			ToolCalls:         item.ToolCalls,
+			ToolResults:       item.ToolResults,
+			CacheControl:      item.CacheControl,
 		})
 	}
 	if len(normalized) == 0 {

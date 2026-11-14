@@ -1,0 +1,12 @@
+{
+  "service": "Speech service",
+  "voiceInput": "Voice input",
+  "readAloud": "Read aloud",
+  "actual": "Actual usage",
+  "billed": "Billable usage",
+  "seconds": "s",
+  "hour": "hour",
+  "characters": "billable characters",
+  "pages": "pages",
+  "roundedAmount": "Billable usage × unit price ÷ price unit, rounded up to the smallest settlement unit."
+}

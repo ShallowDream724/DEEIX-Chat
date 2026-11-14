@@ -35,6 +35,7 @@ import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
 import { createSecureUUID } from "@/shared/lib/secure-id";
 import { messageAttachmentIDsEqual } from "@/features/chat/model/message-edit-draft";
 import { TemporaryMessageBranches } from "@/features/chat/model/temporary-message-branches";
+import { publishResponseCompletion } from "@/features/chat/lib/response-completion";
 
 type TemporaryMessage = TemporaryChatHistoryMessage & {
   id: string;
@@ -62,6 +63,7 @@ type TemporaryHistoryMessage = TemporaryChatHistoryMessage & {
 
 type TemporaryChatRuntimeInput = {
   active: boolean;
+  scopeKey: string;
   draft: string;
   model: string;
   options: ConversationOptions;
@@ -239,6 +241,7 @@ function getTemporaryHistoryIssues(
 
 export function useChatTemporaryRuntime({
   active,
+  scopeKey,
   draft,
   model,
   options,
@@ -605,6 +608,9 @@ export function useChatTemporaryRuntime({
         knowledgeSources: mappedAssistant.knowledgeSources,
         inlineAlert: undefined,
       }));
+      if (!moderationBlocked && (completed.assistantMessage.status || "success") === "success") {
+        publishResponseCompletion({ conversationID: scopeKey, messageID: assistantID, content: completed.assistantMessage.content });
+      }
     } catch (error) {
       if (abortControllerRef.current !== controller) {
         return false;
@@ -687,14 +693,15 @@ export function useChatTemporaryRuntime({
     uiComponentIDs,
     selectedSkillIDs,
     selectedToolIDs,
+    scopeKey,
     t,
     tSubmit,
     updateMessage,
   ]);
 
-  const send = React.useCallback(async () => {
+  const send = React.useCallback(async (draftOverride?: string) => {
     await submitTurn({
-      content: draft,
+      content: draftOverride ?? draft,
       localAttachments: attachments,
       baseHistory: [...historyRef.current],
       consumeComposer: true,

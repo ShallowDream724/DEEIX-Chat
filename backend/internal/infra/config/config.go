@@ -381,6 +381,8 @@ type yamlConfig struct {
 // Config 管理后端服务的运行参数。
 // 静态字段由 YAML/ENV 加载；动态字段由 settings.RuntimeSettings.ApplyTo 从数据库覆盖。
 type Config struct {
+	Speech              SpeechConfig
+	BillingUSDToCNYRate float64
 	// ── 静态配置（YAML/ENV） ──
 	AppName                    string
 	Env                        string

@@ -146,6 +146,11 @@ func buildChatCompletionsMessages(adapter string, msg portllm.Message, promptCac
 		"role":    normalizeRole(msg.Role),
 		"content": buildChatCompletionsContent(msg, promptCache),
 	}
+	if normalizeRole(msg.Role) == "assistant" {
+		if blocks := deepSeekStateBlocks(msg.ProviderStateJSON, portllm.AdapterOpenAIChatCompletions); len(blocks) > 0 {
+			payload["server_tool_calls"] = blocks
+		}
+	}
 	if reasoningContent := strings.TrimSpace(msg.ReasoningContent); reasoningContent != "" && normalizeRole(msg.Role) == "assistant" {
 		if portllm.NormalizeAdapter(adapter) == portllm.AdapterOpenRouterChat {
 			payload["reasoning"] = reasoningContent
@@ -228,7 +233,14 @@ func buildChatCompletionsContent(msg portllm.Message, promptCache *openAIPromptC
 			}
 			appendOpenAIPromptCacheBreakpoint(block, part.CacheControl, promptCache)
 			parts = append(parts, block)
-		case portllm.ContentPartDocument:
+		case portllm.ContentPartDocument, portllm.ContentPartAttachment:
+			if part.ProviderFileID != "" {
+				parts = append(parts, map[string]any{"type": "file", "file_id": part.ProviderFileID})
+				continue
+			}
+			if part.Kind == portllm.ContentPartAttachment {
+				continue
+			}
 			if len(part.Data) == 0 {
 				continue
 			}
@@ -320,6 +332,25 @@ func applyChatStreamEvent(
 	onEvent func(portllm.GenerateStreamEvent) error,
 	allowTextEncodedToolCalls bool,
 ) error {
+	choice := firstMapItem(asSlice(parsed["choices"]))
+	captureDeepSeekChat(result, asMap(choice["delta"]))
+	if usage := parseServerSideToolUsage(parsed); usage != nil {
+		result.ServerSideToolUsage = usage
+	}
+	if event := asMap(choice["server_tool_event"]); len(event) > 0 {
+		if call := asMap(event["call"]); len(call) > 0 {
+			tool := portllm.ToolCall{ToolCallID: getString(call["id"]), ToolType: getString(call["type"]), ToolName: getString(call["type"]), ArgumentsJSON: normalizeJSONString(call["action"]), OutputJSON: normalizeJSONString(call), Status: getString(call["status"])}
+			if tool.Status == "" {
+				tool.Status = "in_progress"
+			}
+			tool = appendResponsesServerToolCall(result, tool)
+			if onEvent != nil {
+				if err := onEvent(portllm.GenerateStreamEvent{ServerToolCall: &tool}); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	if responseID := strings.TrimSpace(getString(parsed["id"])); responseID != "" {
 		result.ResponseID = responseID
 	}
@@ -410,6 +441,8 @@ func mergeChatStreamToolCalls(parsed map[string]any, result *portllm.GenerateOut
 func parseChatCompletionsOutput(adapter string, parsed map[string]any, result *portllm.GenerateOutput, allowTextEncodedToolCalls bool) {
 	choice := firstMapItem(asSlice(parsed["choices"]))
 	message := asMap(choice["message"])
+	captureDeepSeekChat(result, message)
+	result.ServerSideToolUsage = parseServerSideToolUsage(parsed)
 	result.Text = extractChatVisibleContentText(message["content"])
 	result.Reasoning = parseChatReasoningOutput(message)
 
@@ -624,6 +657,7 @@ func parseOpenAICompatibleUsageForAdapter(adapter string, parsed map[string]any)
 		getInt64FromPath(parsed, "usage", "completion_tokens"),
 	)
 	reasoningTokens := firstNonZero(
+		getInt64FromPath(parsed, "usage", "output_tokens_details", "thinking_tokens"),
 		getInt64FromPath(parsed, "usage", "output_tokens_details", "reasoning_tokens"),
 		getInt64FromPath(parsed, "usage", "completion_tokens_details", "reasoning_tokens"),
 		getInt64FromPath(parsed, "usage", "reasoning_tokens"),

@@ -89,18 +89,6 @@ export function nativeToolDefinitionVariantsFromConfig(
   catalog: NativeToolDefinition[],
   modelProtocols: string[],
 ): NativeToolDefinition[] {
-  if (config.key === "deepseek.tool_fetch") {
-    const search = catalog.find((tool) => tool.toolKey === "deepseek.tool_search");
-    if (!search) return [];
-    return nativeToolDefinitionVariantsFromConfig({
-      ...config,
-      key: search.toolKey,
-      type: search.type,
-      label: search.label,
-      description: search.description,
-      payload: search.payload,
-    }, catalog, modelProtocols);
-  }
   const base = nativeToolDefinitionFromConfig(config, catalog, modelProtocols);
   if (!base || base.meteringOnly) {
     return [];

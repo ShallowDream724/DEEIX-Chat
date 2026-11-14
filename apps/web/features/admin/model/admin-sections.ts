@@ -11,6 +11,7 @@ export const ADMIN_SECTIONS = [
   { id: "upstreams", label: "Upstreams", href: "/upstreams" },
   { id: "models", label: "Models", href: "/models" },
   { id: "tools", label: "Tools", href: "/tools" },
+  { id: "speech", label: "Speech", href: "/speech" },
   { id: "billing", label: "Billing", href: "/billing" },
   { id: "announcements", label: "Announcements", href: "/announcements", feature: "announcements" },
   { id: "logs", label: "Logs", href: "/logs" },

@@ -183,24 +183,25 @@ type MessageKnowledgeSource struct {
 
 // Message 表示会话消息。
 type Message struct {
-	ID               uint
-	ConversationID   uint
-	UserID           uint
-	PublicID         string
-	ParentMessageID  *uint
-	RunID            string
-	Role             string
-	ContentType      string
-	Content          string
-	ReasoningContent string
-	BranchReason     string
-	SourceMessageID  *uint
-	TokenUsage       int64
-	InputTokens      int64
-	OutputTokens     int64
-	CacheReadTokens  int64
-	CacheWriteTokens int64
-	ReasoningTokens  int64
+	ID                uint
+	ConversationID    uint
+	UserID            uint
+	PublicID          string
+	ParentMessageID   *uint
+	RunID             string
+	Role              string
+	ContentType       string
+	Content           string
+	ReasoningContent  string
+	ProviderStateJSON string `json:"-"`
+	BranchReason      string
+	SourceMessageID   *uint
+	TokenUsage        int64
+	InputTokens       int64
+	OutputTokens      int64
+	CacheReadTokens   int64
+	CacheWriteTokens  int64
+	ReasoningTokens   int64
 	// ReasoningEffort 是生成该 assistant 消息时生效的规范推理档位；模型无推理能力时为 nil。
 	ReasoningEffort          *string
 	LatencyMS                int64

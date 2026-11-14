@@ -45,6 +45,12 @@ func qualifyNativeToolUsage(output *portllm.GenerateOutput, input portllm.Genera
 	}
 	qualified := map[string]int64{}
 	for name, count := range usage {
+		if strings.EqualFold(strings.TrimSpace(route.UpstreamModel), "deepseek-flash") {
+			switch name {
+			case "web_search_requests", "web_fetch_requests", "web_search", "web_fetch":
+				continue
+			}
+		}
 		if count <= 0 {
 			continue
 		}

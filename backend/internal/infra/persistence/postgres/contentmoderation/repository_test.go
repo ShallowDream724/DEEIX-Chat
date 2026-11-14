@@ -31,7 +31,7 @@ func TestApplyRunBlockWithdrawsAssistantAttachments(t *testing.T) {
 	if err := db.Create(&run).Error; err != nil {
 		t.Fatalf("create run: %v", err)
 	}
-	message := models.Message{RunID: run.RunID, Role: "assistant", ContentType: "image", Content: "unsafe output", ReasoningContent: "unsafe reasoning", Status: "success"}
+	message := models.Message{RunID: run.RunID, Role: "assistant", ContentType: "image", Content: "unsafe output", ReasoningContent: "unsafe reasoning", ProviderStateJSON: `{"signature":"hidden-provider-content"}`, Status: "success"}
 	if err := db.Create(&message).Error; err != nil {
 		t.Fatalf("create message: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestApplyRunBlockWithdrawsAssistantAttachments(t *testing.T) {
 	if err := db.First(&message, message.ID).Error; err != nil {
 		t.Fatalf("reload message: %v", err)
 	}
-	if message.Status != domaincm.StatusBlocked || message.Content != "" || message.ReasoningContent != "" {
+	if message.Status != domaincm.StatusBlocked || message.Content != "" || message.ReasoningContent != "" || message.ProviderStateJSON != "" {
 		t.Fatalf("assistant content was not withdrawn: %#v", message)
 	}
 	if err := db.First(&attachment, attachment.ID).Error; err != nil {

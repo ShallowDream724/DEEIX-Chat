@@ -1,0 +1,21 @@
+{
+  "sections": { "general": "Speech", "input": "Voice input", "deepseek": "DeepSeek", "pricing": "Billing" },
+  "fields": {
+    "enabled": { "label": "Enable speech services", "description": "Allow voice input and read aloud through this site." },
+    "max_recording_seconds": { "label": "Recording duration", "description": "10–1800 seconds per recording. The selected channel's limit also applies." },
+    "max_concurrent_per_user": { "label": "Concurrent requests per user", "description": "Simultaneous speech requests per user, from 1 to 8." },
+    "doubao_enabled": { "label": "Doubao Input", "description": "Allow voice input with Doubao Input." },
+    "wetype_enabled": { "label": "WeType", "description": "Allow voice input with WeType." },
+    "deepseek_asr_enabled": { "label": "Voice input", "description": "Transcribe after recording ends, up to 120 seconds per recording." },
+    "deepseek_tts_enabled": { "label": "Read aloud", "description": "Allow replies to be played as speech." },
+    "deepseek_base_url": { "label": "Service URL", "description": "API URL for DeepSeek speech services." },
+    "deepseek_api_key": { "label": "API Key", "description": "Shared by voice input and read aloud. Leave blank to keep the saved key." },
+    "asr_cny_per_hour": { "label": "Voice input rate", "description": "CNY per hour of recorded audio. Set to 0 for free use." },
+    "tts_cny_per_10000_characters": { "label": "Read aloud rate", "description": "CNY per 10,000 billable characters. Chinese characters count as 2. Set to 0 for free use." }
+  },
+  "sessionExpired": "Your session has expired. Please sign in again.",
+  "loadFailed": "Failed to load speech settings",
+  "saveFailed": "Save failed",
+  "saved": "Settings updated",
+  "unknownError": "Unknown error"
+}

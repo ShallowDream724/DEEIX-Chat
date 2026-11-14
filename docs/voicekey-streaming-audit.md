@@ -1,6 +1,6 @@
 # VoiceKey 流式识别核验
 
-2026-11-14 只读核验 [J3n5en/voicekey](https://github.com/J3n5en/voicekey)，固定提交 `0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c`（2026-11-13）。未发送真实录音、未执行 ASR、未下载客户端或离线模型；结论证明源码支持，不代表本站服务器网络上的实际可用性或延迟。
+2026-11-14 只读核验 [J3n5en/voicekey](https://github.com/J3n5en/voicekey)，固定提交 `0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c`（2026-11-13）。下文保留源码核验依据。后续开发已采用独立 Go 协议适配，并用 5.56 秒合成音频验证豆包、微信实时收发；实际结果与边界见 [本批验证记录](deepseek-speech-validation-20261114.md)，不能据此宣称任意网络与长时录音均已验证。
 
 ## 已确认的两条优先渠道
 
@@ -27,10 +27,10 @@
 
 ## 对本站方案的影响
 
-- 这些是项目分析输入法客户端协议实现的渠道，与火山引擎、腾讯云等公开商业 ASR API 分开建模。豆包、微信核心引擎由代码直接连接上游，初始化并缓存设备身份，不依赖本机安装/启动对应输入法程序；实际签发身份与连接是否成功仍需短录音验证。见 [项目说明](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/README.md)、[豆包设备初始化](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/crates/core/src/doubao.rs#L348-L419)、[微信身份与握手](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/crates/core/src/wetype.rs#L144-L239)。
+- 这些是项目分析输入法客户端协议实现的渠道，与火山引擎、腾讯云等公开商业 ASR API 分开建模。豆包、微信核心引擎由代码直接连接上游，初始化并缓存设备身份，不依赖本机安装/启动对应输入法程序；本站开发环境已用短合成音频完成身份与连接验证。见 [项目说明](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/README.md)、[豆包设备初始化](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/crates/core/src/doubao.rs#L348-L419)、[微信身份与握手](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/crates/core/src/wetype.rs#L144-L239)。
 - 不把桌面全局设备文件、无界音频 channel/录音留底直接搬进多用户服务。复用本站用户权限和会话身份，限制每会话音频队列和总并发；慢网、断线、取消及后台切换必须释放资源，并明确保留的未定稿文字状态。
 - 统一输出本次录音段的完整临时快照与最终结果。用户此前草稿独立保留，当前段修订只替换当前段；连续口述、最终纠错、停止尾包和迟到结果均不得整框覆盖或重复追加。
 - 本次代码未证实两家服务的录音总时长硬上限。豆包接收等待 600 秒、微信单次收包等待 15 秒属于实现超时；不能用于宣称录音限额。本站设置的单段上限和剩余 10 秒提醒仍适用，渠道硬限制需独立核验。
 - 追加读取桌面调度器与设置：`settings.rs` 默认静音自动结束为 1.5 秒，可设 1–5 秒；`controller.rs:951-963` 对一直未开口使用 8 秒门槛，`974-1001` 在停录后才开始 15 秒识别完成等待。这些都不是连续讲话的录音总时长上限，当前所查路径未发现总长常量。见 [调度器](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/app/src-tauri/src/controller.rs#L951-L1001)、[设置](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/app/src-tauri/src/settings.rs#L205)。
 - 补查其余七个云端引擎的时限：千问/讯飞有停录后定稿等待，百度有上传/接收任务结束等待，千问 App 有预取 token 缓存 TTL，叭哥说有鉴权/握手等待，Chatterfly 有随出字重置的 30 秒空闲等待。所查实现未给出可作为供应商保证的固定录音总长；token 有效期、空闲超时和定稿等待均不能替代该限制。
-- 这一来源用于完善接入设计；尚未选定直接依赖、代码移植或独立协议实现方式，未引入 Rust 服务或客户端模型依赖。TTS 继续按已确认的 DeepSeek 首批方案推进。
+- 本站已采用独立 Go 协议实现，未引入 Rust 服务或客户端模型依赖；前端 Opus 编码优先 WebCodecs，不支持时按需加载 WASM。TTS 首批接入 DeepSeek。
