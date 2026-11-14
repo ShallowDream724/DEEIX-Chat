@@ -68,9 +68,9 @@ export function AdminSpeechPage() {
           {groupIndex > 0 ? <SettingsSectionSeparator /> : null}
           <SettingsSection
             title={t(`sections.${group}`)}
-            actions={groupIndex === 0 ? (
-              <Button size="sm" className="h-7 gap-1 px-2 text-xs" disabled={disabled || settings.dirtyKeys.size === 0 || settings.invalidConnection} onClick={() => void settings.save()}>
-                <Save className="size-3.5 stroke-1" />
+            actions={groupIndex === 0 && settings.dirtyKeys.size > 0 ? (
+              <Button type="button" size="sm" disabled={disabled || settings.invalidConnection} onClick={() => void settings.save()}>
+                <Save className="size-3.5" />
                 {settings.saving ? tActions("saving") : tActions("save")}
               </Button>
             ) : undefined}
