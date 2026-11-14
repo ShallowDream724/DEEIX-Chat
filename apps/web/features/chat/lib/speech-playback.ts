@@ -1,18 +1,18 @@
 import { authedFetch } from "@/shared/api/authed-client";
 import { getSpeechSynthesis, synthesizeSpeech, type SpeechSynthesis, type SpeechSynthesisOptions } from "@/shared/api/speech";
-import { beginPlaybackActivity, isRecordingActive } from "@/shared/lib/media-activity";
-import { createMediaSpectrum } from "@/shared/lib/media-spectrum";
+import { isRecordingActive } from "@/shared/lib/media-activity";
 import { normalizeSpeechContent } from "@/features/chat/lib/speech-text";
+import { createSpeechPlaybackLifecycle } from "@/features/chat/lib/speech-playback-lifecycle";
 
 export type SpeechPlaybackState = { messageID: string; status: "idle" | "loading" | "playing" | "paused" | "error" };
 export type SpeechPlaybackConfig = SpeechSynthesisOptions & { scope: string; user: string; token: string; enabled: boolean; maxWeightedCharacters?: number; maxTextBytes?: number };
 const idle: SpeechPlaybackState = { messageID: "", status: "idle" };
 let state = idle;
 const listeners = new Set<() => void>();
-type SynthesisEntry = { requestID: string; retry: boolean; pending?: Promise<SpeechSynthesis>; result?: SpeechSynthesis; error?: unknown };
+type SynthesisEntry = { requestID: string; retry: boolean; pending?: Promise<SpeechSynthesis>; pendingSignal?: AbortSignal; result?: SpeechSynthesis; error?: unknown };
 const cache = new Map<string, SynthesisEntry>();
 let config: SpeechPlaybackConfig = { scope: "", user: "", token: "", provider: "", voice: "", enabled: false };
-let active: { controller: AbortController; context: AudioContext; identity: string; text: string; resume: () => void; activity?: ReturnType<typeof beginPlaybackActivity> } | null = null;
+let active: (ReturnType<typeof createSpeechPlaybackLifecycle> & { identity: string; text: string }) | null = null;
 export function subscribeSpeechPlayback(listener: () => void) { listeners.add(listener); return () => { listeners.delete(listener); }; }
 export function getSpeechPlaybackState() { return state; }
 export function getServerSpeechPlaybackState() { return idle; }
@@ -26,7 +26,7 @@ export function configureSpeechPlayback(next: typeof config) {
 }
 export function stopSpeechPlayback() {
   const previous = active; active = null;
-  if (previous) { previous.controller.abort(); previous.resume(); previous.activity?.stop(); void previous.context.close(); }
+  previous?.dispose();
   update(idle);
 }
 export function normalizeSpeechText(text: string) {
@@ -76,7 +76,8 @@ function rememberSynthesis(text: string, snapshot: typeof config, result: Speech
   const entry = cache.get(synthesisKey(text, snapshot));
   if (entry?.result?.id === result.id) entry.result = result;
 }
-async function synthesis(text: string, snapshot: typeof config, manual: boolean) {
+async function synthesis(text: string, snapshot: typeof config, manual: boolean, signal: AbortSignal) {
+  if (signal.aborted) throw abortError();
   const key = synthesisKey(text, snapshot);
   let entry = cache.get(key);
   const terminalStatus = entry?.result?.status;
@@ -89,26 +90,43 @@ async function synthesis(text: string, snapshot: typeof config, manual: boolean)
     cache.set(key, entry);
     if (cache.size > 64) cache.delete(cache.keys().next().value ?? "");
   }
+  if (entry.pendingSignal?.aborted) {
+    // Stop aborts transport, not the accepted backend job. Settle the old read
+    // before reconciling that same request ID on a new playback.
+    await entry.pending?.catch(() => {});
+    if (signal.aborted) throw abortError();
+  }
   if (entry.error && !manual) throw entry.error;
   if (!entry.result && !entry.pending) {
     const attempt = entry;
     // A transport failure keeps its request identity. A later manual click safely reconciles that same attempt.
     const { provider, voice, speed, style } = snapshot;
-    attempt.pending = synthesizeSpeech(snapshot.token, text, { provider, voice, speed, style }, attempt.requestID, attempt.retry).then((result) => {
-      attempt.pending = undefined; attempt.error = undefined; attempt.result = result; return result;
-    }, (error: unknown) => { attempt.pending = undefined; attempt.error = error; throw error; });
+    attempt.pendingSignal = signal;
+    attempt.pending = abortable(synthesizeSpeech(snapshot.token, text, { provider, voice, speed, style }, attempt.requestID, attempt.retry, signal), signal).then((result) => {
+      attempt.pending = undefined; attempt.pendingSignal = undefined; attempt.error = undefined; attempt.result = result; return result;
+    }, (error: unknown) => { attempt.pending = undefined; attempt.pendingSignal = undefined; attempt.error = signal.aborted ? undefined : error; throw error; });
   }
-  let result = entry.result ?? await entry.pending;
+  let result = entry.result ?? await abortable(entry.pending ?? Promise.reject(new Error("synthesisFailed")), signal);
+  if (signal.aborted) throw abortError();
   if (!result || ["uncertain", "failed", "cancelled", "expired"].includes(result.status)) throw new Error("synthesisFailed");
-  if (!result.media_url) result = await getSpeechSynthesis(snapshot.token, result.id);
+  if (!result.media_url) result = await abortable(getSpeechSynthesis(snapshot.token, result.id, signal), signal);
   rememberSynthesis(text, snapshot, result);
   if (!result.media_url || ["uncertain", "failed", "cancelled", "expired"].includes(result.status)) throw new Error("synthesisFailed");
   return result;
 }
 function abortError() { return new DOMException("Aborted", "AbortError"); }
+function abortable<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const aborted = () => { signal.removeEventListener("abort", aborted); reject(abortError()); };
+    signal.addEventListener("abort", aborted, { once: true });
+    pending.then((value) => { signal.removeEventListener("abort", aborted); resolve(value); }, (error: unknown) => { signal.removeEventListener("abort", aborted); reject(error); });
+    if (signal.aborted) aborted();
+  });
+}
 async function readWav(response: Response, playback: NonNullable<typeof active>, scope: string) {
   const reader = response.body?.getReader();
   if (!reader) throw new Error("audioUnavailable");
+  playback.ownReader(reader);
   let pending = new Uint8Array(0);
   let headerRead = false;
   let sampleRate = 24000;
@@ -118,12 +136,12 @@ async function readWav(response: Response, playback: NonNullable<typeof active>,
   let incoming: Uint8Array | undefined;
   let incomingOffset = 0;
   let done = false;
-  const ensureActive = () => { if (active !== playback || config.scope !== scope || playback.controller.signal.aborted) throw abortError(); };
+  const ensureActive = () => { if (active !== playback || config.scope !== scope || playback.controller.signal.aborted || isRecordingActive()) throw abortError(); };
   const wait = async () => {
     ensureActive();
-    if (playback.context.state === "suspended") await new Promise<void>((resolve) => { playback.resume = resolve; });
+    await playback.waitUntilRunning();
     ensureActive();
-    if (cursor - playback.context.currentTime > 0.3) await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    if (cursor - playback.context.currentTime > 0.3) await playback.waitForClock(50);
   };
   try {
     while (true) {
@@ -131,7 +149,7 @@ async function readWav(response: Response, playback: NonNullable<typeof active>,
       // Fetch chunks are transport-dependent: a proxy or buffered response can
       // deliver megabytes at once. Bound our parsing/copying, not its chunk size.
       if (!incoming || incomingOffset >= incoming.length) {
-        const next = await reader.read();
+        const next = await abortable(reader.read(), playback.controller.signal);
         incoming = next.value;
         incomingOffset = 0;
         done = next.done;
@@ -164,7 +182,8 @@ async function readWav(response: Response, playback: NonNullable<typeof active>,
       }
       let offset = 0;
       while (offset + 1 < pending.length) {
-        while (cursor - playback.context.currentTime > 0.3 || playback.context.state === "suspended") await wait();
+        await playback.waitUntilRunning();
+        while (cursor - playback.context.currentTime > 0.3) await wait();
         ensureActive();
         const count = Math.min(4800, Math.floor(sampleRate * 0.2), Math.floor((pending.length - offset) / 2));
         samples += count;
@@ -176,27 +195,26 @@ async function readWav(response: Response, playback: NonNullable<typeof active>,
         const source = playback.context.createBufferSource(); source.buffer = buffer;
         source.connect(playback.context.destination);
         // Analysis taps the exact scheduled playback rather than the download rate.
-        const analyzer = analyzers.get(playback.context);
-        if (analyzer) source.connect(analyzer);
+        source.connect(playback.analyzer);
+        playback.ownSource(source);
         cursor = Math.max(cursor, playback.context.currentTime + 0.015); source.start(cursor); cursor += count / sampleRate;
-        source.onended = () => source.disconnect();
+        playback.markPlaying();
         offset += count * 2;
       }
       pending = pending.slice(offset);
       if (done) break;
     }
-    while (cursor > playback.context.currentTime) { await wait(); await new Promise<void>((resolve) => setTimeout(resolve, 50)); }
-  } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
+    while (cursor > playback.context.currentTime) { await playback.waitUntilRunning(); await playback.waitForClock(50); }
+  } finally { playback.releaseReader(reader); void reader.cancel().catch(() => {}); try { reader.releaseLock(); } catch {} }
 }
-const analyzers = new WeakMap<AudioContext, AnalyserNode>();
 export async function playSpeech(messageID: string, text: string, onError: (reason: string) => void, options: { manual?: boolean } = {}) {
   if (!config.enabled || !config.token || isRecordingActive()) return;
   const normalized = normalizeSpeechText(text);
   const identity = JSON.stringify([config.scope, config.user, messageID, controlsKey(config), normalized]);
   if (active && active.identity === identity) {
     if (state.status === "loading") return;
-    if (state.status === "playing") { active.activity?.publishLevel(0); await active.context.suspend(); update({ messageID, status: "paused" }); return; }
-    if (state.status === "paused") { await active.context.resume(); active.resume(); update({ messageID, status: "playing" }); return; }
+    if (state.status === "playing") { await active.pause(); return; }
+    if (state.status === "paused") { await active.resume(true); return; }
   }
   stopSpeechPlayback();
   const snapshot = { ...config };
@@ -204,28 +222,23 @@ export async function playSpeech(messageID: string, text: string, onError: (reas
   try { parts = splitSpeechText(text, snapshot); } catch { onError("tooLong"); return; }
   if (!parts.length) return;
   const context = new AudioContext();
-  const playback: NonNullable<typeof active> = { controller: new AbortController(), context, identity, text: normalized, resume: () => {} };
+  const playback: NonNullable<typeof active> = {
+    ...createSpeechPlaybackLifecycle(context, messageID, (status) => { if (active === playback && state.status !== status) update({ messageID, status }); }, () => { if (active === playback) stopSpeechPlayback(); }),
+    identity, text: normalized,
+  };
   active = playback;
-  const analyzer = context.createAnalyser(); analyzers.set(context, analyzer);
-  const spectrum = createMediaSpectrum(analyzer, context.sampleRate);
-  const waveform = new Float32Array(analyzer.fftSize);
-  playback.activity = beginPlaybackActivity(messageID, "tts", () => stopSpeechPlayback());
-  const timer = setInterval(() => {
-    if (context.state !== "running" || document.hidden) { playback.activity?.publishLevel(0); return; }
-    analyzer.getFloatTimeDomainData(waveform);
-    let squared = 0; for (const value of waveform) squared += value * value;
-    playback.activity?.publishLevel(Math.min(1, Math.sqrt(squared / waveform.length) * 4), spectrum.sample());
-  }, 34);
   update({ messageID, status: "loading" });
   try {
-    let resumeTimer: ReturnType<typeof setTimeout> | undefined;
-    try { await Promise.race([context.resume(), new Promise<never>((_, reject) => { resumeTimer = setTimeout(() => reject(new Error("autoplayUnavailable")), 3000); })]); }
-    finally { clearTimeout(resumeTimer); }
+    await playback.resume(true);
     for (const textPart of parts) {
+      await playback.waitUntilRunning();
       if (active !== playback || config.scope !== snapshot.scope || isRecordingActive()) throw abortError();
-      let result = await synthesis(textPart, snapshot, Boolean(options.manual));
+      let result = await synthesis(textPart, snapshot, Boolean(options.manual), playback.controller.signal);
       if (active !== playback || config.scope !== snapshot.scope || isRecordingActive()) throw abortError();
-      const readAudio = (result: SpeechSynthesis) => authedFetch(new URL(result.media_url, window.location.origin).pathname, { accessToken: snapshot.token, signal: playback.controller.signal });
+      const readAudio = (result: SpeechSynthesis) => abortable(authedFetch(new URL(result.media_url, window.location.origin).pathname, { accessToken: snapshot.token, signal: playback.controller.signal }).then((response) => {
+        if (active !== playback || playback.controller.signal.aborted) { void response.body?.cancel().catch(() => {}); throw abortError(); }
+        return response;
+      }), playback.controller.signal);
       let response: Response;
       try { response = await readAudio(result); }
       catch (error) {
@@ -233,14 +246,14 @@ export async function playSpeech(messageID: string, text: string, onError: (reas
         rememberSynthesis(textPart, snapshot, { ...result, status: "expired" });
         if (!options.manual || active !== playback || config.scope !== snapshot.scope) throw error;
         // One replacement is allowed for this explicit play. Never loop if the replacement also fails.
-        result = await synthesis(textPart, snapshot, true);
+        result = await synthesis(textPart, snapshot, true, playback.controller.signal);
         if (active !== playback || config.scope !== snapshot.scope || isRecordingActive()) throw abortError();
         response = await readAudio(result);
       }
-      if (active !== playback) throw abortError();
-      update({ messageID, status: "playing" });
+      if (active !== playback || playback.controller.signal.aborted) { void response.body?.cancel().catch(() => {}); throw abortError(); }
       await readWav(response, playback, snapshot.scope);
-      const settled = await getSpeechSynthesis(snapshot.token, result.id);
+      const settled = await abortable(getSpeechSynthesis(snapshot.token, result.id, playback.controller.signal), playback.controller.signal);
+      if (active !== playback || playback.controller.signal.aborted) throw abortError();
       rememberSynthesis(textPart, snapshot, { ...result, ...settled });
       // A completed cache entry can expire after its pinned reader finishes.
       // Its consumed audio was valid; retain expiry so the next click renews it.
@@ -252,5 +265,5 @@ export async function playSpeech(messageID: string, text: string, onError: (reas
       stopSpeechPlayback(); update({ messageID, status: "error" });
       if (!(error instanceof DOMException && error.name === "AbortError")) onError("failed");
     }
-  } finally { clearInterval(timer); playback.activity?.stop(); analyzer.disconnect(); analyzers.delete(context); if (context.state !== "closed") void context.close(); }
+  } finally { playback.dispose(); }
 }

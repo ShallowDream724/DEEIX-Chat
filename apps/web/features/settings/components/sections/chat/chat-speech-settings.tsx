@@ -6,6 +6,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
@@ -35,6 +36,7 @@ export function ChatSpeechSettings({
   const capability = getSelectedSpeechTTSCapability(useSpeechCapabilities());
   const [saving, setSaving] = React.useState(false);
   const [styleDraft, setStyleDraft] = React.useState<{ provider: string; value: string } | null>(null);
+  const styleID = React.useId();
   const preference = capability ? resolveSpeechPreferences(capability, userSettings.settings) : undefined;
   const overrides = parseSpeechPreferences(userSettings.settings["chat.speech_preferences"]);
   const savedStyle = preference?.style ?? "";
@@ -93,13 +95,15 @@ export function ChatSpeechSettings({
             </Select>
           </SettingsFieldRow>
         </div> : null}
-        {capability?.supports_style ? <div className="space-y-2 pt-4">
-          <SettingsFieldRow title={t("styleTitle")}>
-            <Button type="button" variant="ghost" size="sm" className="h-7 px-2 text-xs" disabled={disabled || !styleDirty && overrides[capability.id]?.style === undefined} onClick={() => void saveStyle(undefined)}>
+        {capability?.supports_style ? <Field className="gap-2 pt-4">
+          <div className="flex items-center justify-between gap-3">
+            <FieldLabel htmlFor={styleID} className="mb-0">{t("styleTitle")}</FieldLabel>
+            <Button type="button" variant="ghost" size="sm" className="h-7 shrink-0 px-2 text-xs" disabled={disabled || !styleDirty && overrides[capability.id]?.style === undefined} onClick={() => void saveStyle(undefined)}>
               {t("restoreDefault")}
             </Button>
-          </SettingsFieldRow>
+          </div>
           <Textarea
+            id={styleID}
             aria-label={t("styleTitle")}
             value={style}
             disabled={disabled}
@@ -107,7 +111,7 @@ export function ChatSpeechSettings({
             className="min-h-20 resize-y text-xs"
             onChange={(event) => setStyleDraft({ provider: capability.id, value: Array.from(event.target.value).slice(0, capability.max_style_characters ?? 500).join("") })}
           />
-        </div> : null}
+        </Field> : null}
       </SettingsFieldList>
     </SettingsSection>
   );

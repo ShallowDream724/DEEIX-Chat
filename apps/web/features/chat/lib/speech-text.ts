@@ -6,21 +6,59 @@ function speechTableRow(line: string) {
   return `${line.trim().replace(/^\||\|$/g, "").split(/(?<!\\)\|/u).map((cell) => cell.trim()).filter(Boolean).join("，").replace(/[。.!?！？]+$/, "")}。`;
 }
 
+function speechIndentWidth(whitespace: string) {
+  let width = 0;
+  for (const character of whitespace) width += character === "\t" ? 4 - width % 4 : 1;
+  return width;
+}
+
+function speechOpenMathDelimiter(line: string) {
+  for (let index = 0; index < line.length; index++) {
+    const opening = line.startsWith("$$", index) ? "$$" : line.startsWith("\\[", index) ? "\\[" : undefined;
+    if (opening) {
+      const closing = opening === "$$" ? "$$" : "\\]";
+      const end = line.indexOf(closing, index + opening.length);
+      if (end < 0) return closing;
+      index = end + closing.length - 1;
+    } else if (line[index] === "\\") index++;
+  }
+  return undefined;
+}
+
 function speechMarkdownLines(text: string) {
-  const lines = text.replace(/\r\n?/g, "\n").split("\n");
+  const normalized = text.replace(/\r\n?/g, "\n");
+  const lines = normalized.split("\n");
   const result: string[] = [];
   let fence: { character: string; length: number } | undefined;
   let table = false;
   let referenceContinuation = false;
-  let indentedCode = false;
+  let indentedCode: number | undefined;
+  const lists: { indent: number; contentIndent: number; ordered: boolean; count: number }[] = [];
+  let blank = false;
+  let mathEnd: { delimiter: string; paragraphFallback: boolean } | undefined;
+  const lastMathEnd = { "$$": normalized.lastIndexOf("$$"), "\\]": normalized.lastIndexOf("\\]") };
+  let sourceEnd = 0;
+  const leaveListBlock = (indent: number) => {
+    while (lists.length && indent < lists[lists.length - 1].contentIndent) lists.pop();
+  };
   for (const sourceLine of lines) {
+    sourceEnd += sourceLine.length + 1;
     const line = sourceLine.replace(/^ {0,3}(?:>\s*)+/, "");
+    const indent = speechIndentWidth(/^[ \t]*/.exec(line)?.[0] ?? "");
     const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
     if (fence) {
       if (marker && marker[1][0] === fence.character && marker[1].length >= fence.length && !marker[2].trim()) fence = undefined;
       continue;
     }
+    if (mathEnd) {
+      result.push(line);
+      if (line.includes(mathEnd.delimiter) || (mathEnd.paragraphFallback && !line.trim())) {
+        mathEnd = undefined; blank = !line.trim();
+      }
+      continue;
+    }
     if (marker) {
+      leaveListBlock(indent); blank = false;
       const language = marker[2].trim().split(/\s+/, 1)[0].toLowerCase();
       result.push(["mermaid", "graphviz", "dot", "plantuml"].includes(language) ? DIAGRAM_NOTICE : CODE_NOTICE);
       fence = { character: marker[1][0], length: marker[1].length }; table = false; continue;
@@ -28,22 +66,54 @@ function speechMarkdownLines(text: string) {
     if (/^ {0,3}\[[^\]\n]+\]:/.test(line)) { referenceContinuation = true; continue; }
     if (referenceContinuation && /^[ \t]+\S/.test(line)) continue;
     referenceContinuation = false;
-    const indented = /^(?: {4}|\t)/.test(line);
-    if (indentedCode && (indented || !line.trim())) continue;
-    indentedCode = false;
-    if (indented && (!result.length || !result[result.length - 1].trim())) {
-      result.push(CODE_NOTICE); indentedCode = true; table = false; continue;
+    const continuation = lists.findLast((list) => indent >= list.contentIndent);
+    const codeIndent = (continuation?.contentIndent ?? 0) + 4;
+    if (indentedCode !== undefined && (indent >= indentedCode || !line.trim())) continue;
+    indentedCode = undefined;
+    if (indent >= codeIndent && (!result.length || !result[result.length - 1].trim())) {
+      result.push(CODE_NOTICE); indentedCode = codeIndent; table = false; continue;
+    }
+    const openMath = speechOpenMathDelimiter(line);
+    if (openMath) mathEnd = { delimiter: openMath, paragraphFallback: lastMathEnd[openMath] < sourceEnd };
+    if (/^(?:\$\$|\\\[)/.test(line.trim())) {
+      leaveListBlock(indent); blank = false;
+      result.push(line); continue;
     }
     if (line.includes("|")) {
       const cells = line.trim().replace(/^\||\|$/g, "").split("|");
       if (cells.length > 0 && cells.every((cell) => /^\s*:?-{3,}:?\s*$/.test(cell))) {
+        leaveListBlock(indent); blank = false;
         if (result.length && result[result.length - 1].includes("|")) result[result.length - 1] = speechTableRow(result[result.length - 1]);
         table = true; continue;
       }
-      if (table) { result.push(speechTableRow(line)); continue; }
+      if (table) { leaveListBlock(indent); result.push(speechTableRow(line)); continue; }
     }
     table = false;
-    result.push(line.replace(/^ {0,3}(?:#{1,6}\s+|>\s*|[-+*]\s+(?:\[[ xX]\]\s*)?|\d+[.)]\s+)/, ""));
+    if (!line.trim()) { result.push(line); blank = true; continue; }
+    const thematicBreak = /^ {0,3}(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/.test(line);
+    const item = thematicBreak ? null : /^([ \t]*)(?:(\d{1,9})[.)]|[-+*])([ \t]+)(\S.*)$/.exec(line);
+    if (item) {
+      while (lists.length && indent < lists[lists.length - 1].indent) lists.pop();
+      const parent = lists[lists.length - 1];
+      if ((!parent && indent <= 3) || (parent && (indent === parent.indent || (indent >= parent.contentIndent && indent <= parent.contentIndent + 3)))) {
+        const ordered = item[2] !== undefined;
+        if (parent && indent === parent.indent && parent.ordered !== ordered) lists.pop();
+        let list = lists[lists.length - 1];
+        if (!list || list.indent !== indent) {
+          list = { indent, contentIndent: 0, ordered, count: 0 }; lists.push(list);
+        }
+        list.contentIndent = speechIndentWidth(line.slice(0, line.length - item[4].length));
+        const number = ordered ? item[2] : String(++list.count);
+        result.push(`${number}、${item[4].replace(/^\[[ xX]\][ \t]*/, "")}`);
+        blank = false; continue;
+      }
+    }
+    // A blank separates paragraphs, but indented continuations and loose list
+    // items still belong to the same list. Unindented adjacent prose can be a
+    // Markdown lazy continuation and must not restart the next item's count.
+    if (blank || thematicBreak || /^ {0,3}#{1,6}\s+/.test(line)) leaveListBlock(indent);
+    blank = false;
+    result.push(line.replace(/^ {0,3}(?:#{1,6}\s+|>\s*)/, ""));
   }
   return result.join("\n");
 }

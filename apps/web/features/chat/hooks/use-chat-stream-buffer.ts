@@ -65,6 +65,17 @@ function isDifferentThinkEvent(current: UpstreamThinkDeltaEvent, next: UpstreamT
   return Boolean(currentEventID && nextEventID && currentEventID !== nextEventID);
 }
 
+function cancelTextFlush(buffer: StreamBuffer) {
+  if (buffer.textFrame !== null) {
+    window.cancelAnimationFrame(buffer.textFrame);
+    buffer.textFrame = null;
+  }
+  if (buffer.textTimeout !== null) {
+    window.clearTimeout(buffer.textTimeout);
+    buffer.textTimeout = null;
+  }
+}
+
 function cancelThinkFlush(buffer: StreamBuffer) {
   if (buffer.thinkFrame !== null) {
     window.cancelAnimationFrame(buffer.thinkFrame);
@@ -92,12 +103,7 @@ function flushPendingThink(buffer: StreamBuffer) {
 }
 
 function cancelBufferTimers(buffer: StreamBuffer) {
-  if (buffer.textFrame !== null) {
-    window.cancelAnimationFrame(buffer.textFrame);
-  }
-  if (buffer.textTimeout !== null) {
-    window.clearTimeout(buffer.textTimeout);
-  }
+  cancelTextFlush(buffer);
   cancelThinkFlush(buffer);
 }
 
@@ -170,7 +176,7 @@ export function useChatStreamBuffer({
 
   const scheduleStreamFlush = React.useCallback((exchangeKey: string) => {
     const buffer = buffersRef.current.get(exchangeKey);
-    if (!buffer || buffer.textFrame !== null || buffer.textTimeout !== null) {
+    if (!buffer || document.hidden || buffer.textFrame !== null || buffer.textTimeout !== null) {
       return;
     }
     const elapsed = performance.now() - buffer.lastTextFlushAt;
@@ -180,13 +186,15 @@ export function useChatStreamBuffer({
     }
     buffer.textTimeout = window.setTimeout(() => {
       buffer.textTimeout = null;
-      buffer.textFrame = window.requestAnimationFrame(() => flushStreamText(exchangeKey));
+      if (!document.hidden) {
+        buffer.textFrame = window.requestAnimationFrame(() => flushStreamText(exchangeKey));
+      }
     }, STREAM_TEXT_FLUSH_INTERVAL_MS - elapsed);
   }, [flushStreamText]);
 
   const scheduleUpstreamThinkFlush = React.useCallback((exchangeKey: string) => {
     const buffer = buffersRef.current.get(exchangeKey);
-    if (!buffer || buffer.thinkFrame !== null || buffer.thinkTimeout !== null) {
+    if (!buffer || document.hidden || buffer.thinkFrame !== null || buffer.thinkTimeout !== null) {
       return;
     }
     const elapsed = performance.now() - buffer.lastThinkFlushAt;
@@ -196,7 +204,9 @@ export function useChatStreamBuffer({
     }
     buffer.thinkTimeout = window.setTimeout(() => {
       buffer.thinkTimeout = null;
-      buffer.thinkFrame = window.requestAnimationFrame(() => flushUpstreamThink(exchangeKey));
+      if (!document.hidden) {
+        buffer.thinkFrame = window.requestAnimationFrame(() => flushUpstreamThink(exchangeKey));
+      }
     }, STREAM_THINK_FLUSH_INTERVAL_MS - elapsed);
   }, [flushUpstreamThink]);
 
@@ -218,14 +228,7 @@ export function useChatStreamBuffer({
     if (!buffer) {
       return;
     }
-    if (buffer.textFrame !== null) {
-      window.cancelAnimationFrame(buffer.textFrame);
-      buffer.textFrame = null;
-    }
-    if (buffer.textTimeout !== null) {
-      window.clearTimeout(buffer.textTimeout);
-      buffer.textTimeout = null;
-    }
+    cancelTextFlush(buffer);
     buffer.pendingText = "";
     buffer.lastTextFlushAt = performance.now();
 
@@ -299,14 +302,7 @@ export function useChatStreamBuffer({
     if (!buffer) {
       return;
     }
-    if (buffer.textFrame !== null) {
-      window.cancelAnimationFrame(buffer.textFrame);
-      buffer.textFrame = null;
-    }
-    if (buffer.textTimeout !== null) {
-      window.clearTimeout(buffer.textTimeout);
-      buffer.textTimeout = null;
-    }
+    cancelTextFlush(buffer);
     flushStreamText(exchangeKey);
   }, [flushStreamText]);
 
@@ -335,7 +331,29 @@ export function useChatStreamBuffer({
     buffersRef.current.clear();
   }, []);
 
-  React.useEffect(() => () => resetStreamBuffer(), [resetStreamBuffer]);
+  React.useEffect(() => {
+    const handleVisibilityChange = () => {
+      for (const [exchangeKey, buffer] of buffersRef.current) {
+        cancelBufferTimers(buffer);
+        if (document.hidden) {
+          continue;
+        }
+        if (buffer.pendingText) {
+          flushStreamText(exchangeKey);
+        }
+        // The page may have received a large backlog while animation frames were paused.
+        // Catch up once instead of replaying old thinking through the live typing throttle.
+        flushPendingThink(buffer);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pageshow", handleVisibilityChange);
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pageshow", handleVisibilityChange);
+      resetStreamBuffer();
+    };
+  }, [flushStreamText, resetStreamBuffer]);
 
   return {
     enqueueUpstreamThinkDelta,

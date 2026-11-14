@@ -27,11 +27,11 @@ export function createSpeechSession(accessToken: string, provider: string, draft
 export function cancelSpeechSession(accessToken: string, id: string) {
   return authedRequest<unknown>(`/api/v1/speech/asr/sessions/${encodeURIComponent(id)}`, { accessToken, method: "DELETE", keepalive: true }, false);
 }
-export function synthesizeSpeech(accessToken: string, text: string, options: SpeechSynthesisOptions, requestID: string, retry = false) {
-  return authedRequest<SpeechSynthesis>("/api/v1/speech/tts", { accessToken, method: "POST", body: { ...options, text, format: "wav", request_id: requestID, retry } }, false);
+export function synthesizeSpeech(accessToken: string, text: string, options: SpeechSynthesisOptions, requestID: string, retry = false, signal?: AbortSignal) {
+  return authedRequest<SpeechSynthesis>("/api/v1/speech/tts", { accessToken, method: "POST", body: { ...options, text, format: "wav", request_id: requestID, retry }, signal }, false);
 }
-export function getSpeechSynthesis(accessToken: string, id: string) {
-  return authedRequest<SpeechSynthesis>(`/api/v1/speech/tts/${encodeURIComponent(id)}`, { accessToken });
+export function getSpeechSynthesis(accessToken: string, id: string, signal?: AbortSignal) {
+  return authedRequest<SpeechSynthesis>(`/api/v1/speech/tts/${encodeURIComponent(id)}`, { accessToken, signal });
 }
 export function speechResourceURL(path: string) {
   return new URL(path, `${resolveApiBaseURL() || window.location.origin}/`).href;

@@ -76,8 +76,39 @@ test("speech projection reads table headers and cells without Markdown separator
   assert.equal(normalizeSpeechContent("项目 | 数值\n:--- | ---:\n长度 | 5 cm\n速度 | 3 m/s\n\n后续正文。"), "项目，数值。 长度，5 cm。 速度，3 m/s。 后续正文。");
   assert.equal(normalizeSpeechContent("| 项目 |\n| --- |\n| 内容 |\n\n完毕。"), "项目。 内容。 完毕。");
   assert.equal(normalizeSpeechContent("前文。<script>alert('never spoken')</script><ui_widget>{\"internal\":true}</ui_widget><svg><path d='M 0 0'/></svg> 后续正文。"), "前文。 后续正文。");
-  assert.equal(normalizeSpeechContent("- [x] 第一项\n> 引用正文\n2. 第二项\n3 < 5，10 > 2。"), "第一项 引用正文 第二项 3 < 5，10 > 2。");
+  assert.equal(normalizeSpeechContent("- [x] 第一项\n> 引用正文\n2. 第二项\n3 < 5，10 > 2。"), "1、第一项 引用正文 2、第二项 3 < 5，10 > 2。");
   assert.equal(normalizeSpeechContent(`${"[".repeat(20000)}无闭合标记`), `${"[".repeat(20000)}无闭合标记`);
+});
+
+test("speech projection preserves ordered item numbers and numbers unordered items for readout", () => {
+  assert.equal(normalizeSpeechContent("1. 一\n2. 二\n3. 三\n4. 四\n5. 五"), "1、一 2、二 3、三 4、四 5、五");
+  assert.equal(normalizeSpeechContent("7) 七\n9) 九\n12. 十二"), "7、七 9、九 12、十二");
+  assert.equal(normalizeSpeechContent("- 第一项\n+ 第二项\n* [x] 第三项\n- [ ] 第四项"), "1、第一项 2、第二项 3、第三项 4、第四项");
+  assert.equal(normalizeSpeechContent("- 甲\n- 乙\n4. 丙\n8. 丁\n- 戊\n- 己"), "1、甲 2、乙 4、丙 8、丁 1、戊 2、己");
+});
+
+test("speech list counters survive continuations and loose items and restart after a paragraph", () => {
+  assert.equal(normalizeSpeechContent("- 甲\n  甲的续行\n- 乙\n无缩进续行\n\n- 丙\n\n  丙的补充段落\n\n- 丁"), "1、甲 甲的续行 2、乙 无缩进续行 3、丙 丙的补充段落 4、丁");
+  assert.equal(normalizeSpeechContent("- 甲\n- 乙\n\n普通段落。\n\n- 丙\n- 丁"), "1、甲 2、乙 普通段落。 1、丙 2、丁");
+  assert.equal(normalizeSpeechContent("- 甲\n- 乙\n\n## 新列表\n- 丙"), "1、甲 2、乙 新列表 1、丙");
+});
+
+test("speech nested lists count each level and resume the parent after child items", () => {
+  assert.equal(normalizeSpeechContent("- 父甲\n  - 子甲\n  - 子乙\n    - 孙甲\n    - 孙乙\n  - 子丙\n- 父乙\n  - 子丁"), "1、父甲 1、子甲 2、子乙 1、孙甲 2、孙乙 3、子丙 2、父乙 1、子丁");
+  assert.equal(normalizeSpeechContent("3. 父甲\n   - 子甲\n\n   - 子乙\n4. 父乙\n   7) 子丙\n   8) 子丁\n   - 子戊"), "3、父甲 1、子甲 2、子乙 4、父乙 7、子丙 8、子丁 1、子戊");
+});
+
+test("speech list detection excludes decimals, prose, separators and omitted code or formula content", () => {
+  assert.equal(normalizeSpeechContent("1.25 米\n版本 2.3.4\n-5 摄氏度\nword-word\n1.没有空格\n1234567890. 正文"), "1.25 米 版本 2.3.4 -5 摄氏度 word-word 1.没有空格 1234567890. 正文");
+  assert.equal(normalizeSpeechContent("- 甲\n---\n- 乙\n- - -\n- 丙"), "1、甲 --- 1、乙 - - - 1、丙");
+  assert.equal(normalizeSpeechContent("- 甲\n\n```txt\n1. 代码\n- 代码\n```\n\n- 乙\n\n$$\n- 公式\n1. 公式\n$$\n\n- 丙"), "1、甲 这里是一段代码。 1、乙 这里有一条公式。 1、丙");
+  assert.equal(normalizeSpeechContent("    - 代码\n    1. 代码\n\n- 正文"), "这里是一段代码。 1、正文");
+  assert.equal(normalizeSpeechContent("- 甲\n\n      - 代码\n      1. 代码\n\n- 乙"), "1、甲 这里是一段代码。 2、乙");
+  assert.equal(normalizeSpeechContent("    $$代码\n\n- 正文"), "这里是一段代码。 1、正文");
+  assert.equal(normalizeSpeechContent("$$未闭合公式\n\n- 甲\n- 乙"), "这里有一条公式。 1、甲 2、乙");
+  assert.equal(normalizeSpeechContent("- $$\n- 公式内容\n$$\n- 正文"), "1、这里有一条公式。 2、正文");
+  assert.equal(normalizeSpeechContent("- 甲\n  公式：\\[\n- 公式内容\n  \\]\n- 乙"), "1、甲 公式：这里有一条公式。 2、乙");
+  assert.equal(normalizeSpeechContent("项目 | 数值\n--- | ---\n内容 | 1.25\n\n- 正文"), "项目，数值。 内容，1.25。 1、正文");
 });
 
 test("speech keyboard keeps modifiers and IME native, stops on Enter, and interrupts real edits/navigation", () => {
@@ -531,56 +562,84 @@ test("track-overload allowlist excludes mobile, unknown Chromium brands and old 
   assert.equal(await run({ ...browser, userAgent: "iPhone Chrome/140" }), false);
 });
 
-async function playbackSetup({ fail = false, failTimes = fail ? Infinity : 0, deferred = false, incomplete = false, statuses = [], settledStatuses = [], expiredReads = 0, sampleCount = 240, clockScale = 1, chunkSizes = [], streamingHeader = false, holdStream = false, deferSettlement = false } = {}) {
-  const stats = { syntheses: 0, requests: [], reads: 0, contexts: 0, closed: 0, recording: false, resolve: null, samples: 0, maxBufferSamples: 0, maxAhead: 0, cancelled: 0, starts: 0, streamComplete: false, startsBeforeComplete: 0, finishStream: null, settle: null, inFlightSyntheses: 0, maxConcurrentSyntheses: 0 };
-  class Context {
-    constructor() { stats.contexts++; this.state = "running"; this.started = performance.now(); }
-    get currentTime() { return (performance.now() - this.started) / 1000 * clockScale; }
-    async resume() { this.state = "running"; }
-    async suspend() { this.state = "suspended"; }
-    async close() { if (this.state !== "closed") stats.closed++; this.state = "closed"; }
-    createAnalyser() { return { fftSize: 256, getFloatTimeDomainData(buffer) { buffer.fill(0); }, disconnect() {} }; }
-    createBuffer(_channels, count, sampleRate) { stats.samples += count; stats.maxBufferSamples = Math.max(stats.maxBufferSamples, count); return { duration: count / sampleRate, getChannelData: () => new Float32Array(count) }; }
-    createBufferSource() { const context = this; return { connect() {}, disconnect() {}, start(when) { stats.starts++; stats.maxAhead = Math.max(stats.maxAhead, when + this.buffer.duration - context.currentTime); if (!stats.streamComplete) stats.startsBeforeComplete++; } }; }
+async function playbackSetup({ fail = false, failTimes = fail ? Infinity : 0, deferred = false, incomplete = false, statuses = [], settledStatuses = [], expiredReads = 0, sampleCount = 240, clockScale = 1, chunkSizes = [], streamingHeader = false, holdStream = false, deferSettlement = false, deferredAudio = false, operationDeadlineMS = 3000 } = {}) {
+  const stats = { syntheses: 0, requests: [], reads: 0, contexts: 0, closed: 0, recording: false, resolve: null, samples: 0, maxBufferSamples: 0, maxAhead: 0, cancelled: 0, starts: 0, streamComplete: false, startsBeforeComplete: 0, finishStream: null, settle: null, inFlightSyntheses: 0, maxConcurrentSyntheses: 0, contextList: [], intervals: new Map(), timers: new Map(), activeActivities: 0, analysisSamples: 0, resumeCalls: 0, suspendCalls: 0, stoppedSources: 0, analyzersDisposed: 0, statusSignals: [], audioSignals: [], resolveAudio: null };
+  class Target extends EventTarget {
+    constructor() { super(); this.listeners = new Map(); }
+    addEventListener(type, listener, options) { const entries = this.listeners.get(type) ?? new Set(); entries.add(listener); this.listeners.set(type, entries); super.addEventListener(type, listener, options); }
+    removeEventListener(type, listener, options) { this.listeners.get(type)?.delete(listener); super.removeEventListener(type, listener, options); }
+    get listenerCount() { return [...this.listeners.values()].reduce((sum, entries) => sum + entries.size, 0); }
   }
+  class Context extends Target {
+    constructor() { super(); stats.contexts++; stats.contextList.push(this); this.state = "running"; this.started = performance.now(); this.time = 0; }
+    get currentTime() { return this.time + (this.state === "running" ? (performance.now() - this.started) / 1000 * clockScale : 0); }
+    setState(state) { this.time = this.currentTime; this.started = performance.now(); this.state = state; this.dispatchEvent(new Event("statechange")); }
+    async resume() { stats.resumeCalls++; if (this.resumeMode === "reject") throw new Error("gesture needed"); if (this.resumeMode === "pending") await new Promise((resolve) => { this.resolveResume = resolve; }); if (this.state !== "closed") this.setState("running"); }
+    async suspend() { stats.suspendCalls++; if (this.suspendMode === "pending") await new Promise((resolve) => { this.resolveSuspend = resolve; }); if (this.state !== "closed") this.setState("suspended"); }
+    async close() { if (this.state !== "closed") stats.closed++; this.setState("closed"); }
+    createAnalyser() { return { fftSize: 256, getFloatTimeDomainData(buffer) { stats.analysisSamples++; buffer.fill(0); }, disconnect() { stats.analyzersDisposed++; } }; }
+    createBuffer(_channels, count, sampleRate) { stats.samples += count; stats.maxBufferSamples = Math.max(stats.maxBufferSamples, count); return { duration: count / sampleRate, getChannelData: () => new Float32Array(count) }; }
+    createBufferSource() { const context = this; return { connect() {}, disconnect() {}, stop() { stats.stoppedSources++; }, start(when) { stats.starts++; stats.maxAhead = Math.max(stats.maxAhead, when + this.buffer.duration - context.currentTime); if (!stats.streamComplete) stats.startsBeforeComplete++; } }; }
+  }
+  const document = Object.assign(new Target(), { hidden: false });
+  const window = Object.assign(new Target(), { location: { origin: "https://example.test" } });
+  const timerGlobals = {
+    setInterval(callback, milliseconds) { const timer = setInterval(callback, milliseconds); stats.intervals.set(timer, milliseconds); return timer; },
+    clearInterval(timer) { stats.intervals.delete(timer); clearInterval(timer); },
+    setTimeout(callback, milliseconds) { const timer = setTimeout(() => { stats.timers.delete(timer); callback(); }, milliseconds === 3000 ? operationDeadlineMS : milliseconds); stats.timers.set(timer, milliseconds); return timer; },
+    clearTimeout(timer) { stats.timers.delete(timer); clearTimeout(timer); },
+  };
+  const signalPromise = (pending, signal) => new Promise((resolve, reject) => {
+    const aborted = () => reject(new DOMException("Aborted", "AbortError"));
+    signal?.addEventListener("abort", aborted, { once: true });
+    pending.then(resolve, reject).finally(() => signal?.removeEventListener("abort", aborted));
+    if (signal?.aborted) aborted();
+  });
+  const { createSpeechPlaybackLifecycle } = await load("../features/chat/lib/speech-playback-lifecycle.ts", ["createSpeechPlaybackLifecycle"], {
+    ...timerGlobals, document, window, createMediaSpectrum, isRecordingActive: () => stats.recording,
+    beginPlaybackActivity: () => { stats.activeActivities++; let stopped = false; return { stop() { if (!stopped) stats.activeActivities--; stopped = true; }, publishLevel() {} }; },
+  });
   const audio = new Uint8Array(44 + sampleCount * 2);
   const view = new DataView(audio.buffer);
   for (const [offset, text] of [[0, "RIFF"], [8, "WAVEfmt "], [36, "data"]]) for (let i = 0; i < text.length; i++) audio[offset + i] = text.charCodeAt(i);
   view.setUint32(4, streamingHeader ? 0xffffffff : audio.length - 8, true); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, 24000, true); view.setUint16(34, 16, true); view.setUint32(40, streamingHeader ? 0xffffffff : sampleCount * 2, true);
   const api = await load("../features/chat/lib/speech-playback.ts", ["configureSpeechPlayback", "playSpeech", "stopSpeechPlayback", "stopSpeechPlaybackForMessage", "reconcileSpeechPlaybackMessage", "getSpeechPlaybackState", "splitSpeechText", "normalizeSpeechText"], {
-    AudioContext: Context, createMediaSpectrum, normalizeSpeechContent, document: { hidden: false }, window: { location: { origin: "https://example.test" } }, URL,
-    isRecordingActive: () => stats.recording, beginPlaybackActivity: () => ({ stop() {}, publishLevel() {} }),
-    synthesizeSpeech: (_token, text, options, requestID, retry) => {
-      stats.syntheses++; stats.requests.push({ text, options, requestID, retry });
+    ...timerGlobals, AudioContext: Context, createSpeechPlaybackLifecycle, normalizeSpeechContent, document, window, URL,
+    isRecordingActive: () => stats.recording,
+    synthesizeSpeech: (_token, text, options, requestID, retry, signal) => {
+      stats.syntheses++; stats.requests.push({ text, options, requestID, retry, signal });
       stats.inFlightSyntheses++; stats.maxConcurrentSyntheses = Math.max(stats.maxConcurrentSyntheses, stats.inFlightSyntheses);
       const result = { id: `audio-${stats.syntheses}`, media_url: "/api/v1/speech/tts/audio/audio", status: statuses[stats.syntheses - 1] ?? "pending" };
       const promise = stats.syntheses <= failTimes ? Promise.reject(new Error("failed")) : deferred ? new Promise((resolve) => { stats.resolve = () => resolve(result); }) : Promise.resolve(result);
-      return promise.finally(() => { stats.inFlightSyntheses--; });
+      return signalPromise(promise, signal).finally(() => { stats.inFlightSyntheses--; });
     },
-    getSpeechSynthesis: async () => {
+    getSpeechSynthesis: async (_token, _id, signal) => {
+      stats.statusSignals.push(signal);
       const result = { status: settledStatuses[stats.syntheses - 1] ?? (incomplete ? "uncertain" : holdStream && !stats.streamComplete ? "pending" : "complete") };
-      return deferSettlement ? new Promise((resolve) => { stats.settle = () => resolve(result); }) : result;
+      return signalPromise(deferSettlement ? new Promise((resolve) => { stats.settle = () => resolve(result); }) : Promise.resolve(result), signal);
     },
-    authedFetch: async () => {
+    authedFetch: async (_path, options) => {
       stats.reads++;
+      stats.audioSignals.push(options.signal);
       if (stats.reads <= expiredReads) throw Object.assign(new Error("expired"), { status: 410 });
-      let offset = 0; let index = 0;
-      return new Response(new ReadableStream({
+      let offset = 0; let index = 0; let cancelled = false;
+      const response = new Response(new ReadableStream({
         pull(controller) {
           if (offset >= audio.length) {
-            if (holdStream) return new Promise((resolve) => { stats.finishStream = () => { stats.streamComplete = true; controller.close(); resolve(); }; });
+            if (holdStream) return new Promise((resolve) => { stats.finishStream = () => { stats.streamComplete = true; if (!cancelled) controller.close(); resolve(); }; });
             stats.streamComplete = true; controller.close(); return;
           }
           const end = Math.min(audio.length, offset + (chunkSizes[index++] ?? audio.length));
           controller.enqueue(audio.subarray(offset, end)); offset = end;
         },
-        cancel() { stats.cancelled++; },
+        cancel() { cancelled = true; stats.cancelled++; },
       }));
+      return deferredAudio ? new Promise((resolve) => { stats.resolveAudio = () => resolve(response); }) : response;
     },
   });
   const config = { scope: "conversation", user: "user", token: "token", provider: "deepseek", voice: "stella", enabled: true };
   api.configureSpeechPlayback(config);
-  return { api, stats, config };
+  return { api, stats, config, document, window };
 }
 
 test("TTS synthesis identity is separate from playback: repeated play reuses one synthesis and current voice changes its version", async () => {
@@ -872,5 +931,159 @@ test("stopping a long reply during audio or metadata settlement never synthesize
     await pending;
     assert.equal(stats.syntheses, 1); assert.equal(stats.reads, 1);
     assert.equal(api.getSpeechPlaybackState().status, "idle");
+  }
+});
+
+async function waitForPlayback(predicate) {
+  for (let attempt = 0; attempt < 300 && !predicate(); attempt++) await new Promise((resolve) => setTimeout(resolve, 2));
+  assert.ok(predicate(), "expected playback condition before deadline");
+}
+
+test("system interrupted or suspended audio resumes on statechange at its existing cursor without another synthesis", async () => {
+  for (const systemState of ["interrupted", "suspended"]) {
+    const { api, stats } = await playbackSetup({ sampleCount: 24000, clockScale: 20, holdStream: true });
+    const pending = api.playSpeech("message", "Keep this position", assert.fail);
+    await waitForPlayback(() => stats.starts > 0);
+    const context = stats.contextList[0]; context.setState(systemState);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const cursor = context.currentTime; const samples = stats.samples;
+    assert.equal(api.getSpeechPlaybackState().status, "paused");
+    assert.equal(stats.intervals.size, 0); assert.equal(stats.activeActivities, 0); assert.equal(stats.timers.size, 0);
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    assert.equal(context.currentTime, cursor); assert.equal(stats.samples, samples);
+    context.setState("running");
+    await waitForPlayback(() => Boolean(stats.finishStream)); stats.finishStream(); await pending;
+    assert.equal(stats.samples, 24000); assert.equal(stats.syntheses, 1); assert.equal(stats.resumeCalls, 0);
+    assert.equal(api.getSpeechPlaybackState().status, "idle");
+  }
+});
+
+test("hidden running audio continues without analysis intervals and independent text streams keep progressing after return", async () => {
+  const { api, stats, document } = await playbackSetup({ sampleCount: 24000, clockScale: 20, holdStream: true });
+  const pending = api.playSpeech("message", "Background playback", assert.fail);
+  await waitForPlayback(() => stats.starts > 0);
+  document.hidden = true; document.dispatchEvent(new Event("visibilitychange"));
+  const previousSamples = stats.samples;
+  assert.equal(stats.intervals.size, 0); assert.equal(stats.activeActivities, 0);
+  assert.equal(stats.contextList[0].state, "running");
+  let textParts = 0;
+  const textStream = new ReadableStream({ async pull(controller) { await new Promise((resolve) => setTimeout(resolve, 2)); if (textParts === 20) controller.close(); else controller.enqueue(`part-${textParts++}`); } });
+  const readingText = (async () => { const reader = textStream.getReader(); while (!(await reader.read()).done) {} reader.releaseLock(); })();
+  await waitForPlayback(() => stats.samples > previousSamples);
+  assert.equal(stats.analysisSamples, 0); assert.equal(api.getSpeechPlaybackState().status, "playing");
+  document.hidden = false; document.dispatchEvent(new Event("visibilitychange"));
+  assert.equal(stats.intervals.size, 1); assert.equal(stats.activeActivities, 1);
+  await readingText; assert.equal(textParts, 20);
+  await waitForPlayback(() => Boolean(stats.finishStream)); stats.finishStream(); await pending;
+  assert.equal(stats.syntheses, 1); assert.equal(stats.samples, 24000);
+});
+
+test("foreground system resume is bounded and attempted once per return; user pause never resumes on visibility or pageshow", async () => {
+  const { api, stats, document, window } = await playbackSetup({ holdStream: true, operationDeadlineMS: 15 });
+  const pending = api.playSpeech("message", "Foreground resume", assert.fail);
+  await waitForPlayback(() => Boolean(stats.finishStream) && stats.starts > 0);
+  const context = stats.contextList[0];
+  document.hidden = true; document.dispatchEvent(new Event("visibilitychange")); context.setState("interrupted"); context.resumeMode = "pending";
+  document.hidden = false; document.dispatchEvent(new Event("visibilitychange"));
+  await waitForPlayback(() => stats.resumeCalls === 1 && stats.timers.size === 0);
+  window.dispatchEvent(new Event("pageshow")); document.dispatchEvent(new Event("resume"));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.equal(stats.resumeCalls, 1); assert.equal(api.getSpeechPlaybackState().status, "paused");
+  context.resumeMode = undefined; await api.playSpeech("message", "Foreground resume", assert.fail);
+  assert.equal(api.getSpeechPlaybackState().status, "playing"); assert.equal(stats.resumeCalls, 2);
+  await api.playSpeech("message", "Foreground resume", assert.fail);
+  assert.equal(api.getSpeechPlaybackState().status, "paused"); assert.equal(stats.intervals.size, 0);
+  document.hidden = true; document.dispatchEvent(new Event("visibilitychange"));
+  document.hidden = false; document.dispatchEvent(new Event("visibilitychange")); window.dispatchEvent(new Event("pageshow")); document.dispatchEvent(new Event("resume"));
+  assert.equal(stats.resumeCalls, 2); assert.equal(api.getSpeechPlaybackState().status, "paused");
+  context.resolveResume?.(); await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(api.getSpeechPlaybackState().status, "paused"); assert.equal(context.state, "suspended");
+  api.stopSpeechPlayback(); stats.finishStream(); await pending;
+});
+
+test("pagehide immediately releases audio and page listeners and pageshow never restarts it", async () => {
+  const { api, stats, document, window } = await playbackSetup({ holdStream: true });
+  for (let attempt = 0; attempt < 3; attempt++) {
+    stats.finishStream = null;
+    const pending = api.playSpeech(`message-${attempt}`, `Page lifetime ${attempt}`, assert.fail);
+    await waitForPlayback(() => Boolean(stats.finishStream));
+    assert.equal(window.listenerCount, 2); assert.equal(document.listenerCount, 2);
+    window.dispatchEvent(new Event("pagehide"));
+    assert.equal(stats.intervals.size, 0); assert.equal(stats.timers.size, 0); assert.equal(stats.activeActivities, 0);
+    assert.equal(window.listenerCount, 0); assert.equal(document.listenerCount, 0);
+    assert.equal(stats.contextList.at(-1).listenerCount, 0); assert.equal(stats.contextList.at(-1).state, "closed");
+    assert.equal(stats.audioSignals.at(-1).aborted, true);
+    const requests = stats.syntheses; window.dispatchEvent(new Event("pageshow")); document.dispatchEvent(new Event("resume"));
+    assert.equal(stats.syntheses, requests); assert.equal(api.getSpeechPlaybackState().status, "idle");
+    stats.finishStream(); await pending;
+  }
+  assert.equal(stats.cancelled, 3); assert.equal(stats.analyzersDisposed, 3); assert.equal(stats.closed, 3);
+  assert.ok(stats.stoppedSources > 0);
+});
+
+test("aborted pending JSON synthesis reconciles the same request ID and late JSON or context promises cannot alter newer playback", async () => {
+  const { api, stats, window } = await playbackSetup({ deferred: true, holdStream: true });
+  const first = api.playSpeech("message", "Same content", assert.fail, { manual: true });
+  await waitForPlayback(() => stats.syntheses === 1);
+  const resolveOldJSON = stats.resolve; const oldRequest = stats.requests[0];
+  window.dispatchEvent(new Event("pagehide"));
+  assert.equal(oldRequest.signal.aborted, true); assert.equal(stats.intervals.size, 0); assert.equal(window.listenerCount, 0);
+  const second = api.playSpeech("message", "Same content", assert.fail, { manual: true });
+  await waitForPlayback(() => stats.syntheses === 2);
+  assert.equal(stats.requests[1].requestID, oldRequest.requestID); assert.equal(stats.requests[1].retry, false);
+  resolveOldJSON(); stats.resolve(); await first;
+  await waitForPlayback(() => Boolean(stats.finishStream));
+  assert.equal(stats.reads, 1); assert.equal(api.getSpeechPlaybackState().status, "playing");
+  const oldContext = stats.contextList.at(-1); oldContext.suspendMode = "pending";
+  const paused = api.playSpeech("message", "Same content", assert.fail);
+  api.stopSpeechPlayback(); stats.finishStream(); await second;
+  const third = api.playSpeech("new-message", "Replacement", assert.fail);
+  await waitForPlayback(() => stats.syntheses === 3);
+  oldContext.resolveSuspend(); await paused;
+  assert.equal(api.getSpeechPlaybackState().messageID, "new-message"); assert.equal(api.getSpeechPlaybackState().status, "loading");
+  api.stopSpeechPlayback(); stats.resolve(); await third;
+});
+
+test("pagehide aborts a stalled status read and a late media response cancels its body before ownership", async () => {
+  const settlement = await playbackSetup({ deferSettlement: true, clockScale: 1000 });
+  const pending = settlement.api.playSpeech("message", "Status request", assert.fail);
+  await waitForPlayback(() => Boolean(settlement.stats.settle));
+  settlement.window.dispatchEvent(new Event("pagehide"));
+  assert.equal(settlement.stats.statusSignals[0].aborted, true);
+  assert.equal(settlement.stats.intervals.size, 0); assert.equal(settlement.stats.timers.size, 0); assert.equal(settlement.window.listenerCount, 0);
+  await pending; settlement.stats.settle();
+  const late = await playbackSetup({ deferredAudio: true });
+  const latePending = late.api.playSpeech("message", "Late response", assert.fail);
+  await waitForPlayback(() => Boolean(late.stats.resolveAudio));
+  late.api.stopSpeechPlayback(); await latePending; late.stats.resolveAudio();
+  await waitForPlayback(() => late.stats.cancelled === 1);
+  assert.equal(late.stats.samples, 0); assert.equal(late.stats.closed, 1);
+});
+
+test("synthesis and status APIs pass cancellation signals without issuing backend cancellation", async () => {
+  const requests = []; const controller = new AbortController();
+  const { synthesizeSpeech, getSpeechSynthesis } = await load("../shared/api/speech.ts", ["synthesizeSpeech", "getSpeechSynthesis"], { authedRequest: async (...args) => { requests.push(args); return {}; } });
+  await synthesizeSpeech("token", "Text", { provider: "mimo", voice: "冰糖" }, "stable-request", false, controller.signal);
+  await getSpeechSynthesis("token", "accepted-job", controller.signal);
+  assert.equal(requests[0][1].signal, controller.signal); assert.equal(requests[1][1].signal, controller.signal);
+  assert.deepEqual(requests.map(([path]) => path), ["/api/v1/speech/tts", "/api/v1/speech/tts/accepted-job"]);
+});
+
+test("a late native suspend honors a newer Continue click before or after the operation deadline", async () => {
+  for (const afterDeadline of [false, true]) {
+    const { api, stats } = await playbackSetup({ holdStream: true, operationDeadlineMS: 15 });
+    const pending = api.playSpeech("message", "Latest playback intent", assert.fail);
+    await waitForPlayback(() => Boolean(stats.finishStream));
+    const context = stats.contextList[0]; context.suspendMode = "pending";
+    const pausing = api.playSpeech("message", "Latest playback intent", assert.fail);
+    assert.equal(api.getSpeechPlaybackState().status, "paused");
+    if (afterDeadline) await pausing;
+    const continuing = api.playSpeech("message", "Latest playback intent", assert.fail);
+    context.resolveSuspend();
+    await Promise.all([pausing, continuing]);
+    await waitForPlayback(() => context.state === "running" && api.getSpeechPlaybackState().status === "playing");
+    assert.equal(stats.resumeCalls, 1); assert.equal(stats.syntheses, 1); assert.equal(stats.reads, 1);
+    api.stopSpeechPlayback(); stats.finishStream(); await pending;
+    assert.equal(stats.intervals.size, 0); assert.equal(stats.timers.size, 0);
   }
 });
