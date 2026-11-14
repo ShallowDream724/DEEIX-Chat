@@ -2,6 +2,7 @@ package filetype
 
 import (
 	"bytes"
+	"encoding/binary"
 	"strconv"
 	"strings"
 )
@@ -46,8 +47,12 @@ func DetectBinaryMIME(header []byte) string {
 		return "application/x-msdownload"
 	case bytes.HasPrefix(header, []byte{0x7f, 'E', 'L', 'F'}):
 		return "application/x-elf"
+	case isEPUBHeader(header):
+		return "application/epub+zip"
 	case bytes.HasPrefix(header, []byte("PK\x03\x04")), bytes.HasPrefix(header, []byte("PK\x05\x06")), bytes.HasPrefix(header, []byte("PK\x07\x08")):
 		return "application/zip"
+	case len(header) >= 78 && bytes.Equal(header[60:68], []byte("BOOKMOBI")):
+		return "application/x-mobipocket-ebook"
 	case bytes.HasPrefix(header, []byte{'7', 'z', 0xbc, 0xaf, 0x27, 0x1c}):
 		return "application/x-7z-compressed"
 	case bytes.HasPrefix(header, []byte("Rar!\x1a\x07\x00")), bytes.HasPrefix(header, []byte("Rar!\x1a\x07\x01\x00")):
@@ -65,6 +70,38 @@ func DetectBinaryMIME(header []byte) string {
 	default:
 		return ""
 	}
+}
+
+// isEPUBHeader checks the OCF identification entry, not the full publication.
+// The first ZIP entry must be the unencrypted, stored mimetype file with no
+// extra field. A ZIP data descriptor, when used, also fits in the sniffed header.
+func isEPUBHeader(header []byte) bool {
+	const contentEnd = 30 + len("mimetype") + len("application/epub+zip")
+	const mimeSize = uint32(len("application/epub+zip"))
+	if len(header) < contentEnd || !bytes.HasPrefix(header, []byte("PK\x03\x04")) {
+		return false
+	}
+	flags := binary.LittleEndian.Uint16(header[6:8])
+	if flags&0x2041 != 0 || binary.LittleEndian.Uint16(header[8:10]) != 0 ||
+		binary.LittleEndian.Uint16(header[26:28]) != uint16(len("mimetype")) ||
+		binary.LittleEndian.Uint16(header[28:30]) != 0 ||
+		!bytes.Equal(header[30:contentEnd], []byte("mimetypeapplication/epub+zip")) {
+		return false
+	}
+	compressed := binary.LittleEndian.Uint32(header[18:22])
+	uncompressed := binary.LittleEndian.Uint32(header[22:26])
+	if flags&8 == 0 {
+		return compressed == mimeSize && uncompressed == mimeSize
+	}
+	if (compressed != 0 && compressed != mimeSize) || (uncompressed != 0 && uncompressed != mimeSize) {
+		return false
+	}
+	descriptor := header[contentEnd:]
+	if bytes.HasPrefix(descriptor, []byte("PK\x07\x08")) {
+		descriptor = descriptor[4:]
+	}
+	return len(descriptor) >= 12 && binary.LittleEndian.Uint32(descriptor[4:8]) == mimeSize &&
+		binary.LittleEndian.Uint32(descriptor[8:12]) == mimeSize
 }
 
 func isUSTARHeader(header []byte) bool {

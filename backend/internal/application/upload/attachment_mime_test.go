@@ -2,6 +2,7 @@ package upload
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"errors"
 	"testing"
@@ -18,6 +19,8 @@ func TestCommonAttachmentsUseSamePolicyForStoredAndTemporaryUploads(t *testing.T
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
+	mobi := make([]byte, 78)
+	copy(mobi[60:68], "BOOKMOBI")
 	tests := []struct {
 		name, mime string
 		content    []byte
@@ -33,6 +36,8 @@ func TestCommonAttachmentsUseSamePolicyForStoredAndTemporaryUploads(t *testing.T
 		{"archive.bz2", "application/x-bzip2", []byte("BZh9")},
 		{"archive.xz", "application/x-xz", []byte{0xfd, '7', 'z', 'X', 'Z', 0x00}},
 		{"archive.zst", "application/zstd", []byte{0x28, 0xb5, 0x2f, 0xfd}},
+		{"book.epub", "application/epub+zip", epubUploadFixture(t)},
+		{"book.mobi", "application/x-mobipocket-ebook", mobi},
 		// Keep the existing net/http text sniffing behavior for legacy encodings.
 		{"notes-gbk.txt", "text/plain", []byte{0xd6, 0xd0, 0xce, 0xc4}},
 	}
@@ -82,7 +87,7 @@ func TestAttachmentNamesCannotPromoteBinaryOrExecutableContent(t *testing.T) {
 	repo, store := newUploadTestRepo(), newUploadTestStore()
 	service := NewServiceWithRuntime(config.NewRuntime(config.Config{MaxUploadFileBytes: 1024, FileAllowedMIMETypes: "application/zip,text/plain"}), repo, nil, Hooks{}, ErrorSet{MIMEBlocked: blocked, DangerousMIMEType: dangerous}, "")
 	service.SetObjectStoreProvider(uploadTestStoreProvider{store: store})
-	for _, name := range []string{"fake.zip", "fake.7z", "fake.tar.gz", "fake.tex", "fake.ipynb", "fake.json", "fake.js"} {
+	for _, name := range []string{"fake.zip", "fake.7z", "fake.tar.gz", "fake.tex", "fake.ipynb", "fake.json", "fake.js", "fake.epub", "fake.mobi"} {
 		for _, content := range [][]byte{{0, 1, 2, 3}, []byte("MZfake executable"), []byte("\x7fELFfake executable")} {
 			_, err := service.PrepareTemporaryFile(t.Context(), TemporaryFileInput{FileName: name, MimeType: "application/zip", Reader: bytes.NewReader(content)})
 			if !errors.Is(err, blocked) && !errors.Is(err, dangerous) {
@@ -119,4 +124,50 @@ func TestAttachmentNamesCannotPromoteBinaryOrExecutableContent(t *testing.T) {
 			t.Fatalf("signature lost to archive extension: got %q, want %q", got, sample.want)
 		}
 	}
+}
+
+func TestEbookAllowlistDoesNotAllowRenamedZIP(t *testing.T) {
+	blocked := errors.New("blocked")
+	repo, store := newUploadTestRepo(), newUploadTestStore()
+	service := NewServiceWithRuntime(config.NewRuntime(config.Config{
+		MaxUploadFileBytes:   1024,
+		FileAllowedMIMETypes: "application/epub+zip,application/x-mobipocket-ebook",
+	}), repo, nil, Hooks{}, ErrorSet{MIMEBlocked: blocked}, "")
+	service.SetObjectStoreProvider(uploadTestStoreProvider{store: store})
+	for _, sample := range []struct{ name, mime string }{
+		{"book.epub", "application/epub+zip"},
+		{"book.mobi", "application/x-mobipocket-ebook"},
+	} {
+		content := []byte("PK\x03\x04ordinary ZIP content")
+		if _, err := service.UploadFile(t.Context(), UploadFileInput{
+			UserID: 1, FileName: sample.name, MimeType: sample.mime, Reader: bytes.NewReader(content),
+		}); !errors.Is(err, blocked) {
+			t.Fatalf("stored %s should remain blocked ZIP: %v", sample.name, err)
+		}
+		if _, err := service.PrepareTemporaryFile(t.Context(), TemporaryFileInput{
+			FileName: sample.name, MimeType: sample.mime, Reader: bytes.NewReader(content),
+		}); !errors.Is(err, blocked) {
+			t.Fatalf("temporary %s should remain blocked ZIP: %v", sample.name, err)
+		}
+	}
+	if got := store.objectCount(); got != 0 {
+		t.Fatalf("rejected objects not cleaned up: %d", got)
+	}
+}
+
+func epubUploadFixture(t *testing.T) []byte {
+	t.Helper()
+	var content bytes.Buffer
+	writer := zip.NewWriter(&content)
+	entry, err := writer.CreateHeader(&zip.FileHeader{Name: "mimetype", Method: zip.Store})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = entry.Write([]byte("application/epub+zip")); err != nil {
+		t.Fatal(err)
+	}
+	if err = writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return content.Bytes()
 }
