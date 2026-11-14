@@ -32,3 +32,7 @@ API 使用 `stream=true` 与 `audio.format=pcm16`，从 SSE 音频增量转换�
 - [官方音色说明](https://github.com/XiaomiMiMo/MiMo-Skills/blob/main/skills/mimo-v2-5-tts/SKILL.md)
 
 本地详细证据位于 `.cache/local-dev/mimo-review/`，不提交测试密钥、个人数据库或音频缓存。
+
+## 镜像发布
+
+源码 `67b4fa06cc16aac83e9b86057d9cdd57b2391638` 经 [Image #43595363598](https://github.com/ShallowDream724/DEEIX-Chat/actions/runs/43595363598) 构建并通过容器启动、首页和源码 revision 检查，Merge 成功。`ghcr.io/shallowdream724/deeix-chat:latest`（linux/amd64）与 `sha-67b4fa06cc16aac83e9b86057d9cdd57b2391638` 已匿名核验一致，digest：`sha256:6c0cec32b501f835221ed1e87a0c9f6e78ac049d30f96964b82bf25fa858fe06`。生产容器未代为部署。
