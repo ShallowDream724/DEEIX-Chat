@@ -855,7 +855,7 @@ func normalizePurpose(raw string) string {
 }
 
 func normalizeDetectedMIME(detected string, fileName string) string {
-	value := filetype.NormalizeArchiveMIME(detected)
+	value := normalizeMIMEValue(filetype.NormalizeArchiveMIME(detected))
 	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(strings.TrimSpace(fileName)), "."))
 	// Text extensions refine verified text; a renamed unknown binary must keep
 	// its detected MIME so that the authoritative allowlist can reject it.
@@ -942,6 +942,10 @@ func normalizeMIMEValue(raw string) string {
 	if idx := strings.Index(value, ";"); idx > 0 {
 		value = strings.TrimSpace(value[:idx])
 	}
+	switch value {
+	case "audio/wave", "audio/x-wav", "audio/vnd.wave":
+		return "audio/wav"
+	}
 	return value
 }
 
@@ -1027,7 +1031,7 @@ func isAllowedMIME(mimeType string, cfg config.Config) bool {
 	items := strings.Split(cfg.FileAllowedMIMETypes, ",")
 	allowed := make(map[string]struct{}, len(items))
 	for _, item := range items {
-		value := filetype.NormalizeArchiveMIME(item)
+		value := normalizeMIMEValue(filetype.NormalizeArchiveMIME(item))
 		if value == "" {
 			continue
 		}
@@ -1036,7 +1040,7 @@ func isAllowedMIME(mimeType string, cfg config.Config) bool {
 	if len(allowed) == 0 {
 		return true
 	}
-	_, ok := allowed[filetype.NormalizeArchiveMIME(mimeType)]
+	_, ok := allowed[normalizeMIMEValue(filetype.NormalizeArchiveMIME(mimeType))]
 	return ok
 }
 

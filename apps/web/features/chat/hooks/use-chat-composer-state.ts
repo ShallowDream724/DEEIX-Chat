@@ -410,6 +410,7 @@ export function useChatComposerState(
   }, [conversationKey, discardPendingPersistence, flushPendingPersistence, persistenceEnabled, preserveDrafts, storageKey, transient]);
 
   React.useEffect(() => {
+    if (latestStateRef.current !== state) return;
     if (
       hydratedConversationKey !== state.conversationKey ||
       hydratedStorageKey !== storageKey ||
@@ -453,6 +454,22 @@ export function useChatComposerState(
     composerRevisionRef.current++;
   }, [storageKey, transient]);
   const getComposerRevision = React.useCallback(() => composerRevisionRef.current, []);
+  const flushDraft = React.useCallback((draftOverride?: string) => {
+    flushPendingPersistence();
+    if (!persistenceEnabled) return;
+    const latest = latestStateRef.current;
+    const target = latest.conversationKey === conversationKey ? latest : ComposerStorageOps.readEntry(storageKey, conversationKey);
+    ComposerStorageOps.writeEntry(storageKey, conversationKey, draftOverride ?? target.draft,
+      mergeAttachmentsByFileID(target.attachments, completedUploadsRef.current.get(target) ?? []));
+  }, [conversationKey, flushPendingPersistence, persistenceEnabled, storageKey]);
+  React.useEffect(() => {
+    const leaving = () => flushDraft();
+    const hidden = () => { if (document.hidden) flushDraft(); };
+    window.addEventListener("pagehide", leaving);
+    window.addEventListener("beforeunload", leaving);
+    document.addEventListener("visibilitychange", hidden);
+    return () => { window.removeEventListener("pagehide", leaving); window.removeEventListener("beforeunload", leaving); document.removeEventListener("visibilitychange", hidden); };
+  }, [flushDraft]);
   const carryDraftToNewConversation = React.useCallback(() => {
     const current = latestStateRef.current;
     if (current.conversationKey === NEW_CONVERSATION_COMPOSER_KEY || !hasComposerContent(current)) return;
@@ -480,35 +497,33 @@ export function useChatComposerState(
     composerRevisionRef.current++;
     setHydratedConversationKey(targetKey);
     setHydratedStorageKey(storageKey);
+    latestStateRef.current = { conversationKey: targetKey, draft, attachments };
+    if (persistenceEnabled) pendingPersistenceRef.current = { ...latestStateRef.current, storageKey };
     setState({ conversationKey: targetKey, draft, attachments });
     return true;
-  }, [conversationKey, storageKey]);
+  }, [conversationKey, persistenceEnabled, storageKey]);
 
   const setDraft = React.useCallback((value: React.SetStateAction<string>) => {
     composerRevisionRef.current++;
     setHydratedConversationKey(conversationKey);
     setHydratedStorageKey(storageKey);
-    setState((prev) => ({
-      ...(prev.conversationKey === conversationKey ? prev : createEmptyComposerState(conversationKey)),
-      draft:
-        typeof value === "function"
-          ? value(prev.conversationKey === conversationKey ? prev.draft : "")
-          : value,
-    }));
-  }, [conversationKey, storageKey]);
+    const previous = latestStateRef.current.conversationKey === conversationKey ? latestStateRef.current : createEmptyComposerState(conversationKey);
+    const next = { ...previous, draft: typeof value === "function" ? value(previous.draft) : value };
+    latestStateRef.current = next;
+    if (persistenceEnabled) pendingPersistenceRef.current = { ...next, storageKey };
+    setState(next);
+  }, [conversationKey, persistenceEnabled, storageKey]);
 
   const updateAttachmentStatuses = React.useCallback((value: React.SetStateAction<PendingAttachment[]>) => {
     if (latestStateRef.current.conversationKey !== conversationKey) return;
     setHydratedConversationKey(conversationKey);
     setHydratedStorageKey(storageKey);
-    setState((prev) => ({
-      ...(prev.conversationKey === conversationKey ? prev : createEmptyComposerState(conversationKey)),
-      attachments:
-        typeof value === "function"
-          ? value(prev.conversationKey === conversationKey ? prev.attachments : [])
-          : value,
-    }));
-  }, [conversationKey, storageKey]);
+    const previous = latestStateRef.current.conversationKey === conversationKey ? latestStateRef.current : createEmptyComposerState(conversationKey);
+    const next = { ...previous, attachments: typeof value === "function" ? value(previous.attachments) : value };
+    latestStateRef.current = next;
+    if (persistenceEnabled) pendingPersistenceRef.current = { ...next, storageKey };
+    setState(next);
+  }, [conversationKey, persistenceEnabled, storageKey]);
 
   const setAttachments = React.useCallback<React.Dispatch<React.SetStateAction<PendingAttachment[]>>>((value) => {
     composerRevisionRef.current++;
@@ -544,13 +559,10 @@ export function useChatComposerState(
       composerRevisionRef.current++;
       setHydratedConversationKey(targetConversationKey);
       setHydratedStorageKey(storageKey);
-      setState((prev) => ({
-        ...(prev.conversationKey === targetConversationKey ? prev : createEmptyComposerState(targetConversationKey)),
-        attachments: mergeAttachmentsByFileID(
-          prev.conversationKey === targetConversationKey ? prev.attachments : [],
-          items,
-        ),
-      }));
+      const previous = latestStateRef.current.conversationKey === targetConversationKey ? latestStateRef.current : createEmptyComposerState(targetConversationKey);
+      const next = { ...previous, attachments: mergeAttachmentsByFileID(previous.attachments, items) };
+      latestStateRef.current = next;
+      setState(next);
       return;
     }
 
@@ -567,5 +579,6 @@ export function useChatComposerState(
     getComposerRevision,
     restoreSubmittedDraft,
     carryDraftToNewConversation,
+    flushDraft,
   };
 }

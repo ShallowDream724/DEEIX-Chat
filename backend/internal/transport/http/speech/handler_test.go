@@ -46,7 +46,7 @@ func (slowProvider) Stream(ctx context.Context, r domain.StreamRequest, audio <-
 }
 
 func (streamProvider) ASRCapability() *domain.Capability {
-	return &domain.Capability{ID: "doubao-ime", Streaming: true}
+	return &domain.Capability{ID: "doubao-ime", Streaming: true, Formats: []string{"opus"}}
 }
 func (streamProvider) TTSCapability() *domain.Capability { return nil }
 func (streamProvider) Transcribe(context.Context, domain.Audio) (domain.Transcript, error) {
@@ -77,7 +77,7 @@ func TestWebSocketTicketOriginsAndFinalTail(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	service := app.NewService(nil, map[string]domain.Provider{"doubao-ime": streamProvider{}}, testBilling{}, testBilling{}, store)
+	service := app.NewService(func() app.Config { return app.Config{SelectedInputProvider: "doubao-ime"} }, map[string]domain.Provider{"doubao-ime": streamProvider{}}, testBilling{}, testBilling{}, store)
 	defer service.Close()
 	router := gin.New()
 	public := router.Group(app.APIBasePath)
@@ -153,7 +153,7 @@ func TestSlowUpstreamHasBoundedBufferAndExplicitBackpressure(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	service := app.NewService(nil, map[string]domain.Provider{"doubao-ime": slowProvider{}}, testBilling{}, testBilling{}, store)
+	service := app.NewService(func() app.Config { return app.Config{SelectedInputProvider: "doubao-ime"} }, map[string]domain.Provider{"doubao-ime": slowProvider{}}, testBilling{}, testBilling{}, store)
 	defer service.Close()
 	router := gin.New()
 	NewModule(NewHandler(service)).RegisterRoutes(router.Group("/unused"), router.Group(app.APIBasePath))
@@ -193,7 +193,7 @@ func TestReturnedTTSMediaURLUsesActualVersionedRouter(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	service := app.NewService(nil, map[string]domain.Provider{"deepseek": ttsProvider{}}, testBilling{}, testBilling{}, store)
+	service := app.NewService(func() app.Config { return app.Config{SelectedInputProvider: "doubao-ime"} }, map[string]domain.Provider{"deepseek": ttsProvider{}}, testBilling{}, testBilling{}, store)
 	defer service.Close()
 	router := gin.New()
 	auth := router.Group(app.APIBasePath, func(c *gin.Context) { c.Set(middleware.ContextKeyUserID, uint(1)); c.Next() })

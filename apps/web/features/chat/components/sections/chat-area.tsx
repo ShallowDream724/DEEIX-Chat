@@ -707,7 +707,7 @@ export function ChatArea({
             <MessageScrollerViewport
               ref={messageViewportBoundaryRef}
               preserveScrollOnPrepend={false}
-              className="px-3 pt-2 has-data-[screenshot-capturing=true]:pb-8 md:px-6"
+              className={cn("px-3 pt-2 has-data-[screenshot-capturing=true]:pb-8 md:px-6", splitRightInset && "lg:pr-8")}
               onScroll={onScroll}
             >
               <MessageScrollerContent
@@ -864,7 +864,9 @@ export function ChatArea({
             <ChatMessagePositionRail messages={messages} boundaryRef={messageViewportBoundaryRef} />
             <ChatResponseOutlineRail
               boundaryRef={messageViewportBoundaryRef}
-              disabled={selectionMode || splitRightInset}
+              contentRef={messageContentRef}
+              minimumRightInset={splitRightInset ? 8 : 0}
+              disabled={selectionMode}
             />
           </MessageScroller>
         </MessageScrollerProvider>

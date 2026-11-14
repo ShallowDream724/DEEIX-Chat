@@ -570,19 +570,9 @@ export function SettingsChat() {
 
       <SettingsSection title={t("speech.sectionTitle")}>
         <SettingsFieldList>
-          <SettingsFieldRow title={t("speech.inputTitle")} description={t("speech.inputDescription")}>
-            <Select value={settings.speechInputProvider} onValueChange={handleEnum("chat.speech_input_provider")} disabled={loading}>
-              <SelectTrigger size="sm"><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="browser">{t("speech.browser")}</SelectItem>
-                {speechCapabilities.asr.map((provider) => <SelectItem key={provider.id} value={provider.id}>{provider.name}</SelectItem>)}
-                {settings.speechInputProvider !== "browser" && !speechCapabilities.asr.some((provider) => provider.id === settings.speechInputProvider) ? <SelectItem value={settings.speechInputProvider} disabled>{t("speech.unavailable")}</SelectItem> : null}
-              </SelectContent>
-            </Select>
-          </SettingsFieldRow>
-          <div className="pt-4"><SettingsFieldRow title={t("speech.autoReadTitle")} description={t("speech.autoReadDescription")}>
+          <SettingsFieldRow title={t("speech.autoReadTitle")} description={speechCapabilities.tts.length > 0 ? t("speech.autoReadDescription") : t("speech.unavailable")}>
             <Switch checked={settings.autoReadReplies} onCheckedChange={handleBool("chat.auto_read_replies")} disabled={loading || speechCapabilities.tts.length === 0} aria-label={t("speech.autoReadTitle")} />
-          </SettingsFieldRow></div>
+          </SettingsFieldRow>
           <div className="pt-4"><SettingsFieldRow title={t("speech.voiceTitle")} description={t("speech.voiceDescription")}>
             <Select value={settings.speechVoice} onValueChange={handleEnum("chat.speech_voice")} disabled={loading || speechCapabilities.tts.length === 0}>
               <SelectTrigger size="sm"><SelectValue /></SelectTrigger>

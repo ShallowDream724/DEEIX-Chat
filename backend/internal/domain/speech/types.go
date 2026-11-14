@@ -9,16 +9,17 @@ import (
 )
 
 var (
-	ErrUnavailable  = errors.New("speech provider unavailable")
-	ErrInvalid      = errors.New("invalid speech request")
-	ErrForbidden    = errors.New("speech access denied")
-	ErrNotFound     = errors.New("speech resource not found")
-	ErrLimited      = errors.New("speech capacity exceeded")
-	ErrUncertain    = errors.New("speech upstream outcome uncertain")
-	ErrConflict     = errors.New("speech request identity conflict")
-	ErrBackpressure = errors.New("speech audio buffer full")
-	ErrExpired      = errors.New("speech audio expired")
-	ErrRejected     = errors.New("speech request rejected before audio was returned")
+	ErrUnavailable     = errors.New("speech provider unavailable")
+	ErrInvalid         = errors.New("invalid speech request")
+	ErrForbidden       = errors.New("speech access denied")
+	ErrNotFound        = errors.New("speech resource not found")
+	ErrLimited         = errors.New("speech capacity exceeded")
+	ErrUncertain       = errors.New("speech upstream outcome uncertain")
+	ErrConflict        = errors.New("speech request identity conflict")
+	ErrBackpressure    = errors.New("speech audio buffer full")
+	ErrExpired         = errors.New("speech audio expired")
+	ErrRejected        = errors.New("speech request rejected before audio was returned")
+	ErrProviderChanged = errors.New("administrator selected a different speech input provider")
 )
 
 type Voice struct {

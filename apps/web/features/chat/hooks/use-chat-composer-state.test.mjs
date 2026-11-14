@@ -61,6 +61,8 @@ function harness() {
 
 test("a stale upload callback saves only its original conversation while preserving the active draft and stable file IDs", () => {
   const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  globalThis.document = new EventTarget();
   const storage = new Map();
   const timers = new Map();
   let nextTimer = 0;
@@ -102,11 +104,13 @@ test("a stale upload callback saves only its original conversation while preserv
     h.render("a"); h.settle();
     assert.deepEqual(h.current().attachments, []);
     assert.equal(h.current().draft, "");
-  } finally { globalThis.window = previousWindow; }
+  } finally { globalThis.window = previousWindow; globalThis.document = previousDocument; }
 });
 
 test("upload completion and navigation in the same render batch retain the new-chat attachment", () => {
   const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  globalThis.document = new EventTarget();
   const storage = new Map();
   const timers = new Map();
   let nextTimer = 0;
@@ -150,5 +154,29 @@ test("upload completion and navigation in the same render batch retain the new-c
     h.render(null); h.settle();
     assert.equal(h.current().draft, "Just edited");
     assert.deepEqual(h.current().attachments.map((item) => item.fileID), ["background-audio", "before-passive-effect"]);
-  } finally { globalThis.window = previousWindow; }
+  } finally { globalThis.window = previousWindow; globalThis.document = previousDocument; }
+});
+
+test("speech finalization and pagehide flush the authoritative draft before React effects or debounce, including batched attachments", () => {
+  const previousWindow = globalThis.window; const previousDocument = globalThis.document;
+  const storage = new Map(); const timers = new Map(); let nextTimer = 0;
+  globalThis.document = new EventTarget();
+  globalThis.window = Object.assign(new EventTarget(), {
+    localStorage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: (key) => storage.delete(key) },
+    setTimeout: (callback) => { const id = ++nextTimer; timers.set(id, callback); return id; }, clearTimeout: (id) => timers.delete(id),
+  });
+  const saved = () => JSON.parse(storage.get("deeix-chat:chat-composer:v2:user%3A1"));
+  try {
+    const h = harness(); h.render(); h.settle();
+    h.current().setDraft("Final recognition before render"); h.current().flushDraft();
+    assert.equal(saved().a.draft, "Final recognition before render");
+    h.current().setAttachments([attachment("batched-file")]); h.current().setDraft("Page leaving immediately");
+    window.dispatchEvent(new Event("pagehide"));
+    assert.equal(saved().a.draft, "Page leaving immediately"); assert.equal(saved().a.attachments[0].fileID, "batched-file");
+    const outgoingFlush = h.current().flushDraft;
+    h.render("b"); h.settle(); h.current().setDraft("Draft B"); h.current().flushDraft();
+    outgoingFlush("Final draft A");
+    assert.equal(saved().a.draft, "Final draft A"); assert.equal(saved().b.draft, "Draft B");
+    h.render("a"); h.settle(); assert.equal(h.current().draft, "Final draft A");
+  } finally { globalThis.window = previousWindow; globalThis.document = previousDocument; }
 });

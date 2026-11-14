@@ -3,10 +3,11 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { listAdminSettingsByNamespace, patchAdminSettings } from "@/features/admin/api/settings";
-import { buildSpeechSettingsPatch, flattenSpeechSettings, speechSettingsFromResponse } from "@/features/admin/model/speech-settings";
+import { buildSpeechSettingsPatch, flattenSpeechSettings, speechSettingsFromResponse, speechSettingsMissingAPIKey } from "@/features/admin/model/speech-settings";
 import { resolveAdminErrorMessage } from "@/features/admin/utils/admin-error";
 import type { SettingItem } from "@/shared/api/settings-types";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
+import { invalidateSpeechCapabilities } from "@/shared/hooks/use-speech-capabilities";
 
 export function useAdminSpeechSettings() {
   const t = useTranslations("adminSpeech");
@@ -39,21 +40,23 @@ export function useAdminSpeechSettings() {
   React.useEffect(() => { void load(); }, [load]);
 
   const patches = React.useMemo(() => buildSpeechSettingsPatch(values, saved), [values, saved]);
+  const missingAPIKey = speechSettingsMissingAPIKey(values, items);
   const dirtyKeys = React.useMemo(() => new Set(patches.map((item) => item.key)), [patches]);
   const save = React.useCallback(async () => {
-    if (!patches.length || saving || loading || error) return;
+    if (!patches.length || saving || loading || error || missingAPIKey) return;
     setSaving(true);
     try {
       const token = await resolveAccessToken();
       if (!token) throw new Error(t("sessionExpired"));
       applyItems(speechSettingsFromResponse(await patchAdminSettings(token, { items: patches })));
+      invalidateSpeechCapabilities();
       toast.success(t("saved"));
     } catch (cause) {
       toast.error(t("saveFailed"), { description: resolveAdminErrorMessage(cause, t("unknownError")) });
     } finally {
       setSaving(false);
     }
-  }, [applyItems, patches, saving, loading, error, t]);
+  }, [applyItems, patches, saving, loading, error, missingAPIKey, t]);
 
-  return { loading, saving, error, items, values, setValues, dirtyKeys, load, save };
+  return { loading, saving, error, items, values, setValues, dirtyKeys, missingAPIKey, load, save };
 }

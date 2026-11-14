@@ -96,6 +96,15 @@ func (s *Service) Seed(ctx context.Context) error {
 	}
 	existing, duplicates := resolveDuplicateSettings(existing)
 	s.repairDuplicateSettings(ctx, duplicates)
+	if err := s.migrateSpeechInputProvider(ctx, existing); err != nil {
+		return err
+	}
+	// Reload migrated values before seeding so defaults cannot overwrite the
+	// explicit legacy conversion.
+	existing, err = s.repo.ListAll(ctx)
+	if err != nil {
+		return err
+	}
 	items, err := s.encryptSettingsForStorage(missingSettings(defaultSettings(), existing))
 	if err != nil {
 		return err
@@ -402,6 +411,9 @@ func (s *Service) BatchUpdate(ctx context.Context, patches []PatchItem) (map[str
 		return nil, err
 	}
 	if err := s.validateBillingPaymentSettings(ctx, patches); err != nil {
+		return nil, err
+	}
+	if err := s.validateSpeechConfiguration(ctx, patches); err != nil {
 		return nil, err
 	}
 	items, err := s.preparePatchItemsForStorage(patches)

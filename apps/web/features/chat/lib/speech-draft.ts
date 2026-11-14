@@ -11,7 +11,7 @@ export class SpeechDraftSegment {
     this.rendered = draft;
   }
   reconcile(draft: string) {
-    if (draft === this.rendered) return;
+    if (draft === this.rendered) return false;
     const old = this.rendered;
     let start = 0;
     while (start < old.length && start < draft.length && old[start] === draft[start]) start++;
@@ -29,6 +29,7 @@ export class SpeechDraftSegment {
       this.detached = true;
     }
     this.rendered = draft;
+    return true;
   }
   update(text: string) {
     if (this.detached) return this.rendered;
@@ -46,4 +47,5 @@ export class SpeechDraftSegment {
     const prefix = !this.detached && this.insertedSeparator && this.prefix.endsWith("\n") ? this.prefix.slice(0, -1) : this.prefix;
     return prefix + this.suffix;
   }
+  get selectionEnd(): number | null { return this.detached || !this.text ? null : this.prefix.length + this.text.length; }
 }

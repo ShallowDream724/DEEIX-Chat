@@ -3,10 +3,9 @@ package config
 // SpeechConfig is copied with the runtime snapshot so each speech request uses
 // one consistent set of service limits, credentials and prices.
 type SpeechConfig struct {
-	Enabled                  bool
-	DoubaoEnabled            bool
-	WeTypeEnabled            bool
-	DeepSeekASREnabled       bool
+	InputProvider            string
+	ChargeASR                bool
+	ChargeTTS                bool
 	DeepSeekTTSEnabled       bool
 	DeepSeekBaseURL          string
 	DeepSeekAPIKey           string

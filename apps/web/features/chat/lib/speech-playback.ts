@@ -16,7 +16,7 @@ export function getServerSpeechPlaybackState() { return idle; }
 export function isSpeechPlaybackAvailable() { return config.enabled; }
 function update(next: SpeechPlaybackState) { state = next; for (const listener of listeners) listener(); }
 export function configureSpeechPlayback(next: typeof config) {
-  if (config.scope !== next.scope || config.user !== next.user) stopSpeechPlayback();
+  if ((config.enabled && !next.enabled) || config.scope !== next.scope || config.user !== next.user) stopSpeechPlayback();
   if (config.user !== next.user) cache.clear();
   config = next;
   update({ ...state });

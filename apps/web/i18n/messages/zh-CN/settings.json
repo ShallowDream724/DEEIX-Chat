@@ -353,10 +353,7 @@
   "chatPage": {
     "speech": {
       "sectionTitle": "语音",
-      "inputTitle": "语音输入",
-      "inputDescription": "选择语音输入使用的识别来源。",
-      "browser": "浏览器语音输入",
-      "unavailable": "当前不可用",
+      "unavailable": "当前无法使用朗读回复。",
       "autoReadTitle": "自动朗读回复",
       "autoReadDescription": "新回复完成后自动朗读。",
       "voiceTitle": "朗读音色",

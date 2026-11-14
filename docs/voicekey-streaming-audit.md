@@ -34,3 +34,9 @@
 - 追加读取桌面调度器与设置：`settings.rs` 默认静音自动结束为 1.5 秒，可设 1–5 秒；`controller.rs:951-963` 对一直未开口使用 8 秒门槛，`974-1001` 在停录后才开始 15 秒识别完成等待。这些都不是连续讲话的录音总时长上限，当前所查路径未发现总长常量。见 [调度器](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/app/src-tauri/src/controller.rs#L951-L1001)、[设置](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/app/src-tauri/src/settings.rs#L205)。
 - 补查其余七个云端引擎的时限：千问/讯飞有停录后定稿等待，百度有上传/接收任务结束等待，千问 App 有预取 token 缓存 TTL，叭哥说有鉴权/握手等待，Chatterfly 有随出字重置的 30 秒空闲等待。所查实现未给出可作为供应商保证的固定录音总长；token 有效期、空闲超时和定稿等待均不能替代该限制。
 - 本站已采用独立 Go 协议实现，未引入 Rust 服务或客户端模型依赖；前端 Opus 编码优先 WebCodecs，不支持时按需加载 WASM。TTS 首批接入 DeepSeek。
+
+## 标点与原文保留参数复核
+
+- 豆包的 StartSession 明确发送 `enable_punctuation:true`，同时设置 `enable_asr_twopass:true`、`enable_asr_threepass:false` 和 `input_mode:"stream"`；这些是参考实现固定发送的参数，不能把二遍开关解释为已验证的“关闭智能整理”。本站保留标点与原生 ASR 流分支，以 `stream_asr_finish` 和 `nonstream_result` 区分字面识别及整理阶段，不暴露额外 AI 改写选项。见 [豆包请求参数](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/crates/core/src/doubao.rs#L169-L181)。
+- 微信请求固定将 protobuf 字段 22、23、24 设为 1，但所查源码没有为它们提供足以确认“标点”或“禁用整理”的语义说明；不能按编号猜测产品开关。返回普通文本字段 4 与 polished 字段 14 分开，VoiceKey 默认优先 polished。本站按保留原话要求仅采用普通文本，结束后只有 polished 时安全失败并保留已有普通 partial。见 [微信请求字段](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/crates/core/src/wetype.rs#L225-L251)、[返回文本选择](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/crates/core/src/wetype.rs#L113-L124)。
+- 桌面设置里的静音、流式和实时文字选项控制录音或显示；Jev 是另一个默认关闭的多候选选择器，均不构成两家输入法可验证的自动标点/整理开关。见 [桌面设置](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/app/src-tauri/src/settings.rs#L97-L135)、[Jev 默认配置](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/crates/core/src/jev.rs#L6-L20)。

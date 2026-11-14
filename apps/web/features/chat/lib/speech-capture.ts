@@ -1,4 +1,30 @@
-export type SpeechCapture = { stop: () => Promise<void>; cancel: () => void };
+export type SpeechCapture = { track: MediaStreamTrack; stop: () => Promise<void>; cancel: () => void };
+/** The optional start(track) overload has no safe probe; restrict it to the documented desktop Chrome implementation. */
+export function supportsBrowserRecognitionTrack() {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  if (/Android|iPhone|iPad|iPod|Mobile|\bwv\b|Edg\/|OPR\/|Electron|QtWebEngine|SamsungBrowser|UCBrowser|YaBrowser|HeadlessChrome/.test(ua)
+    || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1)) return false;
+  // Type assertion: UA-CH is available in Chromium but is absent from the standard Navigator typing.
+  const hints = (navigator as Navigator & { userAgentData?: { brands: { brand: string; version: string }[]; mobile: boolean; platform: string } }).userAgentData;
+  if (hints) return !hints.mobile && ["Windows", "macOS", "Linux", "Chrome OS"].includes(hints.platform)
+    && hints.brands.some((brand) => brand.brand === "Google Chrome" && Number.parseInt(brand.version, 10) >= 135);
+  const version = /\bChrome\/(\d+)/.exec(ua);
+  return navigator.vendor === "Google Inc." && /Windows NT|Macintosh|X11|CrOS/.test(ua) && Boolean(version && Number(version[1]) >= 135);
+}
+export type SpeechCaptureError = "audioUnavailable" | "interrupted" | "permissionDenied";
+export async function watchMicrophonePermission(signal: AbortSignal, onDenied: () => void) {
+  if (!navigator.permissions || signal.aborted) return;
+  try {
+    // Type assertion: Chromium supports microphone permissions although lib.dom's PermissionName omits it.
+    const permission = await navigator.permissions.query({ name: "microphone" as PermissionName });
+    if (signal.aborted) return;
+    const changed = () => { if (permission.state === "denied" && !signal.aborted) onDenied(); };
+    permission.addEventListener("change", changed);
+    signal.addEventListener("abort", () => permission.removeEventListener("change", changed), { once: true });
+    changed();
+  } catch { /* Permission observation is optional on browsers without this query. */ }
+}
 export function prepareSpeechCaptureContext() {
   const context = new AudioContext();
   void context.resume().catch(() => {});
@@ -9,41 +35,98 @@ export async function startSpeechCapture(options: {
   maxSamples: number;
   onFrame: (frame: Float32Array) => void;
   onLimit: () => void;
-  onError: () => void;
+  onError: (error: SpeechCaptureError) => void;
   context?: AudioContext;
+  signal?: AbortSignal;
 }): Promise<SpeechCapture> {
+  if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
   const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
   let context: AudioContext | undefined = options.context;
   let node: AudioWorkletNode | undefined;
   let source: MediaStreamAudioSourceNode | undefined;
   let stopping = false;
+  let released = false;
+  let armed = false;
+  const lifetime = new AbortController();
+  const disposers: (() => void)[] = [];
   let resolveStopped: (() => void) | undefined;
   const stopped = new Promise<void>((resolve) => { resolveStopped = resolve; });
   const release = () => {
-    source?.disconnect();
-    node?.disconnect();
+    if (released) return;
+    released = true;
+    lifetime.abort();
+    for (const dispose of disposers) dispose();
+    if (node) { node.port.onmessage = null; node.onprocessorerror = null; }
+    try { source?.disconnect(); } catch {}
+    try { node?.disconnect(); } catch {}
     for (const track of stream.getTracks()) track.stop();
     if (context?.state !== "closed") void context?.close().catch(() => {});
   };
+  const interrupted = (error: SpeechCaptureError) => {
+    if (released || stopping) return;
+    stopping = true;
+    release();
+    resolveStopped?.();
+    options.onError(error);
+  };
   try {
+    if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    const track = stream.getAudioTracks()[0];
+    if (!track) throw new DOMException("No microphone track", "NotFoundError");
+    const abort = () => { stopping = true; release(); resolveStopped?.(); };
+    options.signal?.addEventListener("abort", abort, { once: true });
+    disposers.push(() => options.signal?.removeEventListener("abort", abort));
     context ??= new AudioContext();
     await context.audioWorklet.addModule("/speech-capture-worklet.js");
+    if (released || options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
     source = context.createMediaStreamSource(stream);
     node = new AudioWorkletNode(context, "speech-capture", { processorOptions: { maxSamples: options.maxSamples } });
     node.port.onmessage = ({ data }: MessageEvent<{ type: string; frame?: Float32Array }>) => {
-      if (data.type === "frame" && data.frame) { options.onFrame(data.frame); node?.port.postMessage("ack"); }
-      if (data.type === "error") { release(); options.onError(); }
+      if (released) return;
+      if (data.type === "frame" && data.frame) {
+        try { options.onFrame(data.frame); if (!released) node?.port.postMessage("ack"); }
+        catch { interrupted("audioUnavailable"); }
+      }
+      if (data.type === "error") interrupted("audioUnavailable");
       if (data.type === "stopped") {
         resolveStopped?.();
         release();
         if (!stopping) options.onLimit();
       }
     };
+    const processorError = () => interrupted("audioUnavailable");
+    node.addEventListener("processorerror", processorError);
+    disposers.push(() => node?.removeEventListener("processorerror", processorError));
     source.connect(node);
     // The processor has no audio output; connecting keeps its render clock alive.
     node.connect(context.destination);
     await context.resume();
+    if (released || options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
+    armed = true;
+    const stateChanged = () => { if (armed && context?.state !== "running") interrupted("interrupted"); };
+    context.addEventListener("statechange", stateChanged);
+    disposers.push(() => context?.removeEventListener("statechange", stateChanged));
+    for (const track of stream.getAudioTracks()) {
+      const ended = () => interrupted("interrupted");
+      const muted = () => interrupted("interrupted");
+      track.addEventListener("ended", ended); track.addEventListener("mute", muted);
+      disposers.push(() => { track.removeEventListener("ended", ended); track.removeEventListener("mute", muted); });
+      if (track.readyState === "ended" || track.muted) interrupted("interrupted");
+    }
+    const deviceChanged = async () => {
+      const deviceID = stream.getAudioTracks()[0]?.getSettings().deviceId;
+      if (!deviceID || released || stopping) return;
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        if (!released && !stopping && !devices.some((device) => device.kind === "audioinput" && device.deviceId === deviceID)) interrupted("interrupted");
+      } catch { if (!released && !stopping) interrupted("audioUnavailable"); }
+    };
+    navigator.mediaDevices.addEventListener("devicechange", deviceChanged);
+    disposers.push(() => navigator.mediaDevices.removeEventListener("devicechange", deviceChanged));
+    void watchMicrophonePermission(lifetime.signal, () => interrupted("permissionDenied"));
+    stateChanged();
     return {
+      track,
       stop: async () => {
         stopping = true;
         node?.port.postMessage("stop");

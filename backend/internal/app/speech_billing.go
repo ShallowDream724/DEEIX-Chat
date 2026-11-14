@@ -44,13 +44,17 @@ func (a speechBillingAdapter) Authorize(ctx context.Context, access domainspeech
 		return domainspeech.BillingTicket{}, domainspeech.ErrForbidden
 	}
 	cfg := a.runtime.Snapshot()
-	if !cfg.Speech.Enabled {
-		return domainspeech.BillingTicket{}, domainspeech.ErrUnavailable
-	}
 	quote := billing.MeteredServiceQuote{Provider: access.Provider, EstimatedQuantity: access.Units, Quantum: 1}
 	var cny float64
 	switch access.Operation {
 	case "asr":
+		selected := strings.TrimSpace(cfg.Speech.InputProvider)
+		if selected == "" {
+			selected = "browser"
+		}
+		if access.Provider != selected || selected == "browser" {
+			return domainspeech.BillingTicket{}, domainspeech.ErrProviderChanged
+		}
 		maxSeconds := cfg.Speech.MaxRecordingSeconds
 		if maxSeconds <= 0 {
 			maxSeconds = 120
@@ -64,18 +68,9 @@ func (a speechBillingAdapter) Authorize(ctx context.Context, access domainspeech
 		quote.Unit, quote.RateQuantity, quote.Quantum = "millisecond", 3_600_000, 1000
 		quote.ServiceName = "语音输入"
 		switch access.Provider {
-		case "deepseek":
-			if !cfg.Speech.DeepSeekASREnabled {
-				return domainspeech.BillingTicket{}, domainspeech.ErrUnavailable
-			}
-			cny = cfg.Speech.ASRCNYPerHour
-		case "doubao-ime":
-			if !cfg.Speech.DoubaoEnabled {
-				return domainspeech.BillingTicket{}, domainspeech.ErrUnavailable
-			}
-		case "wetype":
-			if !cfg.Speech.WeTypeEnabled {
-				return domainspeech.BillingTicket{}, domainspeech.ErrUnavailable
+		case "deepseek", "doubao-ime", "wetype":
+			if cfg.Speech.ChargeASR {
+				cny = cfg.Speech.ASRCNYPerHour
 			}
 		default:
 			return domainspeech.BillingTicket{}, domainspeech.ErrUnavailable
@@ -85,7 +80,9 @@ func (a speechBillingAdapter) Authorize(ctx context.Context, access domainspeech
 			return domainspeech.BillingTicket{}, domainspeech.ErrUnavailable
 		}
 		quote.Unit, quote.RateQuantity, quote.ServiceName = "character", 10000, "朗读回复"
-		cny = cfg.Speech.TTSCNYPer10000Characters
+		if cfg.Speech.ChargeTTS {
+			cny = cfg.Speech.TTSCNYPer10000Characters
+		}
 	default:
 		return domainspeech.BillingTicket{}, domainspeech.ErrInvalid
 	}

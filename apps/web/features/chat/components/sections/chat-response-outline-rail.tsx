@@ -13,6 +13,9 @@ import { useScrollFadeFallbackRef } from "@/shared/hooks/use-scroll-fade-fallbac
 import { useChatMediaRailFeedback } from "@/features/chat/hooks/use-chat-media-rail-feedback";
 
 const OUTLINE_GUIDE_OFFSET_PX = 48;
+const OUTLINE_RAIL_WIDTH_PX = 24;
+const OUTLINE_MIN_CHAT_WIDTH_PX = 480;
+const OUTLINE_WIDTH_HYSTERESIS_PX = 16;
 
 type ResponseOutlineHeading = {
   label: string;
@@ -130,9 +133,13 @@ function resolveActiveAssistantMessage(
 
 function ChatResponseOutlineRailComponent({
   boundaryRef,
+  contentRef,
+  minimumRightInset = 0,
   disabled = false,
 }: {
   boundaryRef: React.RefObject<HTMLDivElement | null>;
+  contentRef: React.RefObject<HTMLDivElement | null>;
+  minimumRightInset?: number;
   disabled?: boolean;
 }) {
   const t = useTranslations("chat.messages");
@@ -143,6 +150,9 @@ function ChatResponseOutlineRailComponent({
   const [hoveredHeadingIndex, setHoveredHeadingIndex] = React.useState<number | null>(null);
   const [outlineOpen, setOutlineOpen] = React.useState(false);
   const [railOverflowing, setRailOverflowing] = React.useState(false);
+  const [railSpaceAvailable, setRailSpaceAvailable] = React.useState(false);
+  const railSpaceAvailableRef = React.useRef(false);
+  const railRightInsetRef = React.useRef(8);
   const headingElementsRef = React.useRef<HTMLElement[]>([]);
   const headingSignatureRef = React.useRef("");
   const activeMessageRef = React.useRef<HTMLElement | null>(null);
@@ -158,7 +168,45 @@ function ChatResponseOutlineRailComponent({
   const menuScrollFadeRef = useScrollFadeFallbackRef(menuViewportRef);
   const menuItemRefs = React.useRef(new Map<number, HTMLButtonElement>());
   const visibleMessageIDsRef = React.useRef(visibleMessageIds);
-  useChatMediaRailFeedback(railViewportRef, disabled ? "" : headingSignatureRef.current);
+  useChatMediaRailFeedback(railViewportRef, disabled || !railSpaceAvailable ? "" : headingSignatureRef.current);
+  const attachRailViewport = React.useCallback((node: HTMLElement | null) => {
+    railViewportRef.current = node;
+    if (node) node.style.right = `${railRightInsetRef.current}px`;
+  }, []);
+
+  React.useLayoutEffect(() => {
+    const viewport = boundaryRef.current;
+    const content = contentRef.current;
+    if (!viewport || !content) return;
+    let frame: number | null = null;
+    const measureSpace = () => {
+      frame = null;
+      const viewportRect = viewport.getBoundingClientRect();
+      const gutter = viewportRect.right - content.getBoundingClientRect().right;
+      const minimumWidth = OUTLINE_MIN_CHAT_WIDTH_PX - (railSpaceAvailableRef.current ? OUTLINE_WIDTH_HYSTERESIS_PX : 0);
+      const available = window.innerWidth >= 1024 && viewportRect.width >= minimumWidth && gutter >= OUTLINE_RAIL_WIDTH_PX + minimumRightInset - 0.5;
+      const inset = Math.max(minimumRightInset, Math.min(8, Math.floor(gutter - OUTLINE_RAIL_WIDTH_PX)));
+      if (inset !== railRightInsetRef.current) {
+        railRightInsetRef.current = inset;
+        if (railViewportRef.current) railViewportRef.current.style.right = `${inset}px`;
+      }
+      if (available !== railSpaceAvailableRef.current) {
+        railSpaceAvailableRef.current = available;
+        setRailSpaceAvailable(available);
+      }
+    };
+    const scheduleMeasure = () => {
+      if (frame === null) frame = window.requestAnimationFrame(measureSpace);
+    };
+    measureSpace();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(scheduleMeasure);
+    observer?.observe(viewport);
+    observer?.observe(content);
+    return () => {
+      observer?.disconnect();
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, [boundaryRef, contentRef, minimumRightInset]);
 
   const clearNavigationTarget = React.useCallback(() => {
     navigationTargetRef.current = null;
@@ -215,7 +263,7 @@ function ChatResponseOutlineRailComponent({
   const scanOutline = React.useCallback(() => {
     scanFrameRef.current = null;
     const viewport = boundaryRef.current;
-    if (!viewport || disabled) {
+    if (!viewport || disabled || !railSpaceAvailable) {
       clearOutline();
       return;
     }
@@ -278,7 +326,7 @@ function ChatResponseOutlineRailComponent({
       setHeadings(visibleHeadings);
     }
     updateActiveHeading(guideY);
-  }, [boundaryRef, clearOutline, disabled, updateActiveHeading]);
+  }, [boundaryRef, clearOutline, disabled, railSpaceAvailable, updateActiveHeading]);
 
   const scheduleOutlineScan = React.useCallback(() => {
     if (scanFrameRef.current !== null) {
@@ -567,7 +615,7 @@ function ChatResponseOutlineRailComponent({
     [boundaryRef, clearNavigationTarget, scheduleNavigationSettle, scrollToMessage],
   );
 
-  if (disabled || headings.length < 2) {
+  if (disabled || !railSpaceAvailable || headings.length < 2) {
     return null;
   }
 
@@ -586,7 +634,7 @@ function ChatResponseOutlineRailComponent({
     >
       <HoverCardTrigger asChild>
         <nav
-          ref={railViewportRef}
+          ref={attachRailViewport}
           className="pointer-events-auto absolute bottom-3 right-2 top-3 z-30 hidden w-6 overflow-y-auto overscroll-contain text-muted-foreground/55 [scrollbar-width:none] lg:block [&::-webkit-scrollbar]:hidden"
           aria-label={t("responseOutline")}
           data-screenshot-exclude="true"
@@ -613,7 +661,7 @@ function ChatResponseOutlineRailComponent({
                     railItemRefs.current.delete(index);
                   }}
                   type="button"
-                  className="flex h-2 w-6 items-center justify-end rounded-sm focus-visible:outline-none"
+                  className="flex h-2 w-6 items-center justify-end rounded-sm pr-1 focus-visible:outline-none"
                   aria-current={active ? "location" : undefined}
                   aria-label={t("jumpToResponseSection", { title: item.label })}
                   onMouseEnter={() => setHoveredHeadingIndex(index)}
@@ -640,8 +688,10 @@ function ChatResponseOutlineRailComponent({
         side="left"
         align="center"
         sideOffset={8}
-        avoidCollisions={false}
-        className="z-30 flex max-h-[min(68vh,34rem)] w-72 flex-col overflow-hidden rounded-lg border-0 bg-sidebar-accent p-1 text-foreground shadow-none"
+        collisionBoundary={boundaryRef.current}
+        collisionPadding={8}
+        avoidCollisions
+        className="z-30 flex max-h-[min(68vh,34rem,var(--radix-hover-card-content-available-height))] w-72 max-w-[var(--radix-hover-card-content-available-width)] flex-col overflow-hidden rounded-lg border-0 bg-sidebar-accent p-1 text-foreground shadow-none"
         role="navigation"
         aria-label={t("responseOutline")}
         data-screenshot-exclude="true"

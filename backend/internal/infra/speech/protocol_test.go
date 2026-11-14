@@ -320,6 +320,7 @@ func TestWeTypeEncryptedStreamingProtocol(t *testing.T) {
 	server := httptest.NewServer(websocket.Handler(func(ws *websocket.Conn) {
 		defer ws.Close()
 		var key []byte
+		polishedOnlyFinal := strings.Contains(ws.Request().URL.RawQuery, "polished_only")
 		for {
 			raw, e := recvIME(ws, 2*time.Second)
 			if e != nil {
@@ -376,6 +377,9 @@ func TestWeTypeEncryptedStreamingProtocol(t *testing.T) {
 					}
 					result := proto{}.s(4, "ordinary text")
 					if integer(inner, 6) == 1 {
+						if polishedOnlyFinal {
+							result = proto{}
+						}
 						result = result.s(14, "polished text")
 					}
 					responseBody, _ = aesEncrypt(key, snappyEncode(proto{}.b(1, result)))
@@ -414,8 +418,27 @@ func TestWeTypeEncryptedStreamingProtocol(t *testing.T) {
 	}
 	close(frames)
 	r := <-done
-	if e = <-errs; e != nil || r.Text != "polished text" || batches.Load() != 1 {
+	if e = <-errs; e != nil || r.Text != "ordinary text" || batches.Load() != 1 {
 		t.Fatalf("WeType final %+v %v batches=%d", r, e, batches.Load())
+	}
+	plainOnly := NewWeType(IMEConfig{WSURL: "ws" + strings.TrimPrefix(server.URL, "http") + "?polished_only", Identities: store})
+	otherFrames := make(chan []byte, 6)
+	for i := 0; i < 6; i++ {
+		otherFrames <- []byte{0x98, 1}
+	}
+	close(otherFrames)
+	var partials []string
+	outcome, e := plainOnly.Stream(t.Context(), domain.StreamRequest{UserID: 1, SessionID: "plain-policy"}, otherFrames, func(e domain.Event) error { partials = append(partials, e.Text); return nil })
+	if !errors.Is(e, domain.ErrUncertain) || outcome.Final {
+		t.Fatal("polished-only final was presented as literal ASR", outcome, e)
+	}
+	if len(partials) == 0 {
+		t.Fatal("ordinary partial was not retained")
+	}
+	for _, text := range partials {
+		if text != "ordinary text" {
+			t.Fatal("polished rewrite leaked into ordinary partial", text)
+		}
 	}
 }
 func TestDoubaoCandidateSnapshotsAndIndexedCorrections(t *testing.T) {

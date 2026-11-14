@@ -18,10 +18,11 @@ import (
 )
 
 type Config struct {
-	MaxRecordingSeconds  int
-	MaxConcurrentPerUser int
-	MaxConcurrent        int
-	MaxAudioBytes        int64
+	SelectedInputProvider string
+	MaxRecordingSeconds   int
+	MaxConcurrentPerUser  int
+	MaxConcurrent         int
+	MaxAudioBytes         int64
 }
 
 const APIBasePath = "/api/v1"
@@ -37,6 +38,7 @@ type Service struct {
 	active    map[uint]int
 	total     int
 	sessions  map[string]*session
+	asrClaims map[string]struct{}
 	jobs      map[string]*job
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -57,6 +59,8 @@ type session struct {
 	maxDurationMS int64
 	maxBytes      int64
 	timer         *time.Timer
+	ctx           context.Context
+	cancel        context.CancelFunc
 }
 type job struct {
 	done    chan struct{}
@@ -69,10 +73,13 @@ type SessionInput struct {
 	DraftID    string `json:"draft_id"`
 }
 type Session struct {
-	ID            string `json:"id"`
-	WSURL         string `json:"ws_url"`
-	MaxDurationMS int64  `json:"max_duration_ms"`
-	MaxBytes      int64  `json:"max_bytes"`
+	ID            string    `json:"id"`
+	WSURL         string    `json:"ws_url"`
+	MaxDurationMS int64     `json:"max_duration_ms"`
+	MaxBytes      int64     `json:"max_bytes"`
+	Provider      string    `json:"provider"`
+	SessionToken  string    `json:"session_token,omitempty"`
+	ExpiresAt     time.Time `json:"expires_at"`
 }
 type TTSInput struct {
 	Provider  string `json:"provider"`
@@ -89,6 +96,7 @@ type TTSResult struct {
 	CacheHit bool   `json:"cache_hit"`
 }
 type Capabilities struct {
+	SelectedInputProvider  string              `json:"selected_input_provider"`
 	ASR                    []domain.Capability `json:"asr"`
 	TTS                    []domain.Capability `json:"tts"`
 	MaxRecordingDurationMS int64               `json:"max_recording_duration_ms"`
@@ -96,7 +104,7 @@ type Capabilities struct {
 
 func NewService(cfg func() Config, providers map[string]domain.Provider, policy domain.Authorizer, meter domain.Meter, store domain.Store) *Service {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Service{cfg: cfg, providers: providers, policy: policy, meter: meter, store: store, active: map[uint]int{}, sessions: map[string]*session{}, jobs: map[string]*job{}, ctx: ctx, cancel: cancel}
+	return &Service{cfg: cfg, providers: providers, policy: policy, meter: meter, store: store, active: map[uint]int{}, sessions: map[string]*session{}, asrClaims: map[string]struct{}{}, jobs: map[string]*job{}, ctx: ctx, cancel: cancel}
 }
 func (s *Service) Close() error {
 	s.closeOnce.Do(func() {
@@ -138,6 +146,9 @@ func (s *Service) config() Config {
 	if c.MaxRecordingSeconds <= 0 {
 		c.MaxRecordingSeconds = 120
 	}
+	if c.SelectedInputProvider == "" {
+		c.SelectedInputProvider = "browser"
+	}
 	if c.MaxConcurrentPerUser <= 0 {
 		c.MaxConcurrentPerUser = 2
 	}
@@ -157,17 +168,25 @@ func (s *Service) provider(id string) domain.Provider {
 	return p
 }
 func (s *Service) Capabilities() Capabilities {
-	c := Capabilities{ASR: []domain.Capability{}, TTS: []domain.Capability{}, MaxRecordingDurationMS: s.maxDuration(0)}
+	cfg := s.config()
+	maximum := int64(cfg.MaxRecordingSeconds) * 1000
+	if cfg.SelectedInputProvider == "deepseek" && maximum > 120000 {
+		maximum = 120000
+	}
+	c := Capabilities{SelectedInputProvider: cfg.SelectedInputProvider, ASR: []domain.Capability{}, TTS: []domain.Capability{}, MaxRecordingDurationMS: maximum}
+	if cfg.SelectedInputProvider == "browser" {
+		c.ASR = append(c.ASR, domain.Capability{ID: "browser", Name: "浏览器", Streaming: true, Formats: []string{}, MaxDurationMS: maximum})
+	}
 	for _, id := range []string{"deepseek", "doubao-ime", "wetype"} {
 		p := s.provider(id)
 		if p == nil {
 			continue
 		}
-		if a := p.ASRCapability(); a != nil {
+		if a := p.ASRCapability(); a != nil && id == cfg.SelectedInputProvider {
 			v := *a
-			v.MaxDurationMS = s.maxDuration(v.MaxDurationMS)
-			if v.MaxBytes == 0 || v.MaxBytes > s.config().MaxAudioBytes {
-				v.MaxBytes = s.config().MaxAudioBytes
+			v.MaxDurationMS = maximum
+			if v.MaxBytes == 0 || v.MaxBytes > cfg.MaxAudioBytes {
+				v.MaxBytes = cfg.MaxAudioBytes
 			}
 			c.ASR = append(c.ASR, v)
 		}
@@ -249,30 +268,60 @@ func WeightedCharacters(text string) int64 {
 }
 
 func (s *Service) CreateSession(ctx context.Context, user uint, in SessionInput) (Session, error) {
+	cfg := s.config()
+	if in.Provider == "" {
+		in.Provider = cfg.SelectedInputProvider
+	}
+	if in.Provider != cfg.SelectedInputProvider || in.Provider == "browser" {
+		return Session{}, domain.ErrProviderChanged
+	}
 	p := s.provider(in.Provider)
-	if p == nil || p.ASRCapability() == nil || !p.ASRCapability().Streaming {
+	if p == nil || p.ASRCapability() == nil {
 		return Session{}, domain.ErrUnavailable
 	}
-	if in.Format != "opus" || in.SampleRate != 16000 || strings.TrimSpace(in.DraftID) == "" || len(in.DraftID) > 256 {
+	streaming := p.ASRCapability().Streaming
+	if in.Format == "" && !streaming {
+		in.Format = "wav"
+	}
+	if in.SampleRate == 0 {
+		in.SampleRate = 16000
+	}
+	validFormat := false
+	for _, format := range p.ASRCapability().Formats {
+		if in.Format == format {
+			validFormat = true
+		}
+	}
+	if !validFormat || (streaming && in.Format != "opus") || in.SampleRate != 16000 || strings.TrimSpace(in.DraftID) == "" || len(in.DraftID) > 256 {
 		return Session{}, domain.ErrInvalid
 	}
 	id := uuid.NewString()
-	max := s.maxDuration(p.ASRCapability().MaxDurationMS)
+	max := int64(cfg.MaxRecordingSeconds) * 1000
+	if hard := p.ASRCapability().MaxDurationMS; hard > 0 && hard < max {
+		max = hard
+	}
 	release, ticket, err := s.reserve(ctx, domain.Access{UserID: user, OperationID: id, Operation: "asr", Provider: in.Provider, Units: max})
 	if err != nil {
 		return Session{}, err
 	}
 	wsTicket := uuid.NewString() + uuid.NewString()
+	lifetime := 30 * time.Second
+	if !streaming {
+		lifetime = time.Duration(max)*time.Millisecond + 2*time.Minute
+	}
+	sessionCtx, sessionCancel := context.WithCancel(s.ctx)
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		release()
+		defer release()
+		sessionCancel()
 		_ = s.meter.Record(context.Background(), domain.Usage{Access: domain.Access{UserID: user, OperationID: id, Operation: "asr", Provider: in.Provider}, Ticket: ticket, Status: "cancelled"})
 		return Session{}, domain.ErrUnavailable
 	}
-	s.sessions[id] = &session{user: user, input: in, expires: time.Now().Add(30 * time.Second), release: release, ticket: ticket, wsTicket: wsTicket, provider: p, maxDurationMS: max, maxBytes: s.config().MaxAudioBytes}
+	expiresAt := time.Now().Add(lifetime)
+	s.sessions[id] = &session{user: user, input: in, expires: expiresAt, release: release, ticket: ticket, wsTicket: wsTicket, provider: p, maxDurationMS: max, maxBytes: cfg.MaxAudioBytes, ctx: sessionCtx, cancel: sessionCancel}
 	s.mu.Unlock()
-	timer := time.AfterFunc(30*time.Second, func() {
+	timer := time.AfterFunc(lifetime, func() {
 		s.mu.Lock()
 		v := s.sessions[id]
 		if v != nil && !v.claimed {
@@ -282,7 +331,8 @@ func (s *Service) CreateSession(ctx context.Context, user uint, in SessionInput)
 		}
 		s.mu.Unlock()
 		if v != nil {
-			v.release()
+			v.cancel()
+			defer v.release()
 			_ = s.meter.Record(context.Background(), domain.Usage{Access: domain.Access{UserID: user, OperationID: id, Operation: "asr", Provider: in.Provider}, Ticket: v.ticket, Status: "cancelled"})
 		}
 	})
@@ -293,13 +343,40 @@ func (s *Service) CreateSession(ctx context.Context, user uint, in SessionInput)
 		timer.Stop()
 	}
 	s.mu.Unlock()
-	return Session{ID: id, WSURL: APIBasePath + "/speech/asr/sessions/" + id + "/stream?ticket=" + wsTicket, MaxDurationMS: max, MaxBytes: s.config().MaxAudioBytes}, nil
+	result := Session{ID: id, Provider: in.Provider, MaxDurationMS: max, MaxBytes: cfg.MaxAudioBytes, ExpiresAt: expiresAt}
+	if streaming {
+		result.WSURL = APIBasePath + "/speech/asr/sessions/" + id + "/stream?ticket=" + wsTicket
+	} else {
+		result.SessionToken = wsTicket
+	}
+	return result, nil
+}
+func (s *Service) CancelSession(ctx context.Context, user uint, id string) error {
+	s.mu.Lock()
+	v := s.sessions[id]
+	if v == nil || v.user != user {
+		s.mu.Unlock()
+		return domain.ErrNotFound
+	}
+	if v.claimed {
+		v.cancel()
+		s.mu.Unlock()
+		return nil
+	}
+	delete(s.sessions, id)
+	if v.timer != nil {
+		v.timer.Stop()
+	}
+	s.mu.Unlock()
+	v.cancel()
+	defer v.release()
+	return s.meter.Record(ctx, domain.Usage{Access: domain.Access{UserID: user, OperationID: id, Operation: "asr", Provider: v.input.Provider, Units: v.maxDurationMS}, Ticket: v.ticket, Status: "cancelled"})
 }
 func (s *Service) SessionUser(id, ticket string) (uint, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	v := s.sessions[id]
-	if v == nil || v.claimed || time.Now().After(v.expires) || subtle.ConstantTimeCompare([]byte(ticket), []byte(v.wsTicket)) != 1 {
+	if v == nil || !v.provider.ASRCapability().Streaming || v.claimed || time.Now().After(v.expires) || subtle.ConstantTimeCompare([]byte(ticket), []byte(v.wsTicket)) != 1 {
 		return 0, domain.ErrNotFound
 	}
 	return v.user, nil
@@ -307,7 +384,7 @@ func (s *Service) SessionUser(id, ticket string) (uint, error) {
 func (s *Service) Stream(ctx context.Context, user uint, id string, frames <-chan []byte, emit func(domain.Event) error) error {
 	s.mu.Lock()
 	v := s.sessions[id]
-	if v == nil || v.user != user || v.claimed || time.Now().After(v.expires) {
+	if v == nil || !v.provider.ASRCapability().Streaming || v.user != user || v.claimed || time.Now().After(v.expires) {
 		s.mu.Unlock()
 		return domain.ErrNotFound
 	}
@@ -316,13 +393,15 @@ func (s *Service) Stream(ctx context.Context, user uint, id string, frames <-cha
 		v.timer.Stop()
 	}
 	s.mu.Unlock()
-	defer func() { v.release(); s.mu.Lock(); delete(s.sessions, id); s.mu.Unlock() }()
+	defer func() { v.cancel(); v.release(); s.mu.Lock(); delete(s.sessions, id); s.mu.Unlock() }()
 	p := v.provider
 	max := v.maxDurationMS
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(max)*time.Millisecond+20*time.Second)
 	defer cancel()
 	stop := context.AfterFunc(s.ctx, cancel)
 	defer stop()
+	stopSession := context.AfterFunc(v.ctx, cancel)
+	defer stopSession()
 	bounded := make(chan []byte, 16)
 	var duration, bytes int64
 	var guardErr error
@@ -397,6 +476,15 @@ func (s *Service) Stream(ctx context.Context, user uint, id string, frames <-cha
 	return send(domain.Event{Type: "final", Text: result.Text, Final: true})
 }
 func (s *Service) Transcribe(ctx context.Context, user uint, provider, requestID string, audio domain.Audio) (domain.Transcript, error) {
+	return s.transcribe(ctx, user, provider, requestID, audio, nil, "")
+}
+func (s *Service) transcribe(ctx context.Context, user uint, provider, requestID string, audio domain.Audio, accepted *session, sessionID string) (domain.Transcript, error) {
+	accounted := false
+	defer func() {
+		if accepted != nil && !accounted {
+			_ = s.meter.Record(context.Background(), domain.Usage{Access: domain.Access{UserID: user, OperationID: sessionID, Operation: "asr", Provider: provider, Units: accepted.maxDurationMS}, Ticket: accepted.ticket, Status: "cancelled"})
+		}
+	}()
 	if s.store == nil {
 		return domain.Transcript{}, domain.ErrUnavailable
 	}
@@ -404,11 +492,7 @@ func (s *Service) Transcribe(ctx context.Context, user uint, provider, requestID
 	defer cancel()
 	stop := context.AfterFunc(s.ctx, cancel)
 	defer stop()
-	p := s.provider(provider)
-	if p == nil || p.ASRCapability() == nil || p.ASRCapability().Streaming {
-		return domain.Transcript{}, domain.ErrUnavailable
-	}
-	if requestID == "" || len(requestID) > 128 || audio.DurationMS <= 0 || audio.DurationMS > s.maxDuration(p.ASRCapability().MaxDurationMS) || int64(len(audio.Bytes)) > s.config().MaxAudioBytes || len(audio.Bytes) > 8<<20 {
+	if requestID == "" || len(requestID) > 128 || audio.DurationMS <= 0 || len(audio.Bytes) > 8<<20 {
 		return domain.Transcript{}, domain.ErrInvalid
 	}
 	id := digest("asr", userKey(user), provider, requestID)
@@ -418,6 +502,10 @@ func (s *Service) Transcribe(ctx context.Context, user uint, provider, requestID
 	existing, e := s.store.Get(ctx, id)
 	if e == nil {
 		s.mu.Unlock()
+		accounted = true
+		if accepted != nil && existing.OperationID != sessionID {
+			_ = s.meter.Record(context.Background(), domain.Usage{Access: domain.Access{UserID: user, OperationID: sessionID, Operation: "asr", Provider: provider, Units: accepted.maxDurationMS}, Ticket: accepted.ticket, Status: "cancelled"})
+		}
 		if existing.UserID != user {
 			return domain.Transcript{}, domain.ErrForbidden
 		}
@@ -427,30 +515,72 @@ func (s *Service) Transcribe(ctx context.Context, user uint, provider, requestID
 		if existing.Status != "complete" {
 			return domain.Transcript{}, domain.ErrUncertain
 		}
-		return domain.Transcript{SessionID: id, Text: existing.Text, DurationMS: existing.DurationMS, Sequence: 1, Final: true}, nil
+		publicID := existing.OperationID
+		if publicID == "" {
+			publicID = id
+		}
+		return domain.Transcript{SessionID: publicID, Text: existing.Text, DurationMS: existing.DurationMS, Sequence: 1, Final: true}, nil
 	}
 	if !errors.Is(e, domain.ErrNotFound) {
 		s.mu.Unlock()
 		return domain.Transcript{}, e
 	}
-	s.mu.Unlock()
-	release, ticket, err := s.reserve(ctx, domain.Access{UserID: user, OperationID: id, Operation: "asr", Provider: provider, Units: audio.DurationMS})
-	if err != nil {
-		return domain.Transcript{}, err
-	}
-	defer release()
-	r := domain.Record{ID: id, Fingerprint: fingerprint, UserID: user, Provider: provider, Operation: "asr", Status: "pending", CreatedAt: time.Now(), Ticket: ticket}
-	s.mu.Lock()
-	if _, e := s.store.Get(ctx, id); !errors.Is(e, domain.ErrNotFound) {
+	// Claim before authorization: its budget reference is itself idempotent, so
+	// a competing request must never reserve or cancel the working owner's ticket.
+	if _, claimed := s.asrClaims[id]; claimed {
 		s.mu.Unlock()
 		return domain.Transcript{}, domain.ErrUncertain
 	}
-	err = s.store.Put(ctx, r)
+	if len(s.asrClaims) >= s.config().MaxConcurrent {
+		s.mu.Unlock()
+		return domain.Transcript{}, domain.ErrLimited
+	}
+	s.asrClaims[id] = struct{}{}
+	s.mu.Unlock()
+	defer func() { s.mu.Lock(); delete(s.asrClaims, id); s.mu.Unlock() }()
+	p := s.provider(provider)
+	maximum := s.maxDuration(0)
+	maxBytes := s.config().MaxAudioBytes
+	operationID := id
+	var ticket domain.BillingTicket
+	if accepted != nil {
+		p = accepted.provider
+		maximum = accepted.maxDurationMS
+		maxBytes = accepted.maxBytes
+		operationID = sessionID
+		ticket = accepted.ticket
+	} else {
+		if provider != s.config().SelectedInputProvider || provider == "browser" {
+			return domain.Transcript{}, domain.ErrProviderChanged
+		}
+	}
+	if p == nil || p.ASRCapability() == nil || p.ASRCapability().Streaming {
+		return domain.Transcript{}, domain.ErrUnavailable
+	}
+	if hard := p.ASRCapability().MaxDurationMS; hard > 0 && hard < maximum {
+		maximum = hard
+	}
+	if audio.DurationMS > maximum || int64(len(audio.Bytes)) > maxBytes || (accepted != nil && audio.Format != accepted.input.Format) {
+		return domain.Transcript{}, domain.ErrInvalid
+	}
+	if accepted == nil {
+		release, authorized, err := s.reserve(ctx, domain.Access{UserID: user, OperationID: operationID, Operation: "asr", Provider: provider, Units: audio.DurationMS})
+		if err != nil {
+			return domain.Transcript{}, err
+		}
+		defer release()
+		ticket = authorized
+	}
+	r := domain.Record{ID: id, OperationID: operationID, Fingerprint: fingerprint, UserID: user, Provider: provider, Operation: "asr", Status: "pending", CreatedAt: time.Now(), Ticket: ticket}
+	s.mu.Lock()
+	err := s.store.Put(ctx, r)
 	s.mu.Unlock()
 	if err != nil {
-		_ = s.meter.Record(context.Background(), domain.Usage{Access: domain.Access{UserID: user, OperationID: id, Operation: "asr", Provider: provider, Units: audio.DurationMS}, Ticket: ticket, Status: "cancelled"})
+		accounted = true
+		_ = s.meter.Record(context.Background(), domain.Usage{Access: domain.Access{UserID: user, OperationID: operationID, Operation: "asr", Provider: provider, Units: audio.DurationMS}, Ticket: ticket, Status: "cancelled"})
 		return domain.Transcript{}, err
 	}
+	accounted = true
 	result, err := p.Transcribe(ctx, audio)
 	r.Status = "uncertain"
 	if errors.Is(err, domain.ErrRejected) {
@@ -462,7 +592,7 @@ func (s *Service) Transcribe(ctx context.Context, user uint, provider, requestID
 		r.UpstreamRequestID = result.UpstreamRequestID
 		r.Status = "complete"
 	}
-	meterErr := s.meter.Record(context.Background(), domain.Usage{Access: domain.Access{UserID: user, OperationID: id, Operation: "asr", Provider: provider, Units: audio.DurationMS}, Ticket: r.Ticket, ActualUnits: result.DurationMS, Status: r.Status, UpstreamRequestID: result.UpstreamRequestID})
+	meterErr := s.meter.Record(context.Background(), domain.Usage{Access: domain.Access{UserID: user, OperationID: operationID, Operation: "asr", Provider: provider, Units: audio.DurationMS}, Ticket: r.Ticket, ActualUnits: result.DurationMS, Status: r.Status, UpstreamRequestID: result.UpstreamRequestID})
 	if meterErr != nil {
 		r.Status = "uncertain"
 	}
@@ -473,7 +603,7 @@ func (s *Service) Transcribe(ctx context.Context, user uint, provider, requestID
 	if meterErr != nil {
 		return domain.Transcript{}, meterErr
 	}
-	result.SessionID = id
+	result.SessionID = operationID
 	result.Sequence = 1
 	result.Final = true
 	return result, nil
@@ -526,6 +656,16 @@ func (s *Service) Synthesize(ctx context.Context, user uint, in TTSInput) (TTSRe
 			}
 			return ttsResult(r, r.Status == "complete"), nil
 		}
+		s.mu.Lock()
+		previous := s.jobs[r.ID]
+		s.mu.Unlock()
+		if previous != nil {
+			select {
+			case <-previous.done:
+			case <-ctx.Done():
+				return TTSResult{}, ctx.Err()
+			}
+		}
 	} else if !errors.Is(err, domain.ErrNotFound) {
 		return TTSResult{}, err
 	}
@@ -560,9 +700,9 @@ func ttsResult(r domain.Record, hit bool) TTSResult {
 	return TTSResult{ID: r.ID, Status: r.Status, MediaURL: APIBasePath + "/speech/tts/" + r.ID + "/audio", CacheHit: hit}
 }
 func (s *Service) generate(r domain.Record, in TTSInput, p domain.Provider, j *job, release func()) {
-	defer release()
 	defer close(j.done)
 	defer func() { s.mu.Lock(); delete(s.jobs, r.ID); s.mu.Unlock() }()
+	defer release()
 	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Minute)
 	defer cancel()
 	w, storageErr := s.store.CreateAudio(ctx, r.ID)

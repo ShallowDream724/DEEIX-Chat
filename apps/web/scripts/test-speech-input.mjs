@@ -7,8 +7,8 @@ import { createEncoder, getPacketInfo } from "libopus-wasm";
 
 async function load(path, names, globals = {}) {
   const text = await readFile(new URL(path, import.meta.url), "utf8");
-  const compiled = stripTypeScriptTypes(text).replace(/^import .*;\r?\n/gm, "").replace(/^export /gm, "");
-  const scope = { exports: {}, console, Error, setTimeout, clearTimeout, setInterval, clearInterval, performance, crypto, AbortController, DOMException, TextEncoder, Blob, Float32Array, Int16Array, Uint8Array, ArrayBuffer, DataView, ...globals };
+  const compiled = stripTypeScriptTypes(text).replace(/^import .*;\r?\n/gm, "").replace(/^export /gm, "").replace(/import\.meta\.url/g, '"file:///speech-capture.ts"');
+  const scope = { exports: {}, console, Error, Event, setTimeout, clearTimeout, setInterval, clearInterval, performance, crypto, AbortController, DOMException, TextEncoder, Blob, Float32Array, Int16Array, Uint8Array, ArrayBuffer, DataView, ...globals };
   vm.runInNewContext(`${compiled}\nObject.assign(exports,{${names.join(",")}});`, scope);
   return scope.exports;
 }
@@ -72,25 +72,29 @@ function hookRuntime() {
     useRef(value) { const index = cursor++; slots[index] ??= { current: value }; return slots[index]; },
     useState(value) { const index = cursor++; if (!(index in slots)) slots[index] = value; return [slots[index], (next) => { slots[index] = typeof next === "function" ? next(slots[index]) : next; }]; },
     useCallback(callback, deps) { const index = cursor++; if (!slots[index] || deps.some((value, at) => value !== slots[index].deps[at])) slots[index] = { deps, callback }; return slots[index].callback; },
+    useMemo(factory, deps) { const index = cursor++; if (!slots[index] || deps.some((value, at) => value !== slots[index].deps[at])) slots[index] = { deps, value: factory() }; return slots[index].value; },
+    useSyncExternalStore(subscribe, snapshot) { const index = cursor++; if (!slots[index] || slots[index].subscribe !== subscribe) { slots[index]?.cleanup?.(); slots[index] = { subscribe, cleanup: subscribe(() => {}) }; } return snapshot(); },
     useEffect(callback, deps) { const index = cursor++; if (!slots[index] || deps.some((value, at) => value !== slots[index].deps[at])) effects.push(() => { slots[index]?.cleanup?.(); slots[index] = { deps, cleanup: callback() }; }); },
   };
   return { React, render(callback) { cursor = 0; const result = callback(); while (effects.length) effects.shift()(); return result; }, cleanup() { for (const slot of slots) slot?.cleanup?.(); } };
 }
-async function setup(provider = "browser", duration = 120000) {
+async function setup(provider = "browser", duration = 120000, sharedTrack = false) {
   const runtime = hookRuntime();
   const recognitions = [];
   let draft = "Prior draft";
   let scope = "chat:one";
   const errors = [];
+  const persisted = []; const committed = [];
   let stopped = 0;
   class Recognition {
     constructor() { recognitions.push(this); }
-    start() { this.onstart?.(); }
+    start(track) { this.track = track; this.onstart?.(); }
     stop() { stopped++; }
     abort() {}
     result(text) { this.onresult?.({ results: { length: 1, item: () => ({ isFinal: true, length: 1, item: () => ({ transcript: text }) }) } }); }
   }
-  const settings = { "chat.speech_input_provider": provider };
+  let selectedProvider = provider;
+  const capabilities = () => ({ selected_input_provider: selectedProvider, max_recording_duration_ms: duration, asr: [{ id: selectedProvider, streaming: selectedProvider === "wetype", max_duration_ms: 120000, max_bytes: 8 * 1024 * 1024 }] });
   const remote = { capture: null, uploads: [], resolve: null, reject: null, sockets: [] };
   class Socket {
     constructor() { this.bufferedAmount = 0; remote.sockets.push(this); queueMicrotask(() => this.event("ready", 0)); }
@@ -100,21 +104,23 @@ async function setup(provider = "browser", duration = 120000) {
   }
   const api = await load("../features/chat/hooks/use-chat-speech-input.ts", ["useChatSpeechInput"], {
     React: runtime.React, SpeechDraftSegment,
-    useOptionalAuthSession: () => ({ accessToken: "token" }), useUserSettings: () => ({ settings }),
-    useSpeechCapabilities: () => ({ max_recording_duration_ms: duration, asr: [{ id: provider, streaming: provider === "wetype", max_duration_ms: 120000, max_bytes: 8 * 1024 * 1024 }] }), beginRecordingActivity: () => ({ stop() {}, publishLevel() {} }),
-    startSpeechCapture: async (options) => { remote.capture = options; options.onFrame(new Float32Array(320)); return { stop: async () => options.onFrame(new Float32Array(80)), cancel() {} }; },
+    useOptionalAuthSession: () => ({ accessToken: "token" }),
+    useSpeechCapabilities: capabilities, refreshSpeechCapabilities: async () => capabilities(), beginRecordingActivity: () => ({ stop() {}, publishLevel() {} }),
+    watchMicrophonePermission: async () => {}, cancelSpeechSession: async () => {},
+    startSpeechCapture: async (options) => { remote.capture = options; options.onFrame(new Float32Array(320)); return { track: { id: "single-track", kind: "audio", readyState: "live" }, stop: async () => options.onFrame(new Float32Array(80)), cancel() {} }; },
+    supportsBrowserRecognitionTrack: () => sharedTrack,
     prepareSpeechCaptureContext: () => undefined,
     pcm16Frame: (frame) => new Int16Array(frame.length), speechWav: (_frames, samples) => { remote.uploads.push(samples); return new Blob(); },
     transcribeSpeech: () => new Promise((resolve, reject) => { remote.resolve = resolve; remote.reject = reject; }),
     createSpeechSession: async () => ({ id: "remote", ws_url: "/speech/ws", max_duration_ms: 120000, max_bytes: 8 * 1024 * 1024 }),
     speechResourceURL: () => "https://example.test/speech/ws", URL, WebSocket: Socket,
     createSpeechOpusEncoder: async (packet) => ({ encode() { packet(new Uint8Array(10)); }, flush: async () => {}, close() {} }),
-    window: { isSecureContext: true, SpeechRecognition: Recognition, AudioWorkletNode: class {} }, navigator: { mediaDevices: {} }, supportsSpeechOpus: () => true,
+    window: Object.assign(new EventTarget(), { isSecureContext: true, SpeechRecognition: Recognition, AudioWorkletNode: class {} }), navigator: { mediaDevices: {} }, supportsSpeechOpus: () => true,
     requestAnimationFrame: (callback) => { queueMicrotask(callback); },
   });
-  const render = () => runtime.render(() => api.useChatSpeechInput({ draft, scopeKey: scope, language: "en", onDraftChange: (value) => { draft = value; }, onError: (error) => errors.push(error), placeholder: "", listeningPlaceholder: "", startingPlaceholder: "" }));
+  const render = () => { const capturedScope = scope; return runtime.render(() => api.useChatSpeechInput({ draft, scopeKey: scope, language: "en", onDraftChange: (value) => { draft = value; }, onDraftPersist: (value) => persisted.push({ scope: capturedScope, draft: value }), onResultCommitted: (result) => committed.push(result), onError: (error) => errors.push(error), placeholder: "", listeningPlaceholder: "", startingPlaceholder: "" })); };
   render();
-  return { render, recognitions, errors, remote, get draft() { return draft; }, set draft(value) { draft = value; }, set scope(value) { scope = value; }, get stopped() { return stopped; }, cleanup: runtime.cleanup };
+  return { render, recognitions, errors, persisted, committed, remote, set provider(value) { selectedProvider = value; }, get draft() { return draft; }, set draft(value) { draft = value; }, set scope(value) { scope = value; }, get stopped() { return stopped; }, cleanup: runtime.cleanup };
 }
 test("stop keeps browser tail and sending is exactly once; late callbacks cannot revive sent text", async () => {
   const state = await setup();
@@ -204,6 +210,81 @@ test("a site limit below ten seconds is exposed immediately and enforced by the 
   } finally { state.cleanup(); }
 });
 
+test("session settlement synchronously persists current text and emits the exact result caret only when the user has not edited", async () => {
+  const state = await setup();
+  try {
+    await state.render().start(); const recognition = state.recognitions.at(-1); recognition.result("Final sentence."); state.render();
+    const stop = state.render().stop(); recognition.onend(); await stop;
+    assert.equal(state.persisted.at(-1).draft, "Prior draft\nFinal sentence.");
+    assert.equal(state.committed.at(-1).selectionEnd, "Prior draft\nFinal sentence.".length);
+    await state.render().start(); const editedRecognition = state.recognitions.at(-1); editedRecognition.result("Partial"); state.render();
+    state.draft = "I edited the draft\nPartial"; state.render();
+    const editedStop = state.render().stop(); editedRecognition.result("Final."); editedRecognition.onend(); await editedStop;
+    assert.equal(state.committed.length, 1); assert.equal(state.persisted.at(-1).draft, "I edited the draft\nFinal.");
+  } finally { state.cleanup(); }
+});
+
+test("capture interruption preserves transcript, persists immediately and ignores late start callbacks", async () => {
+  const state = await setup("wetype");
+  try {
+    await state.render().start(); state.remote.sockets[0].event("transcript", 1, "已识别的内容。"); state.render();
+    state.remote.capture.onError("interrupted");
+    assert.equal(state.render().status, "idle"); assert.equal(state.draft, "Prior draft\n已识别的内容。");
+    assert.equal(state.persisted.at(-1).draft, state.draft); assert.deepEqual(state.errors, ["interrupted"]);
+    state.remote.sockets[0].event("transcript", 10, "late"); assert.equal(state.draft, "Prior draft\n已识别的内容。");
+    state.provider = "browser"; await state.render().start(); const recognition = state.recognitions.at(-1); const lateStart = recognition.onstart;
+    state.render().cancel(); lateStart(); assert.equal(state.render().status, "idle");
+  } finally { state.cleanup(); }
+});
+
+test("capability invalidation cannot publish an older in-flight provider and refreshes across tabs, focus and visible polling", async () => {
+  const runtime = hookRuntime(); const requests = []; const timers = []; const broadcasts = [];
+  const browser = Object.assign(new EventTarget(), { localStorage: { setItem: (key) => broadcasts.push(key) }, setInterval: (callback) => { timers.push(callback); return 1; }, clearInterval() {} });
+  const document = Object.assign(new EventTarget(), { hidden: false });
+  const api = await load("../shared/hooks/use-speech-capabilities.ts", ["useSpeechCapabilities", "refreshSpeechCapabilities", "invalidateSpeechCapabilities"], {
+    React: runtime.React, window: browser, document, useOptionalAuthSession: () => ({ accessToken: "token", user: { publicID: "user" } }),
+    getSpeechCapabilities: () => new Promise((resolve) => requests.push(resolve)),
+  });
+  const render = () => runtime.render(() => api.useSpeechCapabilities());
+  try {
+    render(); assert.equal(requests.length, 1);
+    api.invalidateSpeechCapabilities(); assert.equal(broadcasts.length, 1);
+    requests[0]({ selected_input_provider: "browser", asr: [], tts: [] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(requests.length, 2); assert.equal(render().selected_input_provider, undefined);
+    requests[1]({ selected_input_provider: "deepseek", asr: [], tts: [] }); await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(render().selected_input_provider, "deepseek");
+    browser.dispatchEvent(Object.assign(new Event("storage"), { key: broadcasts[0] }));
+    requests[2]({ selected_input_provider: "wetype", asr: [], tts: [] }); await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(render().selected_input_provider, "wetype");
+    document.hidden = true; timers[0](); assert.equal(requests.length, 3);
+    document.hidden = false; browser.dispatchEvent(new Event("focus")); assert.equal(requests.length, 4);
+    requests[3]({ selected_input_provider: "doubao-ime", asr: [], tts: [] }); await new Promise((resolve) => setTimeout(resolve, 0));
+    const fresh = api.refreshSpeechCapabilities("token", "user"); assert.equal(requests.length, 5);
+    requests[4]({ selected_input_provider: "browser", asr: [], tts: [] }); assert.equal((await fresh).selected_input_provider, "browser");
+  } finally { runtime.cleanup(); }
+});
+
+test("known desktop Chrome can reuse the one capture track for native recognition while keeping its tail", async () => {
+  const state = await setup("browser", 120000, true);
+  try {
+    await state.render().start(); const recognition = state.recognitions.at(-1);
+    assert.equal(recognition.track.id, "single-track"); assert.ok(state.remote.capture);
+    recognition.result("Native partial"); const pending = state.render().stop(); recognition.result("Native final."); recognition.onend(); await pending;
+    assert.equal(state.draft, "Prior draft\nNative final."); assert.equal(state.remote.uploads.length, 0);
+  } finally { state.cleanup(); }
+});
+
+test("track-overload allowlist excludes mobile, unknown Chromium brands and old Chrome without starting recognition", async () => {
+  const run = async (navigator) => (await load("../features/chat/lib/speech-capture.ts", ["supportsBrowserRecognitionTrack"], { navigator })).supportsBrowserRecognitionTrack();
+  const browser = { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/140.0.0.0 Safari/537.36", vendor: "Google Inc.", platform: "Win32", maxTouchPoints: 0, userAgentData: { brands: [{ brand: "Google Chrome", version: "140" }], platform: "Windows", mobile: false } };
+  assert.equal(await run(browser), true);
+  assert.equal(await run({ ...browser, userAgent: "Chrome/140 Android Mobile" }), false);
+  assert.equal(await run({ ...browser, userAgentData: { ...browser.userAgentData, brands: [{ brand: "Chromium", version: "140" }] } }), false);
+  assert.equal(await run({ ...browser, userAgentData: { ...browser.userAgentData, brands: [{ brand: "Google Chrome", version: "134" }] } }), false);
+  assert.equal(await run({ ...browser, userAgent: "iPhone Chrome/140" }), false);
+});
+
 async function playbackSetup({ fail = false, failTimes = fail ? Infinity : 0, deferred = false, incomplete = false, statuses = [], expiredReads = 0 } = {}) {
   const stats = { syntheses: 0, requests: [], reads: 0, contexts: 0, closed: 0, recording: false, resolve: null };
   class Context {
@@ -261,6 +342,14 @@ test("switching conversation during synthesis prevents late audio playback; reco
   assert.equal(stats.reads, 0); assert.equal(stats.closed, 1);
   stats.recording = true; await api.playSpeech("new", "Another text", () => {});
   assert.equal(stats.syntheses, 1);
+});
+
+test("disabling TTS stops active playback and prevents a late synthesis response from reviving hidden controls", async () => {
+  const { api, stats, config } = await playbackSetup({ deferred: true });
+  const pending = api.playSpeech("message", "Hello", () => {});
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  api.configureSpeechPlayback({ ...config, enabled: false }); stats.resolve(); await pending;
+  assert.equal(stats.reads, 0); assert.equal(stats.closed, 1); assert.equal(api.getSpeechPlaybackState().status, "idle");
 });
 
 test("manual pause and resume reuse the active TTS stream without synthesis or playback duplication", async () => {

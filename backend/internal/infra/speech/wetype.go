@@ -301,7 +301,8 @@ func (w *WeType) Stream(ctx context.Context, in domain.StreamRequest, frames <-c
 	defer closeWS()
 	id := strings.ReplaceAll(in.SessionID, "-", "")
 	var seq, total uint64
-	var text, polished string
+	var text string
+	ordinaryFinal := false
 	batch := make([][]byte, 0, 6)
 	upload := func(end bool) error {
 		seq++
@@ -314,18 +315,18 @@ func (w *WeType) Stream(ctx context.Context, in domain.StreamRequest, frames <-c
 			b = append(b, f...)
 		}
 		total += uint64(len(b))
-		current, final, e := c.voice(id, b, seq, total, end)
+		current, _, e := c.voice(id, b, seq, total, end)
 		if e != nil {
 			return e
 		}
 		if current != "" {
 			text = current
+			if end {
+				ordinaryFinal = true
+			}
 			if e = emit(domain.Event{Type: "transcript", Text: text}); e != nil {
 				return e
 			}
-		}
-		if final != "" {
-			polished = final
 		}
 		batch = batch[:0]
 		return nil
@@ -339,25 +340,25 @@ func (w *WeType) Stream(ctx context.Context, in domain.StreamRequest, frames <-c
 				if e = upload(true); e != nil {
 					return domain.Transcript{}, e
 				}
-				for i := 0; i < 8 && polished == ""; i++ {
+				for i := 0; i < 8 && !ordinaryFinal; i++ {
 					select {
 					case <-ctx.Done():
 						return domain.Transcript{}, ctx.Err()
 					case <-time.After(250 * time.Millisecond):
 					}
-					current, final, e := c.voice(id, nil, 0, total, true)
+					current, _, e := c.voice(id, nil, 0, total, true)
 					if e != nil {
 						return domain.Transcript{}, e
 					}
 					if current != "" {
 						text = current
-					}
-					if final != "" {
-						polished = final
+						ordinaryFinal = true
 					}
 				}
-				if polished != "" {
-					text = polished
+				// A polished-only response cannot prove literal transcription.
+				// Preserve emitted ordinary partials and report an uncertain finish.
+				if !ordinaryFinal {
+					return domain.Transcript{}, domain.ErrUncertain
 				}
 				return domain.Transcript{Text: text, Final: true}, nil
 			}

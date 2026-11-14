@@ -81,7 +81,7 @@ func service(t *testing.T, p *provider, ttl time.Duration) (*app.Service, *billi
 		t.Fatal(e)
 	}
 	b := &billing{}
-	s := app.NewService(func() app.Config { return app.Config{MaxConcurrentPerUser: 1} }, map[string]domain.Provider{"deepseek": p, "doubao-ime": p}, b, b, store)
+	s := app.NewService(func() app.Config { return app.Config{SelectedInputProvider: "doubao-ime", MaxConcurrentPerUser: 1} }, map[string]domain.Provider{"deepseek": p, "doubao-ime": p}, b, b, store)
 	t.Cleanup(func() { _ = s.Close() })
 	return s, b
 }

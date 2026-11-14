@@ -1,6 +1,6 @@
 "use client";
 
-import { Box, CircleAlert, CornerDownRight, Eye, EyeOff, HatGlasses, LoaderCircle, PencilLine, Square, Trash2 } from "lucide-react";
+import { ArrowUp, AudioLines, Box, CircleAlert, CornerDownRight, Eye, EyeOff, HatGlasses, LoaderCircle, PencilLine, Square, Trash2, X } from "lucide-react";
 import { MediaWaveform } from "@/components/ui/media-waveform";
 import { AnimatePresence, motion } from "motion/react";
 import { useLocale, useTranslations } from "next-intl";
@@ -8,7 +8,6 @@ import * as React from "react";
 import { toast } from "sonner";
 import type { InputLimitReason } from "@/shared/lib/input-limit";
 
-import { AudioLines } from "@/components/animate-ui/icons/audio-lines";
 import { Crop } from "@/components/animate-ui/icons/crop";
 import { Link as LinkIcon } from "@/components/animate-ui/icons/link";
 import { Pause } from "@/components/animate-ui/icons/pause";
@@ -154,6 +153,7 @@ type ChatInputProps = {
   temporaryMode?: boolean;
   autoFocusKey: string;
   onDraftChange: (value: string) => void;
+  onDraftPersist?: (value: string) => void;
   onModelChange: (platformModelName: string) => void;
   onModelCatalogRefresh?: () => void | Promise<void>;
   onSelectedToolsChange: (toolIDs: number[]) => void;
@@ -247,6 +247,7 @@ function ChatInputComponent({
   temporaryMode = false,
   autoFocusKey,
   onDraftChange,
+  onDraftPersist,
   onModelChange,
   onModelCatalogRefresh,
   onSelectedToolsChange,
@@ -279,6 +280,9 @@ function ChatInputComponent({
   const [toolsMenuOpen, setToolsMenuOpen] = React.useState(false);
   const [editingQueuedMessageID, setEditingQueuedMessageID] = React.useState<string | null>(null);
   const [editingQueuedMessageContent, setEditingQueuedMessageContent] = React.useState("");
+  const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
+  const voiceSelectionMoved = React.useRef(false);
+  const pendingVoiceFocus = React.useRef<{ scopeKey: string; draft: string; selectionEnd: number } | null>(null);
   const handleSpeechInputError = React.useCallback((error: SpeechInputErrorCode) => {
     toast.error(tComposer("voiceErrorTitle"), {
       id: "chat-speech-input-error",
@@ -291,6 +295,10 @@ function ChatInputComponent({
     language: locale,
     listeningPlaceholder: tComposer("voiceListeningPlaceholder"),
     onDraftChange,
+    onDraftPersist,
+    onResultCommitted: (result) => {
+      if (!voiceSelectionMoved.current) pendingVoiceFocus.current = result;
+    },
     onError: handleSpeechInputError,
     placeholder: tComposer("inputPlaceholder"),
     startingPlaceholder: tComposer("voiceStartingPlaceholder"),
@@ -298,6 +306,17 @@ function ChatInputComponent({
   const sendMessageRef = React.useRef(onSendMessage);
   sendMessageRef.current = onSendMessage;
   const sendComposer = () => speechInput.finishAndSend((finalDraft) => sendMessageRef.current(finalDraft));
+  const startSpeech = () => {
+    voiceSelectionMoved.current = false;
+    pendingVoiceFocus.current = null;
+    setIsVoiceHovered(false);
+    void speechInput.start();
+  };
+  const cancelSpeech = () => {
+    pendingVoiceFocus.current = null;
+    setIsVoiceHovered(false);
+    speechInput.cancel();
+  };
   const [hoveredTool, setHoveredTool] = React.useState<"upload" | "screenshot" | null>(null);
   const [ragWarnDismissed, setRagWarnDismissed] = React.useState(false);
   const [previewAttachment, setPreviewAttachment] = React.useState<PendingAttachment | null>(null);
@@ -321,7 +340,6 @@ function ChatInputComponent({
   const fileInputRef = React.useRef<HTMLInputElement | null>(null);
   const inputGroupRef = React.useRef<HTMLDivElement | null>(null);
   const inputGroupMeasureRef = React.useRef<HTMLDivElement | null>(null);
-  const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   const lastAutoFocusKeyRef = React.useRef("");
   const markdownPreviewRef = React.useRef<HTMLDivElement | null>(null);
   const attachmentScrollFadeRef = useScrollFadeFallbackRef<HTMLDivElement>();
@@ -361,6 +379,24 @@ function ChatInputComponent({
     previewRef: markdownPreviewRef,
     source: draft,
     textareaRef,
+  });
+
+  React.useLayoutEffect(() => {
+    const request = pendingVoiceFocus.current;
+    if (!request) return;
+    if (request.scopeKey !== autoFocusKey || voiceSelectionMoved.current) {
+      pendingVoiceFocus.current = null;
+      return;
+    }
+    const textarea = textareaRef.current;
+    if (!textarea || textarea.value !== request.draft) return;
+    pendingVoiceFocus.current = null;
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && focused !== textarea &&
+      (focused.matches("input,textarea,select") || focused.isContentEditable)) return;
+    textarea.focus({ preventScroll: true });
+    textarea.setSelectionRange(request.selectionEnd, request.selectionEnd);
+    if (request.selectionEnd === textarea.value.length) textarea.scrollTop = textarea.scrollHeight;
   });
 
   // Only relevant in RAG mode: all document attachments opted out of RAG.
@@ -986,6 +1022,7 @@ function ChatInputComponent({
             onFocus={handleMentionFocus}
             onBlur={handleMentionBlur}
             onChange={(event) => handleMentionChange(event.target.value)}
+            onPointerDown={() => { if (speechInput.active) voiceSelectionMoved.current = true; }}
             onClick={handleMentionSelectionChange}
             onKeyUp={handleMentionSelectionChange}
             onSelect={handleMentionSelectionChange}
@@ -1033,6 +1070,7 @@ function ChatInputComponent({
               composingRef.current = false;
             }}
             onKeyDown={(event) => {
+              if (speechInput.active && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) voiceSelectionMoved.current = true;
               if (isImeComposingKeyEvent(event, composingRef.current)) {
                 return;
               }
@@ -1052,26 +1090,33 @@ function ChatInputComponent({
           />
 
           {speechInput.active ? (
-            <div className="mx-3 mt-2 flex min-h-12 items-center gap-2 rounded-xl border border-border/60 bg-muted/30 px-2 py-1.5" role="group" aria-label={tComposer("voiceInput")}>
-              <InputGroupButton type="button" variant="ghost" className="h-9 shrink-0 gap-1.5 px-2 text-muted-foreground" onClick={speechInput.cancel} aria-label={tComposer("cancelVoiceInput")}>
-                <XIcon size={16} /><span className="hidden sm:inline">{tComposer("voiceCancel")}</span>
+            <div data-speech-controls className="flex w-full items-center gap-3 px-3 pb-3 pt-3" role="group" aria-label={tComposer("voiceInput")} aria-busy={speechInput.status !== "listening"}>
+              <InputGroupButton type="button" variant="outline" size="icon-sm" className="size-11 shrink-0 rounded-full border-border/50 bg-transparent text-foreground shadow-none hover:bg-accent/50" onClick={cancelSpeech} aria-label={tComposer("cancelVoiceInput")}>
+                <X aria-hidden className="size-6" strokeWidth={1.8} />
               </InputGroupButton>
-              <div className="flex min-w-0 flex-1 items-center gap-2">
-                {speechInput.status === "listening" ? <MediaWaveform active className="h-7 min-w-4 flex-1" /> : <LoaderCircle aria-hidden className="size-4 shrink-0 animate-spin text-muted-foreground" />}
-                <span className="shrink-0 text-xs tabular-nums text-muted-foreground" role="status" aria-live={speechInput.remainingMS <= 10000 ? "polite" : "off"}>
-                  {speechInput.status === "transcribing" ? tComposer("voiceTranscribing") : speechInput.status === "starting" ? tComposer("voiceStartingPlaceholder") : speechInput.remainingMS <= 10000 ? tComposer("voiceRemaining", { seconds: Math.ceil(speechInput.remainingMS / 1000) }) : `${tComposer("voiceRecording")} ${Math.floor(speechInput.elapsedMS / 60000)}:${String(Math.floor(speechInput.elapsedMS / 1000) % 60).padStart(2, "0")}`}
-                </span>
+              <div className="relative flex h-11 min-w-0 flex-1 items-center">
+                <MediaWaveform active={speechInput.status === "listening"} />
+                {speechInput.status !== "listening" ? (
+                  <span className="absolute inset-0 flex items-center justify-center gap-2 bg-background/95 text-xs text-muted-foreground" role="status">
+                    <LoaderCircle aria-hidden className="size-4 shrink-0 animate-spin" />
+                    {speechInput.status === "transcribing" ? tComposer("voiceTranscribing") : tComposer("voiceStartingPlaceholder")}
+                  </span>
+                ) : speechInput.remainingMS <= 10000 ? (
+                  <span className="absolute inset-x-0 -top-2 text-center text-[11px] tabular-nums text-muted-foreground" role="status" aria-live="polite">
+                    {tComposer("voiceRemaining", { seconds: Math.ceil(speechInput.remainingMS / 1000) })}
+                  </span>
+                ) : <span className="sr-only" role="status">{tComposer("voiceRecording")}</span>}
               </div>
-              <InputGroupButton type="button" variant="outline" className="h-9 shrink-0 gap-1.5 px-2.5" disabled={speechInput.status !== "listening"} onClick={() => void speechInput.stop()} aria-label={tComposer("voiceStop")}>
-                <Square className="size-3.5" /><span className="hidden sm:inline">{tComposer("voiceStop")}</span>
+              <InputGroupButton type="button" variant="outline" size="icon-sm" className="size-11 shrink-0 rounded-full border-border/50 bg-transparent text-foreground shadow-none hover:bg-accent/50" disabled={speechInput.status !== "listening"} onClick={() => void speechInput.stop()} aria-label={tComposer("voiceStop")}>
+                <Square aria-hidden className="size-4" fill="currentColor" strokeWidth={0} />
               </InputGroupButton>
-              <InputGroupButton type="button" variant="default" className="h-9 shrink-0 gap-1.5 px-2.5" disabled={speechInput.status === "starting" || loading || uploading || waitingForAttachments} onClick={() => void sendComposer()} aria-label={tComposer("voiceSend")}>
-                <Send size={16} /><span className="hidden sm:inline">{tComposer("voiceSend")}</span>
+              <InputGroupButton type="button" variant="default" size="icon-sm" className="size-11 shrink-0 rounded-full bg-foreground text-background shadow-none hover:bg-foreground/90" disabled={speechInput.status === "starting" || loading || uploading || waitingForAttachments} onClick={() => void sendComposer()} aria-label={tComposer("voiceSend")}>
+                <ArrowUp aria-hidden className="size-6" strokeWidth={2} />
               </InputGroupButton>
             </div>
           ) : null}
 
-          <InputGroupAddon align="block-end" className="items-center justify-between pt-2">
+          {!speechInput.active ? <InputGroupAddon align="block-end" className="items-center justify-between pt-2">
             <div className="flex shrink-0 items-center gap-0.5 sm:gap-1">
               <DropdownMenu
                   modal={false}
@@ -1253,7 +1298,7 @@ function ChatInputComponent({
 
               {hasSubmitContent && !speechInput.active ? (
                 <Tooltip><TooltipTrigger asChild>
-                  <InputGroupButton type="button" variant="ghost" size="icon-sm" className="size-7 shrink-0 rounded-md text-muted-foreground hover:text-foreground sm:size-8" disabled={loading || uploading || !speechInput.supported} onClick={() => void speechInput.start()} aria-label={tComposer("voiceInput")}>
+                  <InputGroupButton type="button" variant="ghost" size="icon-sm" className="size-7 shrink-0 rounded-md text-muted-foreground hover:text-foreground sm:size-8" disabled={loading || uploading || !speechInput.supported} onClick={startSpeech} aria-label={tComposer("voiceInput")}>
                     <AudioLines size={20} strokeWidth={1.4} />
                   </InputGroupButton>
                 </TooltipTrigger><TooltipContent>{tComposer("voiceInput")}</TooltipContent></Tooltip>
@@ -1268,7 +1313,7 @@ function ChatInputComponent({
                     size="icon-sm"
                     className="size-7 rounded-md text-muted-foreground hover:text-foreground sm:size-8"
                     disabled={loading || uploading || (hasSubmitContent && waitingForAttachments) || (!sending && !hasSubmitContent && !speechInput.supported)}
-                    onClick={hasSubmitContent ? sendComposer : sending ? onStopMessage : speechInput.toggle}
+                    onClick={hasSubmitContent ? sendComposer : sending ? onStopMessage : startSpeech}
                     onMouseEnter={() => setIsVoiceHovered(true)}
                     onMouseLeave={() => setIsVoiceHovered(false)}
                     aria-label={submitActionLabel}
@@ -1286,19 +1331,10 @@ function ChatInputComponent({
                         strokeWidth={1.4}
                         animate="default-loop"
                       />
-                    ) : speechInput.status === "starting" ? (
-                      <LoaderCircle className="size-5 animate-spin" strokeWidth={1.6} />
-                    ) : speechInput.active ? (
-                      <AudioLines
-                        size={20}
-                        strokeWidth={1.4}
-                        animate="default"
-                      />
                     ) : (
                       <AudioLines
                         size={20}
                         strokeWidth={1.4}
-                        animate={isVoiceHovered ? "default" : undefined}
                       />
                     )}
                   </InputGroupButton>
@@ -1309,7 +1345,7 @@ function ChatInputComponent({
               </Tooltip>
               ) : null}
             </div>
-          </InputGroupAddon>
+          </InputGroupAddon> : null}
         </div>
       </InputGroup>
 

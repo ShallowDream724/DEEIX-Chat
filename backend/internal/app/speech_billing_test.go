@@ -1,6 +1,14 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/billing"
+	domainbilling "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/billing"
+	domainspeech "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/speech"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/infra/config"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
 	"math"
 	"testing"
 )
@@ -22,6 +30,96 @@ func TestSpeechRateNanousdPreservesSmallPrices(t *testing.T) {
 				t.Fatalf("got %d, %v; want %d", got, err, tc.want)
 			}
 		})
+	}
+}
+
+type speechPolicyBillingRepo struct {
+	repository.BillingRepository
+	reservations int
+}
+
+func (*speechPolicyBillingRepo) GetBillingMode(context.Context) (string, error) { return "usage", nil }
+func (r *speechPolicyBillingRepo) ReserveUsageBalance(ctx context.Context, in domainbilling.UsageBalanceReservationRequest) (*domainbilling.UsageBalanceReservation, error) {
+	r.reservations++
+	return &domainbilling.UsageBalanceReservation{UserID: in.UserID, RefNo: in.RefNo, Mode: in.Mode, BalanceNanousd: in.RequestedNanousd, Status: "reserved"}, nil
+}
+func TestSpeechUserChargesDefaultOffAndHistoricalQuoteIsFrozen(t *testing.T) {
+	repo := &speechPolicyBillingRepo{}
+	service := billing.NewService(repo)
+	cfg := config.Config{BillingUSDToCNYRate: 7.2, Speech: config.SpeechConfig{InputProvider: "deepseek", DeepSeekTTSEnabled: true, ASRCNYPerHour: .39, TTSCNYPer10000Characters: 1.5}}
+	runtime := config.NewRuntime(cfg)
+	adapter := speechBillingAdapter{billing: service, runtime: runtime}
+	for _, operation := range []string{"asr", "tts"} {
+		units := int64(10000)
+		if operation == "asr" {
+			units = 120000
+		}
+		raw, e := adapter.Authorize(t.Context(), domainspeech.Access{UserID: 1, OperationID: "free-" + operation, Operation: operation, Provider: "deepseek", Units: units})
+		if e != nil {
+			t.Fatal(e)
+		}
+		var ticket billing.MeteredServiceAuthorization
+		if e = json.Unmarshal(raw.Snapshot, &ticket); e != nil {
+			t.Fatal(e)
+		}
+		if ticket.Quote.RateNanousd != 0 || repo.reservations != 0 {
+			t.Fatal("default speech charged user", ticket.Quote)
+		}
+		ledger, e := service.BuildMeteredServiceLedger(&ticket, 5560, "")
+		if e != nil || ledger.BilledNanousd != 0 {
+			t.Fatal(ledger, e)
+		}
+	}
+	cfg.Speech.ChargeASR = true
+	cfg.Speech.ChargeTTS = true
+	runtime.Store(cfg)
+	raw, e := adapter.Authorize(t.Context(), domainspeech.Access{UserID: 1, OperationID: "charged", Operation: "asr", Provider: "deepseek", Units: 120000})
+	if e != nil {
+		t.Fatal(e)
+	}
+	var ticket billing.MeteredServiceAuthorization
+	_ = json.Unmarshal(raw.Snapshot, &ticket)
+	if ticket.Quote.Unit != "millisecond" || ticket.Quote.Quantum != 1000 || ticket.Quote.RateNanousd != 54166667 || repo.reservations != 1 {
+		t.Fatal("ASR price/units not captured", ticket.Quote)
+	}
+	cfg.Speech.ChargeASR = false
+	cfg.Speech.ASRCNYPerHour = 999
+	cfg.Speech.InputProvider = "browser"
+	runtime.Store(cfg)
+	ledger, e := service.BuildMeteredServiceLedger(&ticket, 5560, "upstream")
+	if e != nil || ledger.BilledNanousd != 90278 || ledger.DurationSeconds != 6 {
+		t.Fatal("old operation repriced after settings change", ledger, e)
+	}
+	if _, e = adapter.Authorize(t.Context(), domainspeech.Access{UserID: 1, OperationID: "bypass", Operation: "asr", Provider: "deepseek", Units: 1000}); !errors.Is(e, domainspeech.ErrProviderChanged) {
+		t.Fatal("client bypassed administrator source", e)
+	}
+}
+func TestSpeechChargesApplyToSelectedIMEAndTTSStaysIndependent(t *testing.T) {
+	for _, provider := range []string{"doubao-ime", "wetype"} {
+		repo := &speechPolicyBillingRepo{}
+		service := billing.NewService(repo)
+		cfg := config.Config{BillingUSDToCNYRate: 7.2, Speech: config.SpeechConfig{InputProvider: provider, ChargeASR: true, DeepSeekTTSEnabled: true, ChargeTTS: true, ASRCNYPerHour: .39, TTSCNYPer10000Characters: 1.5}}
+		adapter := speechBillingAdapter{billing: service, runtime: config.NewRuntime(cfg)}
+		for _, operation := range []string{"asr", "tts"} {
+			route := provider
+			units := int64(1000)
+			if operation == "tts" {
+				route = "deepseek"
+				units = 10
+			}
+			raw, e := adapter.Authorize(t.Context(), domainspeech.Access{UserID: 1, OperationID: provider + "-" + operation, Operation: operation, Provider: route, Units: units})
+			if e != nil {
+				t.Fatal(e)
+			}
+			var ticket billing.MeteredServiceAuthorization
+			_ = json.Unmarshal(raw.Snapshot, &ticket)
+			if ticket.Quote.RateNanousd <= 0 {
+				t.Fatal("enabled charge ignored", ticket.Quote)
+			}
+			if operation == "tts" && (ticket.Quote.Unit != "character" || ticket.Quote.RateQuantity != 10000 || ticket.Quote.Quantum != 1) {
+				t.Fatal("TTS units changed", ticket.Quote)
+			}
+		}
 	}
 }
 

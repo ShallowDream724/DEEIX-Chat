@@ -2,13 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { nativeToolIsRecommended } from "./native-tool-recommendations.ts";
 
-test("DeepSeek only recommends its Responses tools, not OpenAI tools sharing the protocol", () => {
-  const responses = new Set(["openai_responses"]);
-  const chat = new Set(["openai_chat_completions"]);
-  assert.equal(nativeToolIsRecommended("DeepSeek", ["openai_responses"], responses, "deepseek"), true);
-  assert.equal(nativeToolIsRecommended("OpenAI", ["openai_responses"], responses, "deepseek"), false);
-  assert.equal(nativeToolIsRecommended("DeepSeek", ["openai_responses"], chat, "deepseek"), false);
-  assert.equal(nativeToolIsRecommended("OpenAI", ["openai_chat_completions"], chat, "deepseek"), false);
+test("DeepSeek recommends its three supported protocols without recommending other providers", () => {
+  const supported = ["openai_responses", "openai_chat_completions", "anthropic_messages"];
+  for (const protocol of supported) {
+    const route = new Set([protocol]);
+    assert.equal(nativeToolIsRecommended("DeepSeek", supported, route, "deepseek"), true);
+    assert.equal(nativeToolIsRecommended("OpenAI", [protocol], route, "deepseek"), false);
+  }
+  assert.equal(nativeToolIsRecommended("DeepSeek", supported, new Set(["google_generate_content"]), "deepseek"), false);
+  assert.equal(nativeToolIsRecommended("DeepSeek", ["openai_responses"], new Set(["anthropic_messages"]), "deepseek"), false);
 });
 
 test("provider aliases and unknown providers retain appropriate recommendations", () => {

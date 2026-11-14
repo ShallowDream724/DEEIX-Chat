@@ -68,23 +68,23 @@ func TestSpeechAPIKeyIsEncryptedMaskedAndPreservedOnBlankSave(t *testing.T) {
 		t.Fatal(err)
 	}
 	previous := runtime.Snapshot()
-	if previous.Speech.DeepSeekAPIKey != credential || previous.Speech.Enabled {
+	if previous.Speech.DeepSeekAPIKey != credential || previous.Speech.DeepSeekTTSEnabled {
 		t.Fatal("runtime snapshot did not decrypt the saved speech credential")
 	}
-	if _, err := service.BatchUpdate(t.Context(), []PatchItem{{Namespace: "speech", Key: "deepseek_api_key", Value: ""}, {Namespace: "speech", Key: "enabled", Value: "true"}}); err != nil {
+	if _, err := service.BatchUpdate(t.Context(), []PatchItem{{Namespace: "speech", Key: "deepseek_api_key", Value: ""}, {Namespace: "speech", Key: "deepseek_tts_enabled", Value: "true"}}); err != nil {
 		t.Fatal(err)
 	}
 	values, err := service.RuntimeValuesByNamespace(t.Context(), "speech")
-	if err != nil || values["deepseek_api_key"] != credential || values["enabled"] != "true" {
+	if err != nil || values["deepseek_api_key"] != credential || values["deepseek_tts_enabled"] != "true" {
 		t.Fatal("blank save did not preserve runtime credential and enabled setting")
 	}
 	if err := settingsRuntime.ApplyTo(t.Context(), runtime); err != nil {
 		t.Fatal(err)
 	}
-	if !runtime.Snapshot().Speech.Enabled || previous.Speech.Enabled {
+	if !runtime.Snapshot().Speech.DeepSeekTTSEnabled || previous.Speech.DeepSeekTTSEnabled {
 		t.Fatal("speech update did not produce an independent runtime snapshot")
 	}
-	if _, err := service.BatchUpdate(t.Context(), []PatchItem{{Namespace: "speech", Key: "deepseek_api_key", Clear: true}}); err != nil {
+	if _, err := service.BatchUpdate(t.Context(), []PatchItem{{Namespace: "speech", Key: "deepseek_api_key", Clear: true}, {Namespace: "speech", Key: "deepseek_tts_enabled", Value: "false"}}); err != nil {
 		t.Fatal(err)
 	}
 	values, err = service.RuntimeValuesByNamespace(t.Context(), "speech")

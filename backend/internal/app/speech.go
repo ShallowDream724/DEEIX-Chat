@@ -27,25 +27,23 @@ func newSpeechModule(runtime *config.Runtime, billingService *billing.Service) (
 	providers := map[string]domainspeech.Provider{
 		"deepseek": &infraspeech.DynamicProvider{ResolveSnapshot: func() (domainspeech.Provider, bool, bool) {
 			cfg := runtime.Snapshot().Speech
-			if !cfg.Enabled || strings.TrimSpace(cfg.DeepSeekAPIKey) == "" {
+			if strings.TrimSpace(cfg.DeepSeekAPIKey) == "" {
 				return nil, false, false
 			}
-			return infraspeech.NewDeepSeek(infraspeech.ProviderConfig{BaseURL: cfg.DeepSeekBaseURL, APIKey: cfg.DeepSeekAPIKey}, client), cfg.DeepSeekASREnabled, cfg.DeepSeekTTSEnabled
+			return infraspeech.NewDeepSeek(infraspeech.ProviderConfig{BaseURL: cfg.DeepSeekBaseURL, APIKey: cfg.DeepSeekAPIKey}, client), true, cfg.DeepSeekTTSEnabled
 		}},
 		"doubao-ime": &infraspeech.DynamicProvider{ResolveSnapshot: func() (domainspeech.Provider, bool, bool) {
-			cfg := runtime.Snapshot().Speech
-			return doubao, cfg.Enabled && cfg.DoubaoEnabled, false
+			return doubao, true, false
 		}},
 		"wetype": &infraspeech.DynamicProvider{ResolveSnapshot: func() (domainspeech.Provider, bool, bool) {
-			cfg := runtime.Snapshot().Speech
-			return wetype, cfg.Enabled && cfg.WeTypeEnabled, false
+			return wetype, true, false
 		}},
 	}
 	accounting := speechBillingAdapter{billing: billingService, runtime: runtime}
 	service := appspeech.NewService(func() appspeech.Config {
 		cfg := runtime.Snapshot().Speech
 		store.Configure(cfg.CacheMaxBytes, time.Duration(cfg.CacheTTLHours)*time.Hour)
-		return appspeech.Config{MaxRecordingSeconds: cfg.MaxRecordingSeconds, MaxConcurrentPerUser: cfg.MaxConcurrentPerUser, MaxConcurrent: 32, MaxAudioBytes: 8 << 20}
+		return appspeech.Config{SelectedInputProvider: cfg.InputProvider, MaxRecordingSeconds: cfg.MaxRecordingSeconds, MaxConcurrentPerUser: cfg.MaxConcurrentPerUser, MaxConcurrent: 32, MaxAudioBytes: 8 << 20}
 	}, providers, accounting, accounting, store)
 	handler := speechhttp.NewHandler(service, func() []string {
 		return strings.Split(runtime.Snapshot().CORSAllowOrigin, ",")

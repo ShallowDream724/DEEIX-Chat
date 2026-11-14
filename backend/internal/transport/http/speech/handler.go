@@ -42,6 +42,7 @@ func (m *Module) RegisterRoutes(authRequired, public *gin.RouterGroup) {
 	g := authRequired.Group("/speech")
 	g.GET("/capabilities", m.Handler.Capabilities)
 	g.POST("/asr/sessions", m.Handler.CreateSession)
+	g.DELETE("/asr/sessions/:id", m.Handler.CancelSession)
 	g.POST("/asr/transcriptions", m.Handler.Transcribe)
 	g.POST("/tts", m.Handler.Synthesize)
 	g.GET("/tts/:id", m.Handler.GetTTS)
@@ -76,6 +77,9 @@ func describe(err error) response.Description {
 	case errors.Is(err, domain.ErrConflict):
 		status = 409
 		public = apperr.New("speech.conflict", "speech request identity already has different content")
+	case errors.Is(err, domain.ErrProviderChanged):
+		status = 409
+		public = apperr.New("speech.input_provider_changed", "speech input provider changed; start a new recording")
 	case errors.Is(err, domain.ErrExpired):
 		status = 410
 		public = apperr.New("speech.expired", "speech audio expired")
@@ -94,7 +98,17 @@ func fail(c *gin.Context, err error) {
 	response.RecordError(c, err)
 	response.ErrorDescribed(c, describe(err))
 }
-func (h *Handler) Capabilities(c *gin.Context) { response.Success(c, h.service.Capabilities()) }
+func (h *Handler) Capabilities(c *gin.Context) {
+	c.Header("Cache-Control", "no-store")
+	response.Success(c, h.service.Capabilities())
+}
+func (h *Handler) CancelSession(c *gin.Context) {
+	if err := h.service.CancelSession(c.Request.Context(), middleware.MustUserID(c), c.Param("id")); err != nil {
+		fail(c, err)
+		return
+	}
+	response.Success(c, gin.H{"cancelled": true})
+}
 func (h *Handler) CreateSession(c *gin.Context) {
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4<<10)
 	var in app.SessionInput
@@ -132,7 +146,12 @@ func (h *Handler) Transcribe(c *gin.Context) {
 		fail(c, err)
 		return
 	}
-	r, err := h.service.Transcribe(c.Request.Context(), middleware.MustUserID(c), c.PostForm("provider"), c.PostForm("request_id"), audio)
+	var r domain.Transcript
+	if id := c.PostForm("session_id"); id != "" {
+		r, err = h.service.TranscribeSession(c.Request.Context(), middleware.MustUserID(c), c.PostForm("provider"), c.PostForm("request_id"), id, c.PostForm("session_token"), audio)
+	} else {
+		r, err = h.service.Transcribe(c.Request.Context(), middleware.MustUserID(c), c.PostForm("provider"), c.PostForm("request_id"), audio)
+	}
 	if err != nil {
 		fail(c, err)
 		return

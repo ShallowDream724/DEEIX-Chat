@@ -36,7 +36,6 @@ var allowedKeys = map[string]string{
 	"chat.content_width":                        "compact",
 	"chat.default_mcp_tool_ids":                 "[]",
 	"chat.model_control_placements":             "{}",
-	"chat.speech_input_provider":                "browser",
 	"chat.auto_read_replies":                    "false",
 	"chat.speech_voice":                         "stella",
 }
@@ -64,11 +63,10 @@ var boolKeys = map[string]bool{
 
 // enumKeys 枚举 key 的合法值集合。
 var enumKeys = map[string]map[string]bool{
-	"chat.file_mode":             {"auto": true, "full_context": true, "rag": true},
-	"chat.send_on_enter":         {"enter": true, "ctrl_enter": true, "meta_enter": true},
-	"chat.input_height":          {"compact": true, "standard": true, "loose": true},
-	"chat.content_width":         {"compact": true, "standard": true, "wide": true},
-	"chat.speech_input_provider": {"browser": true, "deepseek": true, "doubao-ime": true, "wetype": true},
+	"chat.file_mode":     {"auto": true, "full_context": true, "rag": true},
+	"chat.send_on_enter": {"enter": true, "ctrl_enter": true, "meta_enter": true},
+	"chat.input_height":  {"compact": true, "standard": true, "loose": true},
+	"chat.content_width": {"compact": true, "standard": true, "wide": true},
 }
 
 // validateValue 校验 key 对应 value 的合法性。
@@ -187,6 +185,16 @@ func (s *Service) ListSettings(ctx context.Context, userID uint) (map[string]str
 	}
 	// 覆盖用户设置值
 	for _, row := range rows {
+		if row.Key == "chat.speech_input_provider" {
+			if deleter, ok := s.repo.(interface {
+				Delete(context.Context, uint, string) error
+			}); ok {
+				if err := deleter.Delete(ctx, userID, row.Key); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
 		if _, ok := allowedKeys[row.Key]; ok {
 			result[row.Key] = row.Value
 		}

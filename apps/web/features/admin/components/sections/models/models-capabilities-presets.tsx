@@ -40,6 +40,7 @@ type CapabilityPreset = {
   label?: string;
   provider?: string;
   protocol: AdminLLMAdapter;
+  protocols?: AdminLLMAdapter[];
   payload: Record<string, unknown>;
 };
 
@@ -253,6 +254,7 @@ const MODEL_CAPABILITY_PRESETS: CapabilityPreset[] = [
     label: "DeepSeek Flash",
     provider: "DeepSeek",
     protocol: "openai_responses",
+    protocols: ["openai_responses", "openai_chat_completions", "anthropic_messages"],
     payload: {
       inputModalities: ["text", "image", "pdf", "attachment"],
       reasoning: {
@@ -863,7 +865,7 @@ function formatCapabilitiesJSON(value: Record<string, unknown>): string {
 function capabilityPresetMatched(preset: CapabilityPreset, routeProtocolSet: Set<string>, modelProvider: string): boolean {
   return nativeToolIsRecommended(
     preset.provider ?? preset.protocol.split("_")[0],
-    [resolveModelOptionPolicyProtocol(preset.protocol)],
+    (preset.protocols ?? [preset.protocol]).map(resolveModelOptionPolicyProtocol),
     routeProtocolSet,
     modelProvider,
   );

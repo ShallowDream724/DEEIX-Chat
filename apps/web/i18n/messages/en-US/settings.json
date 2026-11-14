@@ -353,10 +353,7 @@
   "chatPage": {
     "speech": {
       "sectionTitle": "Speech",
-      "inputTitle": "Voice input",
-      "inputDescription": "Choose a source for voice input.",
-      "browser": "Browser voice input",
-      "unavailable": "Currently unavailable",
+      "unavailable": "Read aloud is currently unavailable.",
       "autoReadTitle": "Read replies automatically",
       "autoReadDescription": "Read new replies aloud when they finish.",
       "voiceTitle": "Reading voice",

@@ -20,7 +20,6 @@ export type ChatSettings = {
   autoExpandToolCalls: boolean;
   autoGenerateTitle: boolean;
   autoGenerateLabels: boolean;
-  speechInputProvider: string;
   autoReadReplies: boolean;
   speechVoice: string;
   deleteFilesByDefault: boolean;
