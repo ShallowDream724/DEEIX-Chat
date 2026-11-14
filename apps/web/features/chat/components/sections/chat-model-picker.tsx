@@ -1,15 +1,13 @@
 "use client";
 
-import { AnimatePresence, useReducedMotion } from "motion/react";
 import * as React from "react";
-import { ArrowRight, AudioLines, Check, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, Files, FileText, Image as ImageIcon, KeyRound, Paperclip, TicketSlash, Type, Video } from "lucide-react";
+import { AudioLines, Check, ChevronDown, ChevronLeft, ChevronRight, CircleDollarSign, Files, FileText, Image as ImageIcon, KeyRound, Paperclip, TicketSlash, Type, Video } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { InputGroupButton } from "@/components/ui/input-group";
 import type { ChatModelOption, ModelModality } from "@/features/chat/types/chat-runtime";
 import { useChatPopoverAlignOffset } from "@/features/chat/hooks/use-chat-popover-align-offset";
@@ -17,7 +15,6 @@ import {
   resolveDesktopMenuListMaxHeight,
   resolveDesktopModelMenuListMaxHeight,
   createPopoverLayoutRectReader,
-  layoutOffsetTop,
 } from "./chat-model-picker-layout";
 import { MORPH_DURATION_S, MorphingCard, useSwitchDirection } from "./chat-model-picker-motion";
 import { useIsMobile } from "@/shared/hooks/use-mobile";
@@ -65,11 +62,6 @@ const DESKTOP_MODEL_MENU_WIDTH = 224;
 const DESKTOP_MODEL_SUBMENU_GAP = 8;
 const DESKTOP_MODEL_MENU_SIDE_OFFSET = 8;
 const DESKTOP_MODEL_MENU_MIN_SCROLL_HEIGHT = 96;
-const DESKTOP_DETAIL_PANE_WIDTH = 256;
-const DESKTOP_DETAIL_PANE_MIN_WIDTH = 200;
-const DESKTOP_DETAIL_PANE_MIN_HEIGHT = 120;
-/** Gap to the submenu; must match the 0.5rem offsets in its placement classes. */
-const DESKTOP_DETAIL_PANE_GAP = 8;
 /** Group panel non-list chrome: p-1.5 × 2 + header h-7. */
 const DESKTOP_GROUP_MENU_VERTICAL_CHROME = 40;
 /** Model submenu non-list chrome: p-1.5 × 2. */
@@ -503,9 +495,8 @@ function describeInputModalities(modalities: ModelModality[], labels: InputModal
   return `${labels.title}${visible.map((modality) => labels.names[modality]).join(labels.separator)}`;
 }
 
-// The row's own modality icons, for layouts without the detail pane. The description doubles as the
-// tooltip and the accessible name.
-function InputModalityIcons({
+// Non-text input modalities as compact icons; text is implied and omitted.
+function ModelInputModalities({
   modalities,
   labels,
 }: {
@@ -517,17 +508,76 @@ function InputModalityIcons({
     return null;
   }
   return (
-    <span
-      className="flex shrink-0 items-center gap-1 px-1 text-muted-foreground/60 group-hover:text-current group-data-[selected=true]:text-current"
-      role="img"
-      aria-label={description}
-      title={description}
-    >
-      {mediaModalities(modalities).map((modality) => {
-        const Icon = MODALITY_ICONS[modality];
-        return <Icon key={modality} className="size-3" strokeWidth={1.8} />;
-      })}
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span
+          className="flex shrink-0 items-center gap-1 px-1 text-muted-foreground/60 group-hover:text-current group-data-[selected=true]:text-current"
+          role="img"
+          aria-label={description}
+        >
+          {mediaModalities(modalities).map((modality) => {
+            const Icon = MODALITY_ICONS[modality];
+            return <Icon key={modality} className="size-3" strokeWidth={1.8} />;
+          })}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="right" sideOffset={8} className="z-[80] text-xs">
+        {description}
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function ModelPricingButton({ viewPricingLabel, ...props }: ModelPricingTooltipContentProps & { viewPricingLabel: string }) {
+  const [pinned, setPinned] = React.useState(false);
+  const [hovered, setHovered] = React.useState(false);
+  // Preserve mouse hover behavior; touch, pen and keyboard can pin the same pricing content.
+  const allowPinRef = React.useRef(true);
+
+  return (
+    <Popover open={pinned} onOpenChange={(next) => { if (!next || allowPinRef.current) setPinned(next); }}>
+      <Tooltip open={hovered && !pinned} onOpenChange={setHovered}>
+        <PopoverTrigger asChild>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:text-current focus-visible:text-current focus-visible:outline-none group-hover:text-current group-focus-within:text-current group-data-[selected=true]:text-current"
+              aria-label={viewPricingLabel}
+              onPointerDown={(event) => { allowPinRef.current = event.pointerType !== "mouse"; }}
+              onKeyDown={() => { allowPinRef.current = true; }}
+              onClick={(event) => {
+                event.stopPropagation();
+                setHovered(false);
+              }}
+            >
+              {props.pricing.isFree ? <TicketSlash className="size-3.5" strokeWidth={1.8} /> : <CircleDollarSign className="size-3.5" strokeWidth={1.8} />}
+            </button>
+          </TooltipTrigger>
+        </PopoverTrigger>
+        <TooltipContent side="right" align="center" sideOffset={8} className="z-[80] max-w-[min(92vw,35rem)] text-left font-medium tabular-nums">
+          <ModelPricingTooltipContent {...props} />
+        </TooltipContent>
+      </Tooltip>
+      <PopoverContent
+        data-model-pricing-content=""
+        side="right"
+        align="center"
+        sideOffset={8}
+        collisionPadding={12}
+        aria-label={`${props.platformModelName} · ${viewPricingLabel}`}
+        className="z-[80] max-h-[var(--radix-popover-content-available-height)] w-max max-w-[min(calc(100vw-1.5rem),35rem)] overflow-auto overscroll-contain rounded-md border-0 bg-foreground px-3 py-1.5 text-left text-xs font-medium text-background tabular-nums"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+        }}
+        onCloseAutoFocus={(event) => {
+          // Outside clicks keep their target focus; closing must not reopen the hover tooltip.
+          event.preventDefault();
+          setHovered(false);
+        }}
+      >
+        <ModelPricingTooltipContent {...props} />
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -539,13 +589,6 @@ function ChatModelMenuItem({
   pricingLabels,
   inputModalityLabels,
   viewPricingLabel,
-  freeBadgeLabel,
-  describedBy,
-  withDetailPane = false,
-  reservePricingSlot = false,
-  onHover,
-  rowRef,
-  onViewPricing,
 }: {
   model: ChatModelOption;
   selected: boolean;
@@ -554,127 +597,39 @@ function ChatModelMenuItem({
   pricingLabels: React.ComponentProps<typeof ModelPricingTooltipContent>["labels"];
   inputModalityLabels: InputModalityLabels;
   viewPricingLabel: string;
-  /** Badge for free models, which the pane only mentions in its price line. */
-  freeBadgeLabel: string;
-  /** Id of the detail pane while it describes this row, so screen readers announce it too. */
-  describedBy?: string;
-  /**
-   * True when the detail pane describes the hovered model, so the row keeps only its icon, name and
-   * selection mark. Without the pane the row also carries the modality icons and the pricing tooltip.
-   */
-  withDetailPane?: boolean;
-  /** Keep the pricing slot without pricing, so the selection mark stays in one column. */
-  reservePricingSlot?: boolean;
-  /** Reports the row the pointer or keyboard focus is on, which drives the detail pane. */
-  onHover?: () => void;
-  /** The row element, so the detail pane can be placed level with the row it describes. */
-  rowRef?: (node: HTMLDivElement | null) => void;
-  onViewPricing?: (trigger: HTMLButtonElement) => void;
 }) {
   const platformModelName = resolveModelOptionLabel(model.platformModelName);
   const iconURL = React.useMemo(() => resolveModelOptionIconUrl(model), [model]);
-  const inputModalityDescription = describeInputModalities(model.inputModalities, inputModalityLabels);
 
   return (
     <div
       data-selected={selected}
-      ref={rowRef}
       className="group flex h-7 items-center rounded-md text-[11px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-within:bg-accent focus-within:text-accent-foreground data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground"
-      onMouseEnter={onHover}
-      // Keyboard navigation opens the detail too; pointer focus (a click) does not.
-      onFocus={(event) => {
-        if (event.target instanceof HTMLElement && event.target.matches(":focus-visible")) {
-          onHover?.();
-        }
-      }}
     >
       <button
         type="button"
-        aria-describedby={describedBy}
         className="flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md bg-transparent py-0 pl-2 pr-1 text-left text-[11px] font-medium leading-none text-inherit outline-none"
         onClick={onSelect}
       >
         <ModelIcon iconUrl={iconURL} label={platformModelName} />
-        <span className="min-w-0 flex-1 truncate leading-4">{platformModelName}</span>
-        {inputModalityDescription && withDetailPane ? <span className="sr-only">{inputModalityDescription}</span> : null}
-        {/* One trailing mark, flush right: the selection, else the free badge (pane layout only). */}
-        {selected ? (
-          <span className="flex size-3 shrink-0 items-center justify-center">
-            <Check className="size-3 text-current" strokeWidth={1.7} />
-          </span>
-        ) : withDetailPane && model.pricing?.isFree ? (
-          <Badge variant="secondary" className="h-4 shrink-0 px-1 font-normal">
-            {freeBadgeLabel}
-          </Badge>
-        ) : null}
+        <span className="min-w-0 flex-1 truncate leading-4">
+          {platformModelName}
+        </span>
+        <span className="flex size-3 shrink-0 items-center justify-center">
+          {selected ? <Check className="size-3 text-current" strokeWidth={1.7} /> : null}
+        </span>
       </button>
-      {withDetailPane ? null : (
-        <>
-          <InputModalityIcons modalities={model.inputModalities} labels={inputModalityLabels} />
-          {!model.pricing && reservePricingSlot ? <span aria-hidden="true" className="h-7 w-7 shrink-0" /> : null}
-          {model.pricing ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 transition-colors hover:text-current focus-visible:text-current focus-visible:outline-none group-hover:text-current group-focus-within:text-current group-data-[selected=true]:text-current"
-                  aria-label={viewPricingLabel}
-                  aria-haspopup={onViewPricing ? "dialog" : undefined}
-                  onClick={onViewPricing ? (event) => { event.stopPropagation(); onViewPricing(event.currentTarget); } : undefined}
-                >
-                  {model.pricing.isFree ? (
-                    <TicketSlash className="size-3.5" strokeWidth={1.8} />
-                  ) : (
-                    <CircleDollarSign className="size-3.5" strokeWidth={1.8} />
-                  )}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent
-                hidden={Boolean(onViewPricing)}
-                side="right"
-                align="center"
-                sideOffset={8}
-                className="z-[80] max-w-[min(92vw,35rem)] text-left font-medium tabular-nums"
-              >
-                <ModelPricingTooltipContent
-                  platformModelName={model.platformModelName}
-                  protocols={model.protocols}
-                  pricing={model.pricing}
-                  billingDisplay={billingDisplay}
-                  labels={pricingLabels}
-                />
-              </TooltipContent>
-            </Tooltip>
-          ) : null}
-        </>
-      )}
+      <ModelInputModalities modalities={model.inputModalities} labels={inputModalityLabels} />
+      {model.pricing ? <ModelPricingButton platformModelName={model.platformModelName} protocols={model.protocols} pricing={model.pricing} billingDisplay={billingDisplay} labels={pricingLabels} viewPricingLabel={viewPricingLabel} /> : null}
     </div>
   );
 }
-
-// 128000 → "128K", 65536 → "64K": catalogs mix decimal and binary windows, so a window that is a
-// round decimal stays decimal and 1024 is used only for the windows that are not.
-function formatContextWindow(tokens: number): string {
-  const binary = tokens % 1_000 !== 0 && tokens % 1_024 === 0;
-  const kilo = binary ? 1_024 : 1_000;
-  const mega = kilo * kilo;
-  if (tokens >= mega) {
-    return `${Number((tokens / mega).toFixed(1))}M`;
-  }
-  return `${Math.round(tokens / kilo)}K`;
-}
-
-type DetailPriceTable = {
-  /** One heading per tier; empty for a single price column. */
-  tiers: string[];
-  rows: { label: string; values: string[] }[];
-};
 
 function resolveImagePriceRows(
   pricing: NonNullable<ChatModelOption["pricing"]>,
   display: BillingDisplayOptions,
   labels: ModelPricingTooltipContentProps["labels"],
-): DetailPriceTable["rows"] | null {
+): { label: string; values: string[] }[] | null {
   const image = pricing.mode === "token" ? parseImagePricing(pricing.imagePricingJSON) : null;
   if (!image) return null;
   return IMAGE_PRICING_DISPLAY_FIELDS.map(([field, label]) => ({
@@ -682,241 +637,14 @@ function resolveImagePriceRows(
   }));
 }
 
-// Every charge as one table: a column per tier (or one column), a row per charge. Cache rows that
-// are zero in every tier are dropped, and the cache-write row uses the 5m price the note explains.
-function resolveDetailPriceTable(
-  pricing: NonNullable<ChatModelOption["pricing"]>,
-  protocols: readonly string[],
-  billingDisplay: BillingDisplayOptions,
-  labels: React.ComponentProps<typeof ModelPricingTooltipContent>["labels"],
-): DetailPriceTable {
-  const price = (value: number) => formatPricingUnitUSD(value, billingDisplay);
-  if (pricing.mode === "call") {
-    return { tiers: [], rows: [{ label: labels.perCall, values: [price(pricing.callUSDPerCall)] }] };
-  }
-  if (pricing.mode === "duration") {
-    return { tiers: [], rows: [{ label: labels.perSecond, values: [price(pricing.durationUSDPerSecond)] }] };
-  }
-  const imageRows = resolveImagePriceRows(pricing, billingDisplay, labels);
-  if (imageRows) return { tiers: [], rows: imageRows };
-  const tiered = pricing.mode === "tiered" && pricing.tiers.length > 0;
-  const columns = tiered ? pricing.tiers : [pricing];
-  const rows: DetailPriceTable["rows"] = [
-    { label: labels.input, values: columns.map((tier) => price(tier.inputUSDPerMTokens)) },
-    { label: labels.output, values: columns.map((tier) => price(tier.outputUSDPerMTokens)) },
-  ];
-  if (columns.some((tier) => tier.cacheReadUSDPerMTokens > 0)) {
-    rows.push({ label: labels.cacheRead, values: columns.map((tier) => price(tier.cacheReadUSDPerMTokens)) });
-  }
-  if (columns.some((tier) => tier.cacheWriteUSDPerMTokens > 0)) {
-    rows.push({
-      label: cacheWritePricingLabel(protocols, labels.billingDisplay),
-      values: columns.map((tier) => price(resolveCacheWritePricingUSD(protocols, tier.cacheWriteUSDPerMTokens, pricing))),
-    });
-  }
-  return {
-    tiers: tiered ? pricing.tiers.map((tier) => formatTierRange(tier.fromTokens, tier.upToTokens)) : [],
-    rows,
-  };
-}
-
-// One line of the detail pane, the same height as a menu row: muted label left, value right.
-function ModelDetailLine({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div className="flex h-7 items-center justify-between gap-4 px-2">
-      <dt className="shrink-0 text-muted-foreground">{label}</dt>
-      <dd className="flex min-w-0 items-center justify-end gap-1.5 truncate tabular-nums text-foreground">{children}</dd>
-    </div>
-  );
-}
-
-// Modalities as plain icons; each keeps its name for hover and screen readers.
-function ModalityIcons({ modalities, labels }: { modalities: ModelModality[]; labels: InputModalityLabels }) {
-  return (
-    <span className="flex items-center gap-1.5" role="list">
-      {modalities.map((modality) => {
-        const Icon = MODALITY_ICONS[modality];
-        const name = labels.names[modality];
-        return (
-          <span key={modality} role="listitem" title={name} className="inline-flex">
-            <Icon className="size-3.5" strokeWidth={1.6} aria-hidden="true" />
-            <span className="sr-only">{name}</span>
-          </span>
-        );
-      })}
-    </span>
-  );
-}
-
-// Third level of the picker, shown while a model row is hovered: input and output modalities,
-// context window and price, in the menu's own rhythm.
-function ChatModelDetailPanel({
-  model,
-  inputModalityLabels,
-  pricingLabels,
-  billingDisplay,
-  billingEnabled,
-}: {
-  model: ChatModelOption;
-  inputModalityLabels: InputModalityLabels;
-  pricingLabels: React.ComponentProps<typeof ModelPricingTooltipContent>["labels"];
-  billingDisplay: BillingDisplayOptions;
-  billingEnabled: boolean;
-}) {
-  const t = useTranslations("chat.modelPicker.detail");
-  const pricing = model.pricing;
-  const paid = pricing && !pricing.isFree ? pricing : null;
-  const table = paid ? resolveDetailPriceTable(paid, model.protocols, billingDisplay, pricingLabels) : null;
-  const priceUnit = paid && (paid.mode === "token" || paid.mode === "tiered") ? t("perMillion") : null;
-  const periods = paid?.schedulePeriods ?? [];
-  const currentPeriod = paid ? resolveCurrentSchedulePeriod(periods, paid.scheduleUTCOffsetMinutes ?? 0) : null;
-  const cacheWriteNote = paid ? cacheWritePricingNote(model.protocols, paid, pricingLabels.billingDisplay) : null;
-  const imageOnly = !model.kinds.includes("chat") && model.kinds.some((kind) => kind === "image_gen" || kind === "image_edit");
-  // Presentation fallback only; file eligibility still uses the declared model capabilities.
-  const inputs: ModelModality[] = model.inputModalities.length > 0 ? model.inputModalities
-    : imageOnly ? (model.kinds.includes("image_edit") ? ["text", "image"] : ["text"]) : [];
-  const outputs: ModelModality[] = model.outputModalities.length > 0 ? model.outputModalities : imageOnly ? ["image"] : [];
-
-  return (
-    <div
-      data-detail-model={model.platformModelName}
-      className="flex max-h-full min-h-0 flex-col overflow-y-auto p-1.5 text-[11px] leading-4"
-    >
-      <div className="flex h-7 shrink-0 items-center px-2">
-        <span className="min-w-0 truncate font-medium text-foreground">{resolveModelOptionLabel(model.platformModelName)}</span>
-      </div>
-      <dl className="shrink-0">
-        <ModelDetailLine label={t("modalities")}>
-          {inputs.length > 0 ? (
-            <>
-              <ModalityIcons modalities={inputs} labels={inputModalityLabels} />
-              {outputs.length > 0 ? (
-                <>
-                  <ArrowRight className="size-3 text-muted-foreground" strokeWidth={1.6} aria-hidden="true" />
-                  <ModalityIcons modalities={outputs} labels={inputModalityLabels} />
-                </>
-              ) : null}
-            </>
-          ) : (
-            <span className="text-muted-foreground">{t("unknown")}</span>
-          )}
-        </ModelDetailLine>
-        {!imageOnly ? <ModelDetailLine label={t("context")}>
-          {model.contextWindow !== null ? (
-            formatContextWindow(model.contextWindow)
-          ) : (
-            <span className="text-muted-foreground">{t("unknown")}</span>
-          )}
-        </ModelDetailLine> : null}
-        {billingEnabled && model.personalProviderName !== null ? (
-          // Takes the price row: the platform does not charge for a user-key model, the provider does.
-          <ModelDetailLine label={t("price")}>{t("chargedByProvider")}</ModelDetailLine>
-        ) : null}
-      </dl>
-      {!table && !pricing?.isFree ? null : (
-        <>
-          <div className="mx-2 my-1 h-px shrink-0 bg-border" />
-          {!table ? (
-            <dl className="shrink-0">
-              <ModelDetailLine label={t("price")}>{pricingLabels.freeModel}</ModelDetailLine>
-            </dl>
-          ) : (
-            <table className="w-full shrink-0 border-separate border-spacing-0 tabular-nums">
-              <thead>
-                <tr className="h-7 text-muted-foreground">
-                  <th scope="col" className="px-2 text-left font-normal">{t("price")}</th>
-                  {table.tiers.length > 0 ? (
-                    table.tiers.map((tier) => (
-                      <th key={tier} scope="col" className="whitespace-nowrap pr-2 text-right font-normal">{tier}</th>
-                    ))
-                  ) : (
-                    <th scope="col" className="pr-2 text-right font-normal">{priceUnit}</th>
-                  )}
-                </tr>
-              </thead>
-              <tbody>
-                {table.rows.map((row) => (
-                  <tr key={row.label} className="h-7">
-                    <th scope="row" className="whitespace-nowrap px-2 text-left font-normal text-muted-foreground">{row.label}</th>
-                    {row.values.map((value, index) => (
-                      <td key={`${row.label}-${table.tiers[index] ?? index}`} className="whitespace-nowrap pr-2 text-right text-foreground">
-                        {value}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </>
-      )}
-      {table && table.tiers.length > 0 && priceUnit ? (
-        <p className="shrink-0 px-2 pb-1 text-right text-[10px] text-muted-foreground">{priceUnit}</p>
-      ) : null}
-      {periods.length > 0 ? (
-        <>
-          <div className="mx-2 my-1 h-px shrink-0 bg-border" />
-          <div className="flex h-7 shrink-0 items-center px-2 text-muted-foreground">{t("schedule")}</div>
-          <dl className="shrink-0">
-            {periods.map((period) => {
-              const active = period === currentPeriod;
-              return (
-                <div
-                  key={`${period.name}-${period.start}-${period.end}`}
-                  className={cn(
-                    "mx-1 flex h-7 items-center justify-between gap-3 rounded-md px-1 tabular-nums",
-                    active ? "bg-accent text-accent-foreground" : "text-muted-foreground",
-                  )}
-                >
-                  <dt className="min-w-0 truncate">
-                    {period.name}
-                    <span className="ml-1.5 text-[10px] text-muted-foreground">
-                      {formatScheduleWeekdays(period.weekdays, pricingLabels.schedule)}{" "}
-                      {pricingLabels.schedule.timeRange(period.start, period.end)}
-                    </span>
-                  </dt>
-                  <dd className={cn("shrink-0", active ? "text-foreground" : null)}>
-                    {active ? <span className="sr-only">{pricingLabels.schedule.now}</span> : null}
-                    {formatRateMultiplier(period.ratePercent)}
-                  </dd>
-                </div>
-              );
-            })}
-          </dl>
-        </>
-      ) : null}
-      {cacheWriteNote ? (
-        <p className="shrink-0 px-2 pb-1 pt-1.5 text-[10px] leading-[1.45] text-muted-foreground">{cacheWriteNote}</p>
-      ) : null}
-    </div>
-  );
-}
-
-type DetailPaneLayout = {
-  left: number;
-  top: number;
-  width: number;
-  /** Height of the details inside the border; null until they have been measured. */
-  bodyHeight: number | null;
-};
-
-function sameDetailLayout(a: DetailPaneLayout | null, b: DetailPaneLayout | null): boolean {
-  return a === b || (a !== null && b !== null && a.left === b.left && a.top === b.top && a.width === b.width && a.bodyHeight === b.bodyHeight);
-}
-
 function findSubmenuContent(submenu: HTMLElement, groupKey: string): HTMLElement | null {
   return submenu.querySelector<HTMLElement>(`[data-model-submenu-group="${CSS.escape(groupKey)}"]`);
-}
-
-function findDetailContent(pane: HTMLElement, modelName: string): HTMLElement | null {
-  return pane.querySelector<HTMLElement>(`[data-detail-model="${CSS.escape(modelName)}"]`);
 }
 
 export function ChatModelPicker({
   modelOptions,
   billingDisplayCurrency,
   billingDisplayUsdToCnyRate,
-  billingEnabled,
   selectedPlatformModelName,
   loading,
   disabled,
@@ -931,25 +659,11 @@ export function ChatModelPicker({
   const [open, setOpen] = React.useState(false);
   const [activeGroupKey, setActiveGroupKey] = React.useState("");
   const [mobileGroupKey, setMobileGroupKey] = React.useState<string | null>(null);
-  const [mobilePricingModel, setMobilePricingModel] = React.useState<ChatModelOption | null>(null);
-  const mobilePricingTriggerRef = React.useRef<HTMLButtonElement | null>(null);
   const [desktopSubmenuSide, setDesktopSubmenuSide] = React.useState<"right" | "left">("right");
   const [desktopSubmenuTop, setDesktopSubmenuTop] = React.useState(0);
   const [desktopSubmenuWidth, setDesktopSubmenuWidth] = React.useState(DESKTOP_MODEL_MENU_WIDTH);
   // The submenu's content height, set explicitly so switching groups can animate it.
   const [desktopSubmenuBodyHeight, setDesktopSubmenuBodyHeight] = React.useState<number | null>(null);
-  // Detail pane placement inside the menu root box; null when the window has no room for it.
-  const [desktopDetailLayout, setDesktopDetailLayout] = React.useState<DetailPaneLayout | null>(null);
-  // The model whose row is hovered (or keyboard-focused). Mirrored in a ref so the placement code
-  // reads the current row without depending on render timing, and stays a stable callback.
-  const [desktopDetailModelName, setDesktopDetailModelName] = React.useState<string | null>(null);
-  const desktopDetailModelNameRef = React.useRef<string | null>(null);
-  const setDesktopDetailModel = React.useCallback((name: string | null) => {
-    desktopDetailModelNameRef.current = name;
-    setDesktopDetailModelName(name);
-  }, []);
-  const desktopDetailPaneRef = React.useRef<HTMLDivElement | null>(null);
-  const desktopDetailBodyRef = React.useRef<HTMLDivElement | null>(null);
   const [desktopGroupListMaxHeight, setDesktopGroupListMaxHeight] = React.useState(320);
   const [desktopSubmenuListMaxHeight, setDesktopSubmenuListMaxHeight] = React.useState(320);
   const desktopMenuRootRef = React.useRef<HTMLDivElement | null>(null);
@@ -965,7 +679,6 @@ export function ChatModelPicker({
   const desktopSubmenuBodyRef = React.useRef<HTMLDivElement | null>(null);
   const pendingDesktopFocusRef = React.useRef(false);
   const desktopGroupItemRefs = React.useRef(new Map<string, HTMLButtonElement>());
-  const desktopModelRowRefs = React.useRef(new Map<string, HTMLDivElement>());
   const selectedModel = React.useMemo(
     () => modelOptions.find((item) => item.platformModelName === selectedPlatformModelName) ?? null,
     [modelOptions, selectedPlatformModelName],
@@ -989,26 +702,12 @@ export function ChatModelPicker({
     [activeDesktopGroupKey, modelGroups],
   );
   const hasDesktopModelSubmenu = Boolean(activeDesktopGroup?.items.length);
-  const desktopGroupHasPricing = Boolean(activeDesktopGroup?.items.some((item) => item.pricing));
   const mobileGroup = React.useMemo(
     () => modelGroups.find((group) => group.key === mobileGroupKey) ?? null,
     [mobileGroupKey, modelGroups],
   );
-  const desktopDetailPaneVisible = desktopDetailLayout !== null && !isMobile;
-  // The third level opens only while a model row is hovered (or focused), like a submenu.
-  const desktopDetailModel = React.useMemo(
-    () => activeDesktopGroup?.items.find((item) => item.platformModelName === desktopDetailModelName) ?? null,
-    [activeDesktopGroup, desktopDetailModelName],
-  );
-  const desktopDetailShown = desktopDetailPaneVisible && desktopDetailModel !== null;
-  const desktopDetailPaneId = React.useId();
-  const reduceMotion = useReducedMotion();
-  // Which way the pointer moved, so the next group's models and the next model's details slide in
-  // from that side.
+  // Which way the pointer moved, so the next group's models slide in from that side.
   const desktopGroupDirection = useSwitchDirection(activeDesktopGroup ? modelGroups.indexOf(activeDesktopGroup) : -1);
-  const desktopDetailDirection = useSwitchDirection(
-    activeDesktopGroup && desktopDetailModel ? activeDesktopGroup.items.indexOf(desktopDetailModel) : -1,
-  );
   const inputModalityLabels = React.useMemo<InputModalityLabels>(
     () => ({
       title: t("inputModalities.title"),
@@ -1078,12 +777,6 @@ export function ChatModelPicker({
       setMobileGroupKey(null);
     }
   }, [isMobile, open]);
-
-  // Keep the state object when nothing moved: metrics run on every resize-observer pass and would
-  // otherwise re-render the whole menu.
-  const setDetailLayout = React.useCallback((next: DetailPaneLayout | null) => {
-    setDesktopDetailLayout((current) => (sameDetailLayout(current, next) ? current : next));
-  }, []);
 
   const updateDesktopSubmenuMetrics = React.useCallback(() => {
     if (!open || isMobile) {
@@ -1172,77 +865,13 @@ export function ChatModelPicker({
       nextSubmenuBodyHeight = submenuScrollViewport ? Math.min(submenuContentHeight, nextSubmenuListMaxHeight) : null;
     }
 
-    // The pane is placed level with the row it describes, like the submenu is with its group.
-    const detailModelName = desktopDetailModelNameRef.current;
-    const anchorRow = detailModelName ? desktopModelRowRefs.current.get(detailModelName) : null;
-    // Where the row ends up, not where it is drawn now: the submenu may still be gliding to its new
-    // top and the row's list sliding in, so take its layout offset from the submenu's target top.
-    const anchorOffset = anchorRow && submenu ? layoutOffsetTop(anchorRow, submenu) : Number.NaN;
-    const anchorTop = Number.isFinite(anchorOffset) ? nextSubmenuTop + anchorOffset : nextSubmenuTop;
-    // Height comes from the natural content, since the rendered box is capped by the previous one.
-    const pane = desktopDetailPaneRef.current;
-    const paneBody = desktopDetailBodyRef.current;
-    const paneBorder = pane && paneBody ? pane.offsetHeight - paneBody.offsetHeight : 1;
-    const paneContent = pane && detailModelName ? findDetailContent(pane, detailModelName) : null;
-    const paneContentHeight = paneContent?.scrollHeight ?? 0;
-    const paneHeight = Math.max(paneContentHeight + paneBorder, DESKTOP_DETAIL_PANE_MIN_HEIGHT);
-    const paneTopFloor = viewportTop - menuRootRect.top;
-    const maxDetailTop = viewportBottom - menuRootRect.top - paneHeight;
-    const nextDetailTop = Math.max(paneTopFloor, Math.min(anchorTop, maxDetailTop));
-    const nextDetailMaxHeight = viewportBottom - (menuRootRect.top + nextDetailTop);
-    const detailHeightFits = nextDetailMaxHeight >= DESKTOP_DETAIL_PANE_MIN_HEIGHT;
-    const nextDetailBodyHeight = paneContent ? Math.min(paneContentHeight, nextDetailMaxHeight - paneBorder) : null;
-    // Placed next to the submenu it needs its own width on top of what the submenu already takes.
-    const submenuOccupiedWidth = nextSubmenuWidth + DESKTOP_MODEL_SUBMENU_GAP;
-    const outerAvailableWidth =
-      (nextSubmenuSide === "right" ? rightAvailableWidth : leftAvailableWidth) -
-      submenuOccupiedWidth -
-      DESKTOP_DETAIL_PANE_GAP;
-    if (detailHeightFits && outerAvailableWidth >= DESKTOP_DETAIL_PANE_MIN_WIDTH) {
-      const outerWidth = Math.min(DESKTOP_DETAIL_PANE_WIDTH, outerAvailableWidth);
-      setDetailLayout({
-        left:
-          nextSubmenuSide === "right"
-            ? menuRootRect.width + submenuOccupiedWidth + DESKTOP_DETAIL_PANE_GAP
-            : -(submenuOccupiedWidth + DESKTOP_DETAIL_PANE_GAP + outerWidth),
-        width: outerWidth,
-        top: nextDetailTop,
-        bodyHeight: nextDetailBodyHeight,
-      });
-    } else {
-      // Not enough room beside the submenu: cover the group menu instead. The pane only shows while
-      // a model row is hovered, so the group list stays reachable. Coordinates are menu-root relative
-      // and may go negative, because they start at the group menu.
-      const overlayOnLeft = nextSubmenuSide === "right";
-      const overlayAvailableWidth = overlayOnLeft
-        ? menuRootRect.left + menuRootRect.width - viewportLeft
-        : viewportRight - menuRootRect.left;
-      const overlayWidth = Math.min(DESKTOP_DETAIL_PANE_WIDTH, overlayAvailableWidth);
-      // It has to hide the group menu completely, otherwise the peeking edge looks broken.
-      const overlayFits =
-        detailHeightFits &&
-        overlayWidth >= DESKTOP_DETAIL_PANE_MIN_WIDTH &&
-        overlayWidth >= groupMenuRect.width;
-      setDetailLayout(
-        overlayFits
-          ? {
-              // Aligned to the group menu's right edge, so it covers that menu exactly.
-              left: overlayOnLeft ? groupMenuRect.width - overlayWidth : 0,
-              width: overlayWidth,
-              top: nextDetailTop,
-              bodyHeight: nextDetailBodyHeight,
-            }
-          : null,
-      );
-    }
-
     setDesktopSubmenuSide(nextSubmenuSide);
     setDesktopSubmenuTop(nextSubmenuTop);
     setDesktopSubmenuBodyHeight(nextSubmenuBodyHeight);
     setDesktopSubmenuWidth(nextSubmenuWidth);
     setDesktopGroupListMaxHeight(nextGroupListMaxHeight);
     setDesktopSubmenuListMaxHeight(nextSubmenuListMaxHeight);
-  }, [activeDesktopGroup, hasDesktopModelSubmenu, isMobile, open, setDetailLayout]);
+  }, [activeDesktopGroup, hasDesktopModelSubmenu, isMobile, open]);
 
   React.useLayoutEffect(() => {
     updateDesktopSubmenuMetrics();
@@ -1301,14 +930,6 @@ export function ChatModelPicker({
     };
   }, [activeDesktopGroup, desktopMenuMounted, hasDesktopModelSubmenu, isMobile, open, updateDesktopSubmenuMetrics]);
 
-  // The pane's height depends on the model it describes, so place it once that content is in the
-  // DOM; a layout effect runs before paint, so the pane never shows at a stale position.
-  React.useLayoutEffect(() => {
-    if (desktopDetailModelName) {
-      updateDesktopSubmenuMetrics();
-    }
-  }, [desktopDetailModelName, updateDesktopSubmenuMetrics]);
-
   React.useLayoutEffect(() => {
     if (!open || isMobile || !desktopMenuMounted || desktopSubmenuBodyHeight === null || desktopSubmenuListMaxHeight <= 0 || activeDesktopGroupKey !== selectedGroupKey) return;
     const frame = window.requestAnimationFrame(() => {
@@ -1320,7 +941,6 @@ export function ChatModelPicker({
       if (pendingDesktopFocusRef.current) {
         button.focus({ preventScroll: true });
         pendingDesktopFocusRef.current = false;
-        setDesktopDetailModel(null);
       }
       const rowRect = button.getBoundingClientRect();
       const viewportRect = viewport.getBoundingClientRect();
@@ -1332,7 +952,7 @@ export function ChatModelPicker({
       }
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [open, isMobile, desktopMenuMounted, activeDesktopGroupKey, selectedGroupKey, desktopSubmenuBodyHeight, desktopSubmenuListMaxHeight, setDesktopDetailModel]);
+  }, [open, isMobile, desktopMenuMounted, activeDesktopGroupKey, selectedGroupKey, desktopSubmenuBodyHeight, desktopSubmenuListMaxHeight]);
 
   const handleOpenChange = React.useCallback(
     (nextOpen: boolean) => {
@@ -1343,11 +963,9 @@ export function ChatModelPicker({
           void Promise.resolve(onModelCatalogRefresh()).catch((): undefined => undefined);
         }
       }
-      // Esc and outside clicks close the menu without a mouseleave, so drop the hovered row here.
-      setDesktopDetailModel(null);
       setOpen(nextOpen);
     },
-    [modelGroups, onModelCatalogRefresh, selectedGroupKey, setDesktopDetailModel],
+    [modelGroups, onModelCatalogRefresh, selectedGroupKey],
   );
 
   const closeMenu = React.useCallback(() => {
@@ -1402,14 +1020,13 @@ export function ChatModelPicker({
             sideOffset={DESKTOP_MODEL_MENU_SIDE_OFFSET}
             collisionPadding={24}
             onInteractOutside={(event) => {
-              if (mobilePricingModel) event.preventDefault();
+              if (event.target instanceof Element && event.target.closest("[data-model-pricing-content]")) event.preventDefault();
             }}
             onOpenAutoFocus={(event) => {
               if (!isMobile) {
                 event.preventDefault();
                 // Focus the incoming group's row after portal mount and sizing;
                 // Radix's default focus also scrolls animated clipping ancestors.
-                setDesktopDetailModel(null);
               }
             }}
             className={cn(
@@ -1459,12 +1076,6 @@ export function ChatModelPicker({
                             pricingLabels={pricingLabels}
                             inputModalityLabels={inputModalityLabels}
                             viewPricingLabel={t("viewPricing")}
-                            freeBadgeLabel={t("freeBadge")}
-                            reservePricingSlot={mobileGroup.items.some((item) => item.pricing)}
-                            onViewPricing={(trigger) => {
-                              mobilePricingTriggerRef.current = trigger;
-                              setMobilePricingModel(item);
-                            }}
                           />
                         ))}
                       </div>
@@ -1521,15 +1132,7 @@ export function ChatModelPicker({
                     >
                       <div data-model-submenu-group={activeDesktopGroup.key}>
                         <ModelMenuScrollContainer maxHeight={desktopSubmenuListMaxHeight}>
-                          <div
-                            className="flex flex-col gap-0.5"
-                            onMouseLeave={() => setDesktopDetailModel(null)}
-                            onBlur={(event) => {
-                              if (!event.currentTarget.contains(event.relatedTarget)) {
-                                setDesktopDetailModel(null);
-                              }
-                            }}
-                          >
+                          <div className="flex flex-col gap-0.5">
                             {activeDesktopGroup.items.map((item) => (
                               <ChatModelMenuItem
                                 key={item.platformModelName}
@@ -1543,22 +1146,6 @@ export function ChatModelPicker({
                                 pricingLabels={pricingLabels}
                                 inputModalityLabels={inputModalityLabels}
                                 viewPricingLabel={t("viewPricing")}
-                                reservePricingSlot={desktopGroupHasPricing}
-                                withDetailPane={desktopDetailPaneVisible}
-                                describedBy={
-                                  desktopDetailShown && desktopDetailLayout && desktopDetailModel?.platformModelName === item.platformModelName
-                                    ? desktopDetailPaneId
-                                    : undefined
-                                }
-                                freeBadgeLabel={t("freeBadge")}
-                                onHover={() => setDesktopDetailModel(item.platformModelName)}
-                                rowRef={(node) => {
-                                  if (node) {
-                                    desktopModelRowRefs.current.set(item.platformModelName, node);
-                                    return;
-                                  }
-                                  desktopModelRowRefs.current.delete(item.platformModelName);
-                                }}
                               />
                             ))}
                           </div>
@@ -1568,45 +1155,6 @@ export function ChatModelPicker({
                   </MorphingCard>
                 ) : null}
 
-                <AnimatePresence>
-                  {desktopDetailShown && desktopDetailLayout ? (
-                    <MorphingCard
-                      key="detail"
-                      ref={desktopDetailPaneRef}
-                      bodyRef={desktopDetailBodyRef}
-                      id={desktopDetailPaneId}
-                      top={desktopDetailLayout.top}
-                      bodyHeight={desktopDetailLayout.bodyHeight}
-                      style={{
-                        left: desktopDetailLayout.left,
-                        width: desktopDetailLayout.width,
-                        // Grow out of the submenu it belongs to.
-                        transformOrigin: desktopDetailLayout.left > 0 ? "left center" : "right center",
-                      }}
-                      initial={{ opacity: 0, scale: reduceMotion ? 1 : 0.96 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      exit={{ opacity: 0, scale: reduceMotion ? 1 : 0.96 }}
-                      transition={{ duration: 0.15, ease: "easeOut" }}
-                      className="absolute z-10 flex flex-col overflow-hidden rounded-xl border-[0.5px] border-border bg-popover shadow-xs"
-                    >
-                      <SlideSwitch
-                        itemKey={desktopDetailModel.platformModelName}
-                        direction={desktopDetailDirection}
-                        axis="y"
-                        duration={MORPH_DURATION_S}
-                        className="h-full"
-                      >
-                        <ChatModelDetailPanel
-                          model={desktopDetailModel}
-                          inputModalityLabels={inputModalityLabels}
-                          pricingLabels={pricingLabels}
-                          billingDisplay={billingDisplay}
-                          billingEnabled={billingEnabled}
-                        />
-                      </SlideSwitch>
-                    </MorphingCard>
-                  ) : null}
-                </AnimatePresence>
 
                 <div
                   ref={desktopGroupMenuRef}
@@ -1669,35 +1217,6 @@ export function ChatModelPicker({
             )}
         </PopoverContent>
       </Popover>
-      <Sheet open={mobilePricingModel !== null} onOpenChange={(nextOpen) => { if (!nextOpen) setMobilePricingModel(null); }}>
-        <SheetContent
-          side="bottom"
-          className="max-h-[min(80dvh,36rem)] gap-0 rounded-xl"
-          aria-describedby={undefined}
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            mobilePricingTriggerRef.current?.focus({ preventScroll: true });
-          }}
-        >
-          <SheetHeader className="px-4 pb-3 pt-4 pr-12">
-            <SheetTitle>{mobilePricingModel ? resolveModelOptionLabel(mobilePricingModel.platformModelName) : t("viewPricing")}</SheetTitle>
-            <p className="text-xs text-muted-foreground">{t("viewPricing")}</p>
-          </SheetHeader>
-          <div className="min-h-0 overflow-auto overscroll-contain px-4 pb-4">
-            {mobilePricingModel?.pricing ? (
-              <div className="overflow-x-auto rounded-md bg-foreground p-3 text-background text-xs tabular-nums">
-                <ModelPricingTooltipContent
-                  platformModelName={mobilePricingModel.platformModelName}
-                  protocols={mobilePricingModel.protocols}
-                  pricing={mobilePricingModel.pricing}
-                  billingDisplay={billingDisplay}
-                  labels={pricingLabels}
-                />
-              </div>
-            ) : null}
-          </div>
-        </SheetContent>
-      </Sheet>
       </div>
   );
 }

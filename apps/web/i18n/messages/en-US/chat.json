@@ -742,17 +742,7 @@
       "attachment": "files"
     },
     "viewPricing": "View pricing",
-    "freeBadge": "Free",
     "personalBadge": "BYOK",
-    "detail": {
-      "modalities": "Modalities",
-      "context": "Context",
-      "price": "Price",
-      "perMillion": "per 1M tokens",
-      "schedule": "Time-of-day rates",
-      "unknown": "Unknown",
-      "chargedByProvider": "Charged by provider"
-    },
     "freeModel": "Free model",
     "freeModelDescription": "No usage balance will be deducted",
     "tieredPricing": "Tiered pricing",
