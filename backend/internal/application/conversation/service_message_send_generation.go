@@ -12,6 +12,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/pkg/traceid"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/repository"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/deepseekmodel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
@@ -38,6 +39,7 @@ type routeGenerationContext struct {
 	attributionReferer      string
 	attributionTitle        string
 	contextObservationScope repository.HistoricalMessageScope
+	requestDateContext      func() string
 }
 
 type routeGenerationPreparationInput struct {
@@ -94,11 +96,12 @@ func (s *Service) prepareRouteGeneration(ctx context.Context, input routeGenerat
 		reasoningContentPassback: reasoningContentPassback,
 	}
 
-	llmMessages := promptPlan.Messages
-	if strings.EqualFold(strings.TrimSpace(route.UpstreamModel), "deepseek-flash") {
+	llmMessages := withDeepSeekRequestDate(promptPlan.Messages, route, gen.requestDateContext)
+	if deepseekmodel.IsFlash(route.UpstreamModel) {
 		llmMessages = restoreDeepSeekURLContext(llmMessages)
 	}
 	filteredOptions, reasoningEffort := resolveChatModelOptions(messageInput.Options, route.Protocol, modelOptionPolicyConfig{
+		UpstreamModel:         route.UpstreamModel,
 		Mode:                  cfg.ModelOptionPolicyMode,
 		AllowedPathsJSON:      cfg.ModelOptionAllowedPaths,
 		DeniedPathsJSON:       cfg.ModelOptionDeniedPaths,
@@ -131,7 +134,7 @@ func (s *Service) prepareRouteGeneration(ctx context.Context, input routeGenerat
 		Messages:               cloneLLMMessages(llmMessages),
 		Tools:                  gen.tools,
 		Options:                filteredOptions,
-		NativeToolKeys:         authorizedNativeToolKeys(route.Protocol, filteredOptions, route.ModelCapabilitiesJSON),
+		NativeToolKeys:         authorizedNativeToolKeys(route.Protocol, filteredOptions, route.ModelCapabilitiesJSON, route.UpstreamModel),
 	}
 	generateInput.NativeFiles, _ = deepSeekNativeFilesPolicy(route)
 	generateInput = enforceRouteGeneratePolicy(route.Protocol, generateInput)

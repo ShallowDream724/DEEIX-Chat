@@ -22,6 +22,16 @@ func deepSeekTestWirePayload(t *testing.T, value map[string]any) map[string]any 
 	return parsed
 }
 
+func TestDeepSeekLegacyFlashAliasesRetainServerState(t *testing.T) {
+	for _, model := range []string{"deepseek-v4-flash", "deepseek-v4-flash-vision-exp"} {
+		input := portllm.GenerateInput{Messages: []portllm.Message{{Role: "assistant", ProviderStateJSON: `{"protocol":"openai_responses","blocks":[]}`}}}
+		output := retainDeepSeekStateForRoute(portllm.RouteConfig{Protocol: portllm.AdapterDeepSeekResponses, UpstreamModel: model}, input)
+		if output.Messages[0].ProviderStateJSON != input.Messages[0].ProviderStateJSON {
+			t.Fatalf("%s discarded native continuation", model)
+		}
+	}
+}
+
 func TestDeepSeekObservedWebFixturesUseProviderSuccessfulCounters(t *testing.T) {
 	for _, tc := range []struct {
 		file, protocol, endpoint string

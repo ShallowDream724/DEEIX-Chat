@@ -11,6 +11,7 @@ import (
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/application/channel"
 	domainbilling "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/billing"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/deepseekmodel"
 )
 
 var explicitWebURLPattern = regexp.MustCompile(`https?://[^\s<>"` + "`" + `]+`)
@@ -157,7 +158,7 @@ func deepSeekExplicitURLs(input llm.GenerateInput) []string {
 }
 
 func (s *Service) prepareDeepSeekURLInput(ctx context.Context, route llm.RouteConfig, input llm.GenerateInput, authorization *domainbilling.UsageAuthorization, prepared *deepSeekURLInput, budgets ...deepSeekURLBudget) (llm.GenerateInput, map[string]int64, []llm.ToolCall, error) {
-	if !strings.EqualFold(strings.TrimSpace(route.UpstreamModel), "deepseek-flash") {
+	if !deepseekmodel.IsFlash(route.UpstreamModel) {
 		return input, nil, nil, nil
 	}
 	urls := deepSeekExplicitURLs(input)

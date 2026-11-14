@@ -7,16 +7,7 @@ import {
   readString,
   type UnknownRecord,
 } from "@/shared/lib/type-guards";
-import { readImageBillingSnapshot, type ImageBillingSnapshot } from "@/entities/billing";
-
-export type BillingServiceItemSnapshot = {
-  service_code?: string;
-  service_name?: string;
-  pricing_mode?: string;
-  call_count?: number;
-  call_nanousd_per_call?: number;
-  billed_nanousd?: number;
-};
+import { readBillingServiceItems, readImageBillingSnapshot, type BillingServiceItemSnapshot, type ImageBillingSnapshot } from "@/entities/billing";
 
 /** Backend ledger pricing snapshot (`pricing_snapshot_json`); field names match the backend. */
 export type BillingSnapshot = {
@@ -89,32 +80,6 @@ const BILLING_SNAPSHOT_NUMBER_KEYS = [
   "tiered_from_tokens",
 ] as const satisfies readonly (keyof BillingSnapshot)[];
 
-const BILLING_SERVICE_ITEM_STRING_KEYS = [
-  "service_code",
-  "service_name",
-  "pricing_mode",
-] as const satisfies readonly (keyof BillingServiceItemSnapshot)[];
-
-const BILLING_SERVICE_ITEM_NUMBER_KEYS = [
-  "call_count",
-  "call_nanousd_per_call",
-  "billed_nanousd",
-] as const satisfies readonly (keyof BillingServiceItemSnapshot)[];
-
-// Fields with an unexpected type are dropped, so display code can rely on the declared types.
-function normalizeBillingServiceItem(record: UnknownRecord): BillingServiceItemSnapshot {
-  const item: BillingServiceItemSnapshot = {};
-  for (const key of BILLING_SERVICE_ITEM_STRING_KEYS) {
-    const field = readString(record, key);
-    if (field !== undefined) item[key] = field;
-  }
-  for (const key of BILLING_SERVICE_ITEM_NUMBER_KEYS) {
-    const field = readFiniteNumber(record, key);
-    if (field !== undefined) item[key] = field;
-  }
-  return item;
-}
-
 function normalizeBillingSnapshot(record: UnknownRecord): BillingSnapshot {
   const snapshot: BillingSnapshot = {};
   snapshot.imageBilling = readImageBillingSnapshot(record);
@@ -133,7 +98,7 @@ function normalizeBillingSnapshot(record: UnknownRecord): BillingSnapshot {
   const tieredUpTo = record.tiered_up_to_tokens;
   if (tieredUpTo === null || isFiniteNumber(tieredUpTo)) snapshot.tiered_up_to_tokens = tieredUpTo;
   if (Array.isArray(record.service_items)) {
-    snapshot.service_items = record.service_items.filter(isRecord).map(normalizeBillingServiceItem);
+    snapshot.service_items = readBillingServiceItems(record);
   }
   return snapshot;
 }

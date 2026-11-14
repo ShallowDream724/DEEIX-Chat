@@ -4,6 +4,8 @@ package deepseekfiles
 import (
 	"path/filepath"
 	"strings"
+
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/deepseekmodel"
 )
 
 type Kind uint8
@@ -21,7 +23,7 @@ type Format struct {
 }
 
 func SupportsModel(model string) bool {
-	return strings.EqualFold(strings.TrimSpace(model), "deepseek-flash")
+	return deepseekmodel.IsFlash(model)
 }
 
 // Resolve only admits known document formats, never arbitrary archives or media.

@@ -116,12 +116,16 @@ export function nativeToolDefinitionVariantsFromConfig(
       return { ...base, protocol };
     }
     const configuredPayload = config.payload;
+    const legacyDeepSeekSearch = base.toolKey === "deepseek.tool_search"
+      && configuredPayload.type === "web_search"
+      && (protocol === "deepseek_responses" || protocol === "openai_responses");
     const payload = Object.keys(configuredPayload).length > 0
-      && nativeToolPayloadMatchesShape(configuredPayload, catalogDefinition.payload)
+      && (legacyDeepSeekSearch || nativeToolPayloadMatchesShape(configuredPayload, catalogDefinition.payload))
       ? configuredPayload
       : catalogDefinition.payload;
     return {
       ...catalogDefinition,
+      type: legacyDeepSeekSearch ? "web_search" : catalogDefinition.type,
       provider: config.provider || catalogDefinition.provider,
       label: config.label || catalogDefinition.label,
       description: config.description || catalogDefinition.description,

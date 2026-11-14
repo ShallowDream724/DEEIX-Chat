@@ -309,7 +309,8 @@ func shouldInlineSystemPromptToUser(route channel.ResolvedRoute) bool {
 // chatProtocolSupportsNativeSystemPrompt 只列出已经确认能承载 system 角色的聊天协议。
 func chatProtocolSupportsNativeSystemPrompt(protocol string) bool {
 	switch llm.NormalizeAdapter(protocol) {
-	case llm.AdapterOpenAIResponses,
+	case llm.AdapterDeepSeekResponses,
+		llm.AdapterOpenAIResponses,
 		llm.AdapterOpenAIChatCompletions,
 		llm.AdapterAnthropicMessages,
 		llm.AdapterGoogleGenerateContent,

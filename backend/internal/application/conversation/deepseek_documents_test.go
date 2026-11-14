@@ -24,6 +24,8 @@ func TestDeepSeekDocumentsAndPDFHaveIndependentAdmission(t *testing.T) {
 		accepted                                  []bool
 	}{
 		{"documents", llm.AdapterDeepSeekResponses, "deepseek-flash", "https://proxy.example", `{"inputModalities":["text","document"]}`, []bool{false, true, true, true, true, false, false, false, false}},
+		{"legacy Flash alias documents", llm.AdapterDeepSeekResponses, "deepseek-v4-flash", "https://proxy.example", `{"inputModalities":["text","document"]}`, []bool{false, true, true, true, true, false, false, false, false}},
+		{"legacy vision alias documents", llm.AdapterDeepSeekResponses, "deepseek-v4-flash-vision-exp", "https://proxy.example", `{"inputModalities":["text","document"]}`, []bool{false, true, true, true, true, false, false, false, false}},
 		{"pdf only", llm.AdapterDeepSeekResponses, "deepseek-flash", "https://proxy.example", `{"inputModalities":["text","pdf"]}`, []bool{true, false, false, false, false, false, false, false, false}},
 		{"both and native spreadsheet", llm.AdapterDeepSeekResponses, "deepseek-flash", "https://proxy.example", `{"inputModalities":["text","pdf","document"],"nativeFiles":{"spreadsheet":"native"}}`, []bool{true, true, true, true, true, true, false, false, false}},
 		{"text only", llm.AdapterDeepSeekResponses, "deepseek-flash", "https://api.deepseek.com", `{"inputModalities":["text"]}`, nil},

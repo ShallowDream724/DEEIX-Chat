@@ -90,7 +90,7 @@ func resolveChatModelOptions(options map[string]any, protocol string, cfg modelO
 		result, level = resolveChatReasoning(result, protocolKey, *capability, source, reasoningSelection, reasoningLocked)
 	}
 
-	nativeTools := nativeProviderToolsFromOption(protocolKey, result["tools"], capabilitiesJSON)
+	nativeTools := nativeProviderToolsFromOption(protocolKey, result["tools"], capabilitiesJSON, cfg.UpstreamModel)
 	delete(result, "tools")
 	for _, path := range hardDeniedModelOptionPaths {
 		deleteModelOptionPath(result, path)

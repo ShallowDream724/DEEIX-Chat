@@ -22,3 +22,12 @@ test("DeepSeek tool variants preserve their transport while sharing Responses pa
   assert.deepEqual(nativeToolDefinitionVariantsFromConfig({ ...config, protocols: ["openai_responses"] }, catalog, ["openai_responses"]).map((tool) => tool.protocol), ["openai_responses"]);
   assert.deepEqual(nativeToolDefinitionVariantsFromConfig({ ...config, protocols: [] }, catalog, ["deepseek_responses"]).map((tool) => tool.protocol), ["deepseek_responses"]);
 });
+
+test("saved Pro search payload survives a Flash catalog definition", () => {
+  const catalog = [{ protocol: "deepseek_responses", provider: "DeepSeek", toolKey: "deepseek.tool_search", type: "deepseek_web_search", payload: { type: "deepseek_web_search" } }];
+  const config = { key: "deepseek.tool_search", protocol: "", protocols: ["deepseek_responses"], type: "web_search", label: "DeepSeek Search", enabled: true, defaultEnabled: true, payload: { type: "web_search" } };
+  const [tool] = nativeToolDefinitionVariantsFromConfig(config, catalog, ["deepseek_responses"]);
+  assert.equal(tool.type, "web_search");
+  assert.equal(tool.payload.type, "web_search");
+  assert.equal(tool.toolKey, "deepseek.tool_search");
+});

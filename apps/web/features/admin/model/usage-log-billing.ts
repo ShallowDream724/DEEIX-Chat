@@ -7,10 +7,12 @@ import { type BillingDisplayLabels, type BillingDisplayOptions, billingRateMulti
 import { isRecord, parseJSON, readBoolean, readString } from "@/shared/lib/type-guards";
 import { readImageBillingSnapshot, type ImageBillingSnapshot, type ImageBillingBreakdown, type ImageBillingLabels } from "@/entities/billing";
 import { readMeteredBillingSnapshot, buildMeteredBillingTableRow, formatMeteredBillingAmountFromUSD, type MeteredBillingSnapshot, type MeteredBillingLabels } from "@/entities/billing";
+import { readBillingServiceItems, buildBillingServiceItemEntries, type BillingServiceItemSnapshot, type BillingServiceItemEntry } from "@/entities/billing";
 
 export type UsagePricingSnapshot = {
   imageBilling?: ImageBillingSnapshot;
   meteredBilling?: MeteredBillingSnapshot;
+  service_items?: BillingServiceItemSnapshot[];
   pricing_mode?: "token" | "call" | "duration" | "tiered" | string;
   provider_protocol?: string;
   duration_billable?: boolean;
@@ -161,6 +163,8 @@ export function parseUsagePricingSnapshot(raw: string): UsagePricingSnapshot {
   const snapshot: UsagePricingSnapshot = {};
   snapshot.imageBilling = readImageBillingSnapshot(parsed);
   snapshot.meteredBilling = readMeteredBillingSnapshot(parsed);
+  const serviceItems = readBillingServiceItems(parsed);
+  if (serviceItems !== undefined) snapshot.service_items = serviceItems;
   for (const key of USAGE_SNAPSHOT_STRING_KEYS) {
     const value = readString(parsed, key);
     if (value !== undefined) snapshot[key] = value;
@@ -303,6 +307,21 @@ function imageBillingTable(breakdown: ImageBillingBreakdown, title: string, labe
   };
 }
 
+function serviceItemLines(entries: BillingServiceItemEntry[], labels: UsageBillingLabels, display: BillingDisplayOptions): UsageBillingTooltipLine[] {
+  return entries.map((entry) => entry.tokenPriced
+    ? { type: "row", left: entry.label, right: formatTooltipUsageCost(nanousdToUSD(entry.billedNanousd), display) }
+    : usageCountFormulaLine(entry.label, entry.callCount, labels.callUnit, labels.callUnit, entry.rateNanousd, entry.billedNanousd, display));
+}
+
+function serviceItemTableRows(entries: BillingServiceItemEntry[], labels: UsageBillingLabels, display: BillingDisplayOptions): UsageBillingTieredTableRow[] {
+  return entries.map((entry) => ({
+    item: entry.label,
+    tokens: entry.tokenPriced ? "—" : `${entry.callCount.toLocaleString("en-US")} ${labels.callUnit}`,
+    unitPrice: entry.tokenPriced ? "—" : `${formatTooltipUnitPrice(nanousdToUSD(entry.rateNanousd), display)} / ${labels.callUnit}`,
+    amount: formatTooltipUsageCost(nanousdToUSD(entry.billedNanousd), display),
+  }));
+}
+
 export function buildUsageBillingTooltipLines(
   item: AdminUsageLogDTO,
   labels: UsageBillingLabels,
@@ -328,9 +347,11 @@ export function buildUsageBillingTooltipLines(
   const scheduleNote = billingScheduleNote(snapshot, labels.billingDisplay);
   const imageModel = snapshot.imageBilling?.model;
   const imageTool = snapshot.imageBilling?.tool;
+  const serviceEntries = buildBillingServiceItemEntries(snapshot.service_items, Boolean(imageTool));
+  const serviceLines = serviceItemLines(serviceEntries, labels, billingDisplay);
   const imageToolLines: UsageBillingTooltipLine[] = imageTool ? [imageBillingTable(imageTool, labels.image.tool, labels, billingDisplay)] : [];
   if (imageModel) {
-    return [imageBillingTable(imageModel, labels.image.model, labels, billingDisplay), ...imageToolLines, { type: "divider" }, totalLine];
+    return [imageBillingTable(imageModel, labels.image.model, labels, billingDisplay), ...serviceLines, ...imageToolLines, { type: "divider" }, totalLine];
   }
 
   if (pricingMode === "call") {
@@ -338,6 +359,7 @@ export function buildUsageBillingTooltipLines(
     const callBilled = resolveCountBilledNanousd(snapshot, "call_billed_nanousd", item.callCount, callRate);
     return [
       usageCountFormulaLine(labels.perCall, item.callCount, labels.callUnit, labels.callUnit, callRate, callBilled, billingDisplay),
+      ...serviceLines,
       ...imageToolLines,
       { type: "divider" },
       totalLine,
@@ -349,6 +371,7 @@ export function buildUsageBillingTooltipLines(
     const durationBilled = resolveCountBilledNanousd(snapshot, "duration_billed_nanousd", item.durationSeconds, durationRate);
     return [
       usageCountFormulaLine(labels.perSecond, item.durationSeconds, labels.secondUnit, labels.secondUnit, durationRate, durationBilled, billingDisplay),
+      ...serviceLines,
       ...imageToolLines,
       { type: "divider" },
       totalLine,
@@ -377,6 +400,7 @@ export function buildUsageBillingTooltipLines(
         usageTieredTableRow(labels.output, billedOutputTokens, outputRate, readUsageSnapshotNumber(snapshot, "output_billed_nanousd"), billingDisplay),
         usageTieredTableRow(labels.cacheRead, item.cacheReadTokens, cacheReadRate, readUsageSnapshotNumber(snapshot, "cache_read_billed_nanousd"), billingDisplay),
         usageTieredTableRow(cacheWriteLabel, item.cacheWriteTokens, cacheWriteRate, readUsageSnapshotNumber(snapshot, "cache_write_billed_nanousd"), billingDisplay),
+        ...serviceItemTableRows(serviceEntries, labels, billingDisplay),
       ],
       totalLabel: labels.total,
       totalAmount: item.isFreeModel && item.billedNanousd <= 0
@@ -396,6 +420,7 @@ export function buildUsageBillingTooltipLines(
     usageFormulaLine(labels.output, billedOutputTokens, outputRate, outputBilled, billingDisplay),
     usageFormulaLine(labels.cacheRead, item.cacheReadTokens, cacheReadRate, cacheReadBilled, billingDisplay),
     usageFormulaLine(cacheWriteLabel, item.cacheWriteTokens, cacheWriteRate, cacheWriteBilled, billingDisplay),
+    ...serviceLines,
     ...imageToolLines,
     { type: "divider" },
     totalLine,

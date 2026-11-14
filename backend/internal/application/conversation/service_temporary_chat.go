@@ -13,6 +13,7 @@ import (
 	domainbilling "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/billing"
 	model "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/conversation"
 	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/deepseekmodel"
 	"github.com/google/uuid"
 )
 
@@ -129,7 +130,7 @@ func (s *Service) StreamTemporaryChat(
 	}
 	s.temporaryProviderState.restore(cacheKey, messages, time.Now())
 	cacheKey.ancestry, meter.prior = s.temporaryContextCache.ancestors(cacheKey, messages, time.Now())
-	if strings.EqualFold(strings.TrimSpace(route.UpstreamModel), "deepseek-flash") {
+	if deepseekmodel.IsFlash(route.UpstreamModel) {
 		messages = restoreDeepSeekURLContext(messages)
 	}
 	uiComponents, err := s.resolveUIComponents(ctx, input.UserID, routeUIComponentIDs(route, input.UIComponentIDs))
@@ -177,9 +178,10 @@ func (s *Service) StreamTemporaryChat(
 		ToolRuntime:    toolRuntime,
 		Config:         cfg,
 	})
-	messages = stripTemporaryMessageCacheControls(promptPlan.Messages)
+	messages = withDeepSeekRequestDate(stripTemporaryMessageCacheControls(promptPlan.Messages), route, s.requestDateContext(ctx, input.UserID, startedAt))
 	fullMessages := cloneLLMMessages(messages)
 	filteredOptions, reasoningEffort := resolveChatModelOptions(input.Options, route.Protocol, modelOptionPolicyConfig{
+		UpstreamModel:         route.UpstreamModel,
 		Mode:                  cfg.ModelOptionPolicyMode,
 		AllowedPathsJSON:      cfg.ModelOptionAllowedPaths,
 		DeniedPathsJSON:       cfg.ModelOptionDeniedPaths,
@@ -195,7 +197,7 @@ func (s *Service) StreamTemporaryChat(
 		Messages:       messages,
 		Tools:          toolRuntime.definitions,
 		Options:        filteredOptions,
-		NativeToolKeys: authorizedNativeToolKeys(route.Protocol, filteredOptions, route.ModelCapabilitiesJSON),
+		NativeToolKeys: authorizedNativeToolKeys(route.Protocol, filteredOptions, route.ModelCapabilitiesJSON, route.UpstreamModel),
 		Ephemeral:      true,
 	}
 	generateInput.NativeFiles, _ = deepSeekNativeFilesPolicy(route)

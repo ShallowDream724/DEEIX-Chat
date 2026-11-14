@@ -724,6 +724,7 @@ func (s *Service) sendMessageInternal(
 		promptCacheSessionKey = strings.TrimSpace(conversation.PublicID)
 	}
 	gen := routeGenerationContext{
+		requestDateContext:     s.requestDateContext(ctx, input.UserID, startedAt),
 		input:                  input,
 		conversation:           conversation,
 		cfg:                    cfg,

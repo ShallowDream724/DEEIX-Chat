@@ -113,6 +113,18 @@ func TestDeepSeekExplicitURLPreparationDeduplicatesAndAccountsOncePerTurn(t *tes
 	}
 }
 
+func TestDeepSeekLegacyFlashAliasesRetainExplicitURLReads(t *testing.T) {
+	for _, model := range []string{"deepseek-v4-flash", "deepseek-v4-flash-vision-exp"} {
+		gateway := &nativeURLTestGateway{}
+		service := &Service{llmClient: gateway}
+		var prepared deepSeekURLInput
+		output, usage, calls, err := service.prepareDeepSeekURLInput(t.Context(), llm.RouteConfig{UpstreamModel: model}, deepSeekURLTestInput(), nil, &prepared)
+		if err != nil || len(gateway.targets) != 2 || usage["deepseek.tool_fetch"] != 2 || len(calls) != 2 || len(output.Messages[0].Parts) != 3 {
+			t.Fatalf("%s lost explicit URL behavior: %v %#v %#v", model, err, usage, output.Messages)
+		}
+	}
+}
+
 func TestDeepSeekExplicitURLPreparationRespectsToolsThinkingAndNoURL(t *testing.T) {
 	for _, name := range []string{"no URL", "off", "read disabled", "tool choice none", "older turn URL", "Pro"} {
 		t.Run(name, func(t *testing.T) {

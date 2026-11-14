@@ -3,6 +3,7 @@ package llm
 import (
 	"encoding/json"
 	portllm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/deepseekmodel"
 	"strconv"
 	"strings"
 )
@@ -44,10 +45,15 @@ func qualifyNativeToolUsage(output *portllm.GenerateOutput, input portllm.Genera
 		usage["google_search"] = queryCount
 	}
 	qualified := map[string]int64{}
+	deepSeekPro := deepseekmodel.IsPro(route.UpstreamModel)
+	deepSeekWebTools := deepseekmodel.IsFlash(route.UpstreamModel) || deepSeekPro
 	for name, count := range usage {
-		if strings.EqualFold(strings.TrimSpace(route.UpstreamModel), "deepseek-flash") {
+		if deepSeekWebTools {
 			switch name {
 			case "web_search_requests", "web_fetch_requests", "web_search", "web_fetch":
+				continue
+			}
+			if deepSeekPro && (name == "tool_image_search" || name == "deepseek.tool_image_search") {
 				continue
 			}
 		}

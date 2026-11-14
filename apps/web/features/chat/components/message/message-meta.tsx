@@ -49,6 +49,8 @@ import {
   type BillingDisplayOptions,
   type ImageBillingBreakdown,
   type ImageBillingLabels,
+  type BillingServiceItemEntry,
+  buildBillingServiceItemEntries,
   billingRateMultiplierNote,
   billingScheduleNote,
   cacheWriteBillingLabel,
@@ -707,33 +709,6 @@ function formatTotalLine(amount: string, labels: BillingMetaLabels): BillingTool
   return { type: "row", left: labels.total, right: amount };
 }
 
-type BillingServiceItemEntry = {
-  tokenPriced: boolean;
-  label: string;
-  callCount: number;
-  rateNanousd: number;
-  billedNanousd: number;
-};
-
-// billingServiceItemEntries extracts service items from the snapshot (e.g. per-call MCP tool billing) so line items add up to the total.
-function billingServiceItemEntries(snapshot: BillingSnapshot): BillingServiceItemEntry[] {
-  const items = Array.isArray(snapshot.service_items) ? snapshot.service_items : [];
-  const entries: BillingServiceItemEntry[] = [];
-  for (const item of items) {
-    if (!item || typeof item !== "object") continue;
-    if (snapshot.imageBilling?.tool && item.service_code === "native_tool.openai.image_generation") continue;
-    const billed = typeof item.billed_nanousd === "number" && Number.isFinite(item.billed_nanousd) ? item.billed_nanousd : 0;
-    if (billed <= 0) continue;
-    const label = (item.service_name ?? "").trim() || (item.service_code ?? "").trim();
-    if (!label) continue;
-    const callCount = typeof item.call_count === "number" && Number.isFinite(item.call_count) && item.call_count > 0 ? item.call_count : 1;
-    const tokenPriced = item.pricing_mode === "token";
-    const rate = tokenPriced ? 0 : typeof item.call_nanousd_per_call === "number" && Number.isFinite(item.call_nanousd_per_call) && item.call_nanousd_per_call > 0 ? item.call_nanousd_per_call : Math.round(billed / callCount);
-    entries.push({ label, callCount, rateNanousd: rate, billedNanousd: billed, tokenPriced });
-  }
-  return entries;
-}
-
 function billingServiceItemTableRows(entries: BillingServiceItemEntry[], labels: BillingMetaLabels, billingDisplay: BillingDisplayOptions): BillingTableRow[] {
   return entries.map((entry) => ({
     item: entry.label,
@@ -762,7 +737,7 @@ function billingTooltipLines(item: ChatMetaMessage, labels: BillingMetaLabels, b
   }
   const snapshot = parseBillingSnapshot(cost.pricingSnapshotJSON);
   const pricingMode = snapshot.pricing_mode === "call" || snapshot.pricing_mode === "duration" || snapshot.pricing_mode === "tiered" ? snapshot.pricing_mode : "token";
-  const serviceEntries = billingServiceItemEntries(snapshot);
+  const serviceEntries = buildBillingServiceItemEntries(snapshot.service_items, Boolean(snapshot.imageBilling?.tool));
   const serviceRows = billingServiceItemTableRows(serviceEntries, labels, billingDisplay);
   // Free models can still incur charges from service items like MCP; only show as free when the whole bill is 0.
   const freeOfCharge = snapshot.is_free_model === true && !(cost.billedNanousd > 0);

@@ -144,6 +144,7 @@ func buildTextTaskGenerateInput(route *channel.ResolvedRoute, cfg config.Config,
 			AllowedPathsJSON:      cfg.ModelOptionAllowedPaths,
 			DeniedPathsJSON:       cfg.ModelOptionDeniedPaths,
 			ModelCapabilitiesJSON: route.ModelCapabilitiesJSON,
+			UpstreamModel:         route.UpstreamModel,
 		}),
 	}
 	applyOpenAIResponsesInstructions(route, llm.DefaultEndpointForAdapter(route.Protocol), &input)

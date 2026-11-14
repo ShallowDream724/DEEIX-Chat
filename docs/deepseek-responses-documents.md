@@ -6,7 +6,7 @@
 
 选择此调用协议后，多模态仍按原顺序显示文字、图片、PDF、音频、视频，末尾增加可选的“文档”。PDF 与文档独立开关；Chat01 仍使用自己的“图片、附件”选项，DeepSeek 不提供通用附件能力。
 
-协议模板名称为 `DeepSeek（Responses）`，仅匹配原始 `deepseek_responses` 协议推荐，不按供应商展示名推荐。模板包含 `text,image,pdf,document`、DeepSeek 搜索与链接读取，以及 `nativeFiles.spreadsheet: "local"`。手动选择模板属于显式管理员配置；没有套模板时仍遵守模型目录和已有配置。选择协议即可看到并配置文档，不要求名称匹配某个型号。
+协议模板名称为 `DeepSeek（Responses）`，仅匹配原始 `deepseek_responses` 协议推荐，不按供应商展示名推荐。模板包含 `text,image,pdf,document`、DeepSeek 搜索与链接读取，以及 `nativeFiles.spreadsheet: "local"`；搜索按实际上游模型转换，Files 和独立链接读取继续按各自支持范围准入。另有 `DeepSeek Pro（Responses）` 模板，只包含文字、思考和 Pro 搜索，不启用 Files。手动选择模板属于显式管理员配置；没有套模板时仍遵守模型目录和已有配置。选择协议即可看到并配置文档，不要求名称匹配某个型号。
 
 ```json
 {
@@ -16,6 +16,10 @@
 ```
 
 实际 Files 调用仍按上游模型能力复核；当前已确认的模型为 `deepseek-flash`。Pro 可以使用该 Responses 协议做文本对话，不因勾选文档就自动获得上游未支持的 Files 能力。`nativeFiles.enabled: false` 明确关闭上游文件处理。普通文本提取/全文/RAG仍遵守既有规则，不由文档开关放宽。
+
+官方仍接收的 `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` 均由当前 Flash 服务，Files、工具、显式 URL 读取、续接状态和成功次数计量统一按 Flash 处理。`shared/deepseekmodel` 只识别这两个已确认别名，不通过厂商展示名或模糊前缀扩大能力。依据：[DeepSeek 模型与别名说明](https://api-docs.deepseek.com/quick_start/pricing/)。
+
+`deepseek-v4-pro` 在 `deepseek_responses` 和旧 `openai_responses` 配置中发送 `tools: [{"type":"web_search"}]`；`deepseek-flash` 发送 `deepseek_web_search` / `deepseek_read_url`。两代配置继续使用 `deepseek.tool_search` / `deepseek.tool_fetch` 计费身份，已有 JSON 中的旧工具名及新工具名均按真实上游模型收敛，无需重建模型或改价格项。Pro 搜索授权成功搜索及内部页面读取用量，不授权 Flash 的图片搜索计量，也不把独立读取工具声明发给 Pro。未支持的模型/协议组合不发送 DeepSeek 工具。依据：[DeepSeek Responses 工具与用量](https://api-docs.deepseek.com/guides/responses_api/)。
 
 ## 格式与发送边界
 
@@ -44,6 +48,7 @@ EPUB/MOBI 在普通和临时上传共用的 512 字节头部检查中识别。EP
 - `conversation/native_input.go` 根据实际路由与 PDF/document 开关决定原生读取。预检、正式发送、临时会话和历史附件共用它；同一文件进入 Files 后不会再重复注入本站全文/RAG。
 - `infra/llm/deepseek_files.go` 保留原有文件 ID 缓存、用户/凭据隔离、上传租约、结果不明时查询恢复及解析计量。格式扩展不创建另一套上传缓存或重试逻辑。
 - 新原生工具声明保留 `deepseek_responses` 配置身份；运行时与既有 Responses 参数规则兼容，并按规范化身份去重，避免两个协议别名重复授权和计费。
+- `shared/nativetool.DefinitionForModel` 集中决定工具的模型和协议契约；派发及计费授权使用同一解析结果，工具准入不依赖 `shared/deepseekfiles.SupportsModel`。管理界面保留旧 Pro 的 `web_search` 配置，不再一律迁移成 Flash 工具。
 
 旧 `openai_responses`、Chat Completions、Messages 的 DeepSeek 文件配置继续兼容，官方地址或已有明确 `nativeFiles.provider` 声明仍有效；不按厂商展示名批量改写协议。旧协议中 PDF/attachment 曾共同启用 Files 的配置保留旧行为；新适配器的 PDF/document 则独立控制。切换到新适配器时应明确勾选需要的输入项。地址、密钥、上游模型名和已保存文件引用无需重建。
 

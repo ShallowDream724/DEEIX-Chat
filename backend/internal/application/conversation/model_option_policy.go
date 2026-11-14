@@ -42,6 +42,7 @@ type modelOptionPolicyConfig struct {
 	AllowedPathsJSON      string
 	DeniedPathsJSON       string
 	ModelCapabilitiesJSON string
+	UpstreamModel         string
 	// CatalogReasoning 为 models.dev 目录在路由协议上推导出的推理能力，只在模型未显式声明且无法由旧配置推断时生效。
 	CatalogReasoning *domainchannel.ReasoningCapability
 	// Controls 为用户在模型控件上的选择，只用于聊天链路（resolveChatModelOptions）。
@@ -67,7 +68,7 @@ func filterModelOptions(options map[string]any, protocol string, cfg modelOption
 	if len(policyOptions) == 0 {
 		return nil
 	}
-	nativeTools := nativeProviderToolsFromOption(protocolKey, policyOptions["tools"], cfg.ModelCapabilitiesJSON)
+	nativeTools := nativeProviderToolsFromOption(protocolKey, policyOptions["tools"], cfg.ModelCapabilitiesJSON, cfg.UpstreamModel)
 	delete(policyOptions, "tools")
 	denied := append([][]string{}, hardDeniedModelOptionPaths...)
 
@@ -196,9 +197,9 @@ func mergeModelOptionDefaults(defaults map[string]any, options map[string]any, l
 
 // nativeProviderToolsFromOption 将用户 options.tools 收敛为当前协议允许的官方原生工具。
 // 普通参数白名单不处理 tools，避免用户通过自由 JSON 绕过官方工具控制。
-func nativeProviderToolsFromOption(protocolKey string, raw any, capabilitiesJSON string) []map[string]any {
+func nativeProviderToolsFromOption(protocolKey string, raw any, capabilitiesJSON string, upstreamModel ...string) []map[string]any {
 	var payloads []map[string]any
-	for _, tool := range resolveNativeProviderTools(protocolKey, raw, capabilitiesJSON) {
+	for _, tool := range resolveNativeProviderTools(protocolKey, raw, capabilitiesJSON, upstreamModel...) {
 		payloads = append(payloads, tool.payload)
 	}
 	return payloads
@@ -209,12 +210,17 @@ type resolvedNativeProviderTool struct {
 	usageKeys map[string]string
 }
 
-func resolveNativeProviderTools(protocolKey string, raw any, capabilitiesJSON string) []resolvedNativeProviderTool {
+func resolveNativeProviderTools(protocolKey string, raw any, capabilitiesJSON string, upstreamModel ...string) []resolvedNativeProviderTool {
 	rawTools := providerToolOptionPayloads(raw)
 	if len(rawTools) == 0 {
 		return nil
 	}
 	allowedTools := nativeToolCapabilitiesForProtocol(nativeToolCapabilitiesFromConfig(capabilitiesJSON, protocolKey), protocolKey)
+	model := ""
+	if len(upstreamModel) > 0 {
+		model = upstreamModel[0]
+	}
+	allowedTools = nativeToolCapabilitiesForModel(allowedTools, model)
 	if len(allowedTools) == 0 {
 		return nil
 	}
@@ -226,7 +232,7 @@ func resolveNativeProviderTools(protocolKey string, raw any, capabilitiesJSON st
 		if !ok {
 			continue
 		}
-		tool := nativeProviderToolPayload(rawTool, capability)
+		tool := nativeProviderToolPayload(rawTool, capability, model)
 		// A legacy alias must remain unambiguous after canonicalization too,
 		// because dispatch and billing both consume the resulting wire payload.
 		canonical, valid := authorizedNativeToolCapability(tool, allowedTools)
@@ -238,7 +244,7 @@ func resolveNativeProviderTools(protocolKey string, raw any, capabilitiesJSON st
 			continue
 		}
 		seen[identity] = struct{}{}
-		keys := nativetool.UsageKeysForTool(canonical.Protocol, canonical.Key)
+		keys := nativetool.UsageKeysForTool(canonical.Protocol, canonical.Key, model)
 		if canonical.Type != "" {
 			if _, exists := keys[canonical.Type]; !exists {
 				keys[canonical.Type] = canonical.Key
@@ -269,6 +275,28 @@ func resolveNativeProviderTools(protocolKey string, raw any, capabilitiesJSON st
 		}
 	}
 	return unambiguous
+}
+
+func nativeToolCapabilitiesForModel(capabilities []nativeToolCapability, model string) []nativeToolCapability {
+	result := make([]nativeToolCapability, 0, len(capabilities))
+	for _, capability := range capabilities {
+		if !strings.HasPrefix(capability.Key, "deepseek.") {
+			result = append(result, capability)
+			continue
+		}
+		for _, definition := range nativeToolDefinitionsByKey(capability.Key) {
+			if definition.Protocol != capability.Protocol {
+				continue
+			}
+			if selected, supported := nativetool.DefinitionForModel(definition, model); supported {
+				capability.Type = selected.Type
+				capability.Payload = nativetool.CanonicalPayload(selected, capability.Payload)
+				result = append(result, capability)
+			}
+			break
+		}
+	}
+	return result
 }
 
 func nativeToolCapabilitiesForProtocol(capabilities []nativeToolCapability, protocol string) []nativeToolCapability {
@@ -306,9 +334,9 @@ func authorizedNativeToolCapability(payload map[string]any, capabilities []nativ
 }
 
 // Use the same resolution and conflict checks as dispatch for usage counters.
-func authorizedNativeToolKeys(protocol string, options map[string]any, capabilitiesJSON string) map[string]string {
+func authorizedNativeToolKeys(protocol string, options map[string]any, capabilitiesJSON string, upstreamModel ...string) map[string]string {
 	keys := make(map[string]string)
-	for _, tool := range resolveNativeProviderTools(modelOptionPolicyProtocolKey(protocol), options["tools"], capabilitiesJSON) {
+	for _, tool := range resolveNativeProviderTools(modelOptionPolicyProtocolKey(protocol), options["tools"], capabilitiesJSON, upstreamModel...) {
 		for alias, billingKey := range tool.usageKeys {
 			keys[alias] = billingKey
 		}
@@ -316,12 +344,16 @@ func authorizedNativeToolKeys(protocol string, options map[string]any, capabilit
 	return keys
 }
 
-func nativeProviderToolPayload(rawTool map[string]any, capability nativeToolCapability) map[string]any {
+func nativeProviderToolPayload(rawTool map[string]any, capability nativeToolCapability, model string) map[string]any {
 	payload := mergeNativeToolPayload(rawTool, capability.Payload)
 	// Resolve by the authorized provider identity. The Responses transport
 	// alone cannot distinguish OpenAI and DeepSeek web_search declarations.
 	for _, definition := range nativeToolDefinitionsByKey(capability.Key) {
 		if definition.Protocol == capability.Protocol {
+			definition, supported := nativetool.DefinitionForModel(definition, model)
+			if !supported {
+				return nil
+			}
 			canonical := nativetool.CanonicalPayload(definition, payload)
 			// Only the administrator's capability may choose the nested image
 			// model. A caller cannot substitute a model through options.tools.
@@ -599,10 +631,10 @@ func nativeToolDefinitionForProtocol(definitions []nativetool.Definition, protoc
 
 func nativeToolCapabilityMatchesRawTool(capability nativeToolCapability, rawTool map[string]any) bool {
 	rawType := strings.TrimSpace(modelOptionStringValue(rawTool["type"]))
-	if capability.Key == "deepseek.tool_search" && rawType == "web_search" {
+	if capability.Key == "deepseek.tool_search" && (rawType == "web_search" || rawType == "deepseek_web_search") {
 		return true
 	}
-	if capability.Key == "deepseek.tool_fetch" && (rawType == "web_fetch" || rawType == "tool_fetch") {
+	if capability.Key == "deepseek.tool_fetch" && (rawType == "web_fetch" || rawType == "tool_fetch" || rawType == "deepseek_read_url") {
 		return true
 	}
 	if rawType != "" && capability.Type != "" {

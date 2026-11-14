@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	portllm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/deepseekmodel"
 )
 
 type deepSeekWebState struct {
@@ -92,10 +93,10 @@ func isDeepSeekNativeBlock(block map[string]any) bool {
 }
 
 func retainDeepSeekStateForRoute(route portllm.RouteConfig, input portllm.GenerateInput) portllm.GenerateInput {
-	allowed := strings.EqualFold(strings.TrimSpace(route.UpstreamModel), "deepseek-flash") && (portllm.NormalizeAdapter(route.Protocol) == portllm.AdapterDeepSeekResponses || input.NativeFiles || isDeepSeekBaseURL(route.BaseURL))
+	allowed := deepseekmodel.IsFlash(route.UpstreamModel) && (portllm.NormalizeAdapter(route.Protocol) == portllm.AdapterDeepSeekResponses || input.NativeFiles || isDeepSeekBaseURL(route.BaseURL))
 	for _, key := range input.NativeToolKeys {
 		if strings.HasPrefix(key, "deepseek.") {
-			allowed = strings.EqualFold(strings.TrimSpace(route.UpstreamModel), "deepseek-flash")
+			allowed = deepseekmodel.IsFlash(route.UpstreamModel)
 			break
 		}
 	}

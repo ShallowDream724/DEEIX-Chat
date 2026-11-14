@@ -90,11 +90,11 @@ OpenAI工具详情保存并展示已返回的输入、代码/命令/查询、输
 
 DeepSeek 搜索、读取、图片搜索分别使用 `deepseek.tool_search`、`deepseek.tool_fetch`、`deepseek.tool_image_search` 身份，计量来自 `usage.server_tool_use` 对应的成功次数；`web_search_requests` / `web_fetch_requests` 包含错误块，只用于展示，不据此计费。Google搜索按实际模型代际与返回查询记录计量，grounding来源和引用独立保留。
 
-DeepSeek Flash 在 Responses、Chat Completions、Messages 分别声明 `deepseek_web_search` 和 `deepseek_read_url`，默认开启且可独立关闭；旧 `web_search` / `web_fetch` 配置规范为对应新工具，保留显式关闭状态。搜索深度仅由规范化后的 thinking 决定，不新增深度控件。thinking 与搜索同时开启时，上游不会独立执行 read_url；本站只对当前用户明确给出的 HTTP/HTTPS 链接调用独立 Fetch（最多 10 个不同 URL，轮内去重），先按冻结价格预留，成功取得正文后计一次读取，再将有界正文纳入上下文预算。没有链接的消息不等待 Fetch。若多个工具声明共享无法区分的计量别名但对应不同价格身份，则在派发前排除冲突声明，计费授权使用同一结果，不按声明顺序猜测归属。
+DeepSeek Flash 在 Responses、Chat Completions、Messages 分别声明 `deepseek_web_search` 和 `deepseek_read_url`，默认开启且可独立关闭；旧 `web_search` / `web_fetch` 配置在实际 Flash 路由上规范为对应新工具，保留显式关闭状态。`deepseek-v4-pro` 的 Responses 路由使用旧 `web_search`，兼容已经保存的新旧名称；Pro 搜索与内部页面读取沿用 `deepseek.tool_search` / `deepseek.tool_fetch`，不授权图片搜索计量或独立读取工具，也不依赖 Files 准入。搜索深度仅由规范化后的 thinking 决定，不新增深度控件。Flash 的 thinking 与搜索同时开启时，上游不会独立执行 read_url；本站只对当前用户明确给出的 HTTP/HTTPS 链接调用独立 Fetch（最多 10 个不同 URL，轮内去重），先按冻结价格预留，成功取得正文后计一次读取，再将有界正文纳入上下文预算。没有链接的消息不等待 Fetch。若多个工具声明共享无法区分的计量别名但对应不同价格身份，则在派发前排除冲突声明，计费授权使用同一结果，不按声明顺序猜测归属。
 
 上游返回的 `kind`、`signature` 等续接块由服务器保存并原样回传；普通会话沿消息祖先与分支保存，临时会话只使用按用户、session、实际路由和消息/附件祖先指纹隔离的 30 分钟内存缓存（最多 128 项、16 MiB），不信任客户端提交的原始工具签名。HTTP 200 中的生成错误仍按失败处理，并保留已经确认的 token 与成功工具用量供幂等结算。
 
-DeepSeek 能力模板恢复为 `DeepSeek（Responses）`，仅对显式 `deepseek_responses` 协议推荐，不按厂商名称判断。新协议复用 Responses 参数规则，但不丢失原生工具的供应商协议身份；旧三种协议的 DeepSeek 工具配置继续兼容。
+DeepSeek 主能力模板保持 `DeepSeek（Responses）`，另外提供不含 Files 的 `DeepSeek Pro（Responses）`；仅对显式 `deepseek_responses` 协议推荐，不按厂商名称判断。新协议复用 Responses 参数规则，但不丢失原生工具的供应商协议身份；旧三种协议的 Flash 工具配置继续兼容，Pro 搜索限 Responses。
 
 独立 Fetch 的正文受单页 2 MiB、单轮合计 4 MiB 保护，成功计量先于本地保护与后续模型调用；超过保护不会截取正文冒充完整结果。已读正文随服务器私有状态沿原消息保存，后续没有 URL 的提问可以复用同一内容，不重新抓取或收费。该去重范围是本站的显式链接读取；深度搜索仍可自主打开网页，官方没有承诺它与独立 Fetch 跨 API 共享去重缓存，因此同一网页若被深度搜索再次联网读取，仍可能产生额外的真实读取用量。
 

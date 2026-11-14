@@ -49,26 +49,3 @@ func deepSeekNativeDocument(att AttachmentInput, spreadsheet bool) bool {
 	format, ok := deepseekfiles.Resolve(att.FileName, nativeInputMIME(att))
 	return ok && (format.Kind == deepseekfiles.Document || (format.Kind == deepseekfiles.Spreadsheet && spreadsheet))
 }
-
-func restrictDeepSeekToolsForRoute(route *channel.ResolvedRoute, options map[string]any) map[string]any {
-	if route != nil && deepseekfiles.SupportsModel(route.UpstreamModel) {
-		return options
-	}
-	tools := providerToolOptionPayloads(options["tools"])
-	if len(tools) == 0 {
-		return options
-	}
-	retained := tools[:0]
-	for _, tool := range tools {
-		if typ, _ := tool["type"].(string); !strings.HasPrefix(typ, "deepseek_") {
-			retained = append(retained, tool)
-		}
-	}
-	result := cloneModelOptionMap(options)
-	if len(retained) == 0 {
-		delete(result, "tools")
-	} else {
-		result["tools"] = retained
-	}
-	return result
-}

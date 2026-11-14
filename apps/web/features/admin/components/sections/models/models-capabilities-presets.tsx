@@ -270,6 +270,19 @@ const MODEL_CAPABILITY_PRESETS: CapabilityPreset[] = [
     },
   },
   {
+    id: "deepseek_v4_pro_responses",
+    label: "DeepSeek Pro（Responses）",
+    provider: "DeepSeek",
+    protocol: "deepseek_responses",
+    payload: {
+      inputModalities: ["text"],
+      reasoning: { format: "openai", levels: ["none", "high", "max"], default: "high" },
+      nativeTools: [
+        { key: "deepseek.tool_search", provider: "DeepSeek", protocols: ["deepseek_responses", "openai_responses"], type: "web_search", label: "DeepSeek Search", enabled: true, defaultEnabled: true, payload: { type: "web_search" } },
+      ],
+    },
+  },
+  {
     id: "openai_chat_completions",
     protocol: "openai_chat_completions",
     payload: {

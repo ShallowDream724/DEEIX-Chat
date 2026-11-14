@@ -305,6 +305,7 @@ func (s *Service) StreamMediaVideo(ctx context.Context, input MediaVideoInput) (
 		AllowedPathsJSON:      cfg.ModelOptionAllowedPaths,
 		DeniedPathsJSON:       cfg.ModelOptionDeniedPaths,
 		ModelCapabilitiesJSON: route.ModelCapabilitiesJSON,
+		UpstreamModel:         route.UpstreamModel,
 	})
 	if llm.NormalizeAdapter(route.Protocol) == llm.AdapterGeminiInteractions {
 		filteredOptions = withGeminiInteractionResponseType(filteredOptions, "video")

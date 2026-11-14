@@ -359,6 +359,7 @@ func (s *Service) StreamMediaImage(ctx context.Context, input MediaImageInput) (
 		AllowedPathsJSON:      cfg.ModelOptionAllowedPaths,
 		DeniedPathsJSON:       cfg.ModelOptionDeniedPaths,
 		ModelCapabilitiesJSON: route.ModelCapabilitiesJSON,
+		UpstreamModel:         route.UpstreamModel,
 	})
 	if llm.NormalizeAdapter(route.Protocol) == llm.AdapterGeminiInteractions {
 		filteredOptions = withGeminiInteractionResponseType(filteredOptions, "image")

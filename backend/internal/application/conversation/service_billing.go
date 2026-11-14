@@ -156,7 +156,7 @@ func (s *Service) ensureUsageBudgetCoversEstimate(
 	if s.billingSvc == nil || authorization == nil || route == nil {
 		return nil
 	}
-	nativeToolEstimate := s.billingSvc.AuthorizeNativeTools(authorization, authorizedNativeToolKeys(route.Protocol, options, route.ModelCapabilitiesJSON))
+	nativeToolEstimate := s.billingSvc.AuthorizeNativeTools(authorization, authorizedNativeToolKeys(route.Protocol, options, route.ModelCapabilitiesJSON, route.UpstreamModel))
 	for key, count := range estimate.NativeToolUsage {
 		if !authorization.NativeToolKeys[key] || count <= 1 {
 			continue

@@ -494,10 +494,19 @@ func Definitions() []Definition {
 // UsageKeysForTool returns all metered identities enabled by one input tool.
 // This includes operations the provider performs internally, such as DeepSeek
 // fetching a page while executing its web_search capability.
-func UsageKeysForTool(protocol string, key string) map[string]string {
+func UsageKeysForTool(protocol string, key string, upstreamModel ...string) map[string]string {
 	result := make(map[string]string)
+	model := ""
+	if len(upstreamModel) > 0 {
+		model = upstreamModel[0]
+	}
 	for _, definition := range definitions {
 		if definition.Protocol != protocol || definition.Key != key || definition.MeteringOnly {
+			continue
+		}
+		var supported bool
+		definition, supported = DefinitionForModel(definition, model)
+		if !supported {
 			continue
 		}
 		result[definition.Type] = definition.Key
