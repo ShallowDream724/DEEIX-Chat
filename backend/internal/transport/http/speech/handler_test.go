@@ -37,6 +37,12 @@ func (ttsProvider) Synthesize(context.Context, domain.Synthesis) (io.ReadCloser,
 
 type slowProvider struct{ streamProvider }
 
+type failingProvider struct{ streamProvider }
+
+func (failingProvider) Stream(context.Context, domain.StreamRequest, <-chan []byte, func(domain.Event) error) (domain.Transcript, error) {
+	return domain.Transcript{}, domain.ErrUnavailable
+}
+
 func (slowProvider) Stream(ctx context.Context, r domain.StreamRequest, audio <-chan []byte, emit func(domain.Event) error) (domain.Transcript, error) {
 	if e := emit(domain.Event{Type: "transcript", Text: "preserved partial"}); e != nil {
 		return domain.Transcript{}, e
@@ -145,6 +151,47 @@ func TestErrorEnvelopeMasksInternalDetails(t *testing.T) {
 	}
 	if e := json.Unmarshal(response.Body.Bytes(), &body); e != nil || body.ErrorCode != "speech.failed" || body.ErrorMsg != "speech service failed" {
 		t.Fatal(body, e)
+	}
+}
+
+func TestUpstreamFailureClosesIdleWebSocket(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	store, err := infra.NewFileStore(t.TempDir(), 1<<20, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := app.NewService(func() app.Config { return app.Config{SelectedInputProvider: "doubao-ime"} }, map[string]domain.Provider{"doubao-ime": failingProvider{}}, testBilling{}, testBilling{}, store)
+	defer service.Close()
+	router := gin.New()
+	NewModule(NewHandler(service)).RegisterRoutes(router.Group("/unused"), router.Group(app.APIBasePath))
+	returned := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer close(returned)
+		router.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	session, err := service.CreateSession(context.Background(), 1, app.SessionInput{Provider: "doubao-ime", Format: "opus", SampleRate: 16000, DraftID: "draft"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, err := websocket.Dial("ws"+strings.TrimPrefix(server.URL, "http")+session.WSURL, "", server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	_ = ws.SetReadDeadline(time.Now().Add(3 * time.Second))
+	for _, expected := range []string{"ready", "error"} {
+		var event domain.Event
+		if err := websocket.JSON.Receive(ws, &event); err != nil || event.Type != expected {
+			t.Fatalf("want %s before closing, got %+v: %v", expected, event, err)
+		}
+	}
+	// The client sends neither audio nor a close frame. Cleanup must interrupt
+	// the blocked server reader itself after delivering the upstream error.
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("upstream failure left the idle WebSocket handler blocked")
 	}
 }
 
