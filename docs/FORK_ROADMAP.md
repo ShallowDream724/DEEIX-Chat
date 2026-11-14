@@ -2,7 +2,9 @@
 
 ## 2026-11-14 DeepSeek 搜索兼容与日期修复
 
-核查确认 Pro 的旧 `web_search` 被错误转换并过滤，现按真实模型/协议恢复 Pro 搜索，保留 Flash 新联网工具及既有计费 key；官方 Flash 旧别名统一识别。DeepSeek 普通/临时对话自动补请求日期与用户时区，Responses 使用受支持的 system 消息，不要求用户每日修改提示词。管理员日志工具费用明细补齐既有 service_items。价格口径、PDF 反馈边界与验证见 [本批记录](deepseek-search-date-validation-20261114.md)。本批尚待最终验收与发布。
+核查确认 Pro 的旧 `web_search` 被错误转换并过滤，现按真实模型/协议恢复 Pro 搜索，保留 Flash 新联网工具及既有计费 key；官方 Flash 旧别名统一识别。DeepSeek 普通/临时对话自动补请求日期与用户时区，Responses 使用受支持的 system 消息，不要求用户每日修改提示词。管理员日志工具费用明细补齐既有 service_items。价格口径、PDF 反馈边界与验证见 [本批记录](deepseek-search-date-validation-20261114.md)。
+
+已发布 `ghcr.io/shallowdream724/deeix-chat:latest`（linux/amd64），源码 `e3d912ef27dd4673938048998baecd74509cd0db`。[Image #43604742588](https://github.com/ShallowDream724/DEEIX-Chat/actions/runs/43604742588) 构建、容器启动检查及 Merge 全部成功。匿名 GHCR 核验 latest 与固定 SHA 标签一致、revision 正确，digest 为 `sha256:9285e237e12f475f5c6fa647623d2b0bdd42a7c3e3d8f80e7094dd88e7b7f3ad`。本地服务已更新，未代为部署生产容器或改动生产费率。
 
 ## 2026-11-14 手机后台朗读恢复与列表编号
 

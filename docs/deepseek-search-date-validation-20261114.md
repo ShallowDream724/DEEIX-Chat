@@ -47,6 +47,10 @@ DeepSeek 官方 API 不替客户端补当前日期。`latest_reminder` 仅支持
 - 本地后端更新至本批构建并通过 `/healthz`。本批没有新增真实付费上游请求，协议依据来自当日官方文档，不能将模拟用量回归描述为已核对真实供应商扣费。
 - 私有证据：`.cache/local-dev/deepseek-date-tests.log`、`deepseek-date-web-build.log`、`.cache/admin-tool-billing/browser.json` 及同目录截图。临时浏览器页面已移除，独立测试浏览器已关闭。
 
+## 发布
+
+`ghcr.io/shallowdream724/deeix-chat:latest`（linux/amd64）已更新为源码 `e3d912ef27dd4673938048998baecd74509cd0db`。[Image #43604742588](https://github.com/ShallowDream724/DEEIX-Chat/actions/runs/43604742588) 的构建、容器启动检查及 Merge 成功；匿名 GHCR 核验 latest 与固定 SHA 标签一致，镜像 revision 正确，manifest digest 为 `sha256:9285e237e12f475f5c6fa647623d2b0bdd42a7c3e3d8f80e7094dd88e7b7f3ad`。生产容器尚未代为更新，生产费率未修改。
+
 ## 官方依据
 
 - [Responses 的 Pro 搜索与工具支持](https://api-docs.deepseek.com/guides/responses_api/)
