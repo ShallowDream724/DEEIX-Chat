@@ -1,10 +1,14 @@
 # 分支排期
 
+## 2026-11-14 语音设置布局与连接配置
+
+语音输入、朗读回复各自选择渠道并配置地址/Key；依赖字段直接复用 MinerU 的内嵌分组、字段编辑器与展开动画，删除独立 DeepSeek 栏。“单段录音时长”改为“单次录音上限”，显示秒。新启用时可自动复用另一项已配置连接，也可独立填写；旧共享凭据在服务端兼容迁移。后端四包竞态回归、前端行为/类型/lint/生产构建及桌面/手机浏览器验收已通过，本地服务已更新。具体契约与边界见 [语音配置](speech-settings.md)。
+
 ## 2026-11-14 语音与 DeepSeek 批次镜像
 
 `ghcr.io/shallowdream724/deeix-chat:latest`（linux/amd64）已发布源码 `1733d0b310e45ec6c0b596d2b56b68cda41562be`，包含语音、DeepSeek Responses 文档能力、官方三栏模型列表恢复及发布前资源回归。[Image #43580137420](https://github.com/ShallowDream724/DEEIX-Chat/actions/runs/43580137420) 的构建、容器启动/网页/revision 检查和 Merge 均成功；匿名 GHCR 核验 latest 与固定 SHA 标签一致，manifest digest 为 `sha256:8945702aa76039044c7bbd992e9d4005c2cfcb0aa6dd7262a4e22dca3d1ac951`。尚未代为部署生产；TTS 生产音色和播放体验由用户继续验收。
 
-发布后收到手机 JPG 截图“图片不完整”的阻断反馈。已复现 JPEG 结束标记后附加数据被误拒绝并修复，详情及样本边界见 [图片输入链路](image-input-pipeline.md)；修复镜像发布状态后续补录。
+发布后收到手机 JPG 截图“图片不完整”的阻断反馈。已复现 JPEG 结束标记后附加数据被误拒绝并修复，详情及样本边界见 [图片输入链路](image-input-pipeline.md)。热修源码 `3dff22ab5c859a7123446a53eb7e303292579f07` 已通过 [Image #43581588760](https://github.com/ShallowDream724/DEEIX-Chat/actions/runs/43581588760) 构建、容器检查和 Merge，更新同一 `latest`；匿名核验固定 SHA 标签一致，manifest digest 为 `sha256:feb883fe38d590f25795a0d72bca31d72e2c2dc6a1e507e2e6be56ce5fd11ea7`。具体手机原图仍待用户升级复测。
 
 ## 2026-11-14 官方模型列表恢复
 

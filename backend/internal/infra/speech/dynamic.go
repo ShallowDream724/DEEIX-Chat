@@ -35,6 +35,10 @@ type enabledProvider struct {
 	asr, tts bool
 }
 
+func (p *enabledProvider) CacheIdentity(operation string) string {
+	return providerCacheIdentity(p.Provider, operation)
+}
+
 func (p *enabledProvider) ASRCapability() *domain.Capability {
 	if !p.asr {
 		return nil

@@ -35,3 +35,51 @@ func (s *Service) migrateSpeechInputProvider(ctx context.Context, rows []domains
 	}
 	return nil
 }
+
+func (s *Service) migrateSpeechRoleConnections(ctx context.Context, rows []domainsettings.SystemSetting) error {
+	values := map[string]domainsettings.SystemSetting{}
+	for _, row := range rows {
+		if row.Namespace != "speech" {
+			continue
+		}
+		if strings.HasPrefix(row.Key, "deepseek_asr_") && row.Key != "deepseek_asr_enabled" || strings.HasPrefix(row.Key, "deepseek_tts_") && row.Key != "deepseek_tts_enabled" {
+			// A new connection was explicitly configured already; seeding may fill
+			// missing defaults, but must never substitute an old credential.
+			return nil
+		}
+		values[row.Key] = row
+	}
+	legacy := values["deepseek_api_key"]
+	if strings.TrimSpace(legacy.Value) == "" {
+		return nil
+	}
+	key, err := s.decryptSettingValue(legacy)
+	if err != nil {
+		return err
+	}
+	owner, peer := "asr", "tts"
+	if values["input_provider"].Value != "deepseek" && values["deepseek_tts_enabled"].Value == "true" {
+		owner, peer = "tts", "asr"
+	}
+	baseURL := strings.TrimSpace(values["deepseek_base_url"].Value)
+	if baseURL == "" {
+		baseURL = "https://api.deepseek.com"
+	}
+	updates := []domainsettings.SystemSetting{}
+	for name, value := range map[string]string{
+		"deepseek_" + owner + "_credentials_source": "own",
+		"deepseek_" + peer + "_credentials_source":  owner,
+		"deepseek_" + owner + "_base_url":           baseURL,
+		"deepseek_" + owner + "_api_key":            key,
+	} {
+		spec, _ := lookupSettingSpec("speech", name)
+		item := spec.seedSetting()
+		item.Value = value
+		updates = append(updates, item)
+	}
+	encrypted, err := s.encryptSettingsForStorage(updates)
+	if err != nil {
+		return err
+	}
+	return s.repo.Upsert(ctx, encrypted)
+}

@@ -3,7 +3,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { listAdminSettingsByNamespace, patchAdminSettings } from "@/features/admin/api/settings";
-import { buildSpeechSettingsPatch, flattenSpeechSettings, speechSettingsFromResponse, speechSettingsMissingAPIKey } from "@/features/admin/model/speech-settings";
+import { buildSpeechSettingsPatch, changeSpeechSetting, flattenSpeechSettings, speechSettingsFromResponse, speechSettingsMissingConnectionFields } from "@/features/admin/model/speech-settings";
 import { resolveAdminErrorMessage } from "@/features/admin/utils/admin-error";
 import type { SettingItem } from "@/shared/api/settings-types";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
@@ -17,7 +17,9 @@ export function useAdminSpeechSettings() {
   const [items, setItems] = React.useState<SettingItem[]>([]);
   const [values, setValues] = React.useState(() => flattenSpeechSettings([]));
   const [saved, setSaved] = React.useState(() => flattenSpeechSettings([]));
+  const explicitSources = React.useRef(new Set<string>());
   const applyItems = React.useCallback((nextItems: SettingItem[]) => {
+    explicitSources.current.clear();
     setItems(nextItems);
     const next = flattenSpeechSettings(nextItems);
     setValues(next);
@@ -40,10 +42,15 @@ export function useAdminSpeechSettings() {
   React.useEffect(() => { void load(); }, [load]);
 
   const patches = React.useMemo(() => buildSpeechSettingsPatch(values, saved), [values, saved]);
-  const missingAPIKey = speechSettingsMissingAPIKey(values, items);
+  const missingConnectionFields = speechSettingsMissingConnectionFields(values, items);
+  const invalidConnection = missingConnectionFields.size > 0;
+  const setValue = React.useCallback((key: string, value: string) => {
+    if (key.endsWith("_credentials_source")) explicitSources.current.add(key);
+    setValues((current) => changeSpeechSetting(current, key, value, items, explicitSources.current));
+  }, [items]);
   const dirtyKeys = React.useMemo(() => new Set(patches.map((item) => item.key)), [patches]);
   const save = React.useCallback(async () => {
-    if (!patches.length || saving || loading || error || missingAPIKey) return;
+    if (!patches.length || saving || loading || error || invalidConnection) return;
     setSaving(true);
     try {
       const token = await resolveAccessToken();
@@ -56,7 +63,7 @@ export function useAdminSpeechSettings() {
     } finally {
       setSaving(false);
     }
-  }, [applyItems, patches, saving, loading, error, missingAPIKey, t]);
+  }, [applyItems, patches, saving, loading, error, invalidConnection, t]);
 
-  return { loading, saving, error, items, values, setValues, dirtyKeys, missingAPIKey, load, save };
+  return { loading, saving, error, items, values, setValue, dirtyKeys, invalidConnection, missingConnectionFields, load, save };
 }

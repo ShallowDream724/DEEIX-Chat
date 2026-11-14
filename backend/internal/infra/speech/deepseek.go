@@ -3,6 +3,8 @@ package speech
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	domain "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/domain/speech"
@@ -29,6 +31,12 @@ func NewDeepSeek(cfg ProviderConfig, client *http.Client) *DeepSeek {
 		client = http.DefaultClient
 	}
 	return &DeepSeek{cfg: cfg, client: client}
+}
+func (d *DeepSeek) CacheIdentity(operation string) string {
+	base := strings.TrimSuffix(strings.TrimRight(d.cfg.BaseURL, "/"), "/v1")
+	encoded, _ := json.Marshal([]string{operation, base, d.cfg.APIKey})
+	hash := sha256.Sum256(encoded)
+	return hex.EncodeToString(hash[:])
 }
 func (d *DeepSeek) ASRCapability() *domain.Capability {
 	return &domain.Capability{ID: "deepseek", Name: "DeepSeek", Formats: []string{"wav", "ogg"}, MaxDurationMS: 120000, MaxBytes: 8 << 20}

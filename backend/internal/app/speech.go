@@ -27,10 +27,16 @@ func newSpeechModule(runtime *config.Runtime, billingService *billing.Service) (
 	providers := map[string]domainspeech.Provider{
 		"deepseek": &infraspeech.DynamicProvider{ResolveSnapshot: func() (domainspeech.Provider, bool, bool) {
 			cfg := runtime.Snapshot().Speech
-			if strings.TrimSpace(cfg.DeepSeekAPIKey) == "" {
-				return nil, false, false
+			roles := &infraspeech.RoleProvider{}
+			asrURL, asrKey := cfg.DeepSeekConnection("asr")
+			ttsURL, ttsKey := cfg.DeepSeekConnection("tts")
+			if strings.TrimSpace(asrKey) != "" {
+				roles.ASR = infraspeech.NewDeepSeek(infraspeech.ProviderConfig{BaseURL: asrURL, APIKey: asrKey}, client)
 			}
-			return infraspeech.NewDeepSeek(infraspeech.ProviderConfig{BaseURL: cfg.DeepSeekBaseURL, APIKey: cfg.DeepSeekAPIKey}, client), true, cfg.DeepSeekTTSEnabled
+			if cfg.DeepSeekTTSEnabled && (cfg.TTSProvider == "" || cfg.TTSProvider == "deepseek") && strings.TrimSpace(ttsKey) != "" {
+				roles.TTS = infraspeech.NewDeepSeek(infraspeech.ProviderConfig{BaseURL: ttsURL, APIKey: ttsKey}, client)
+			}
+			return roles, roles.ASR != nil, roles.TTS != nil
 		}},
 		"doubao-ime": &infraspeech.DynamicProvider{ResolveSnapshot: func() (domainspeech.Provider, bool, bool) {
 			return doubao, true, false

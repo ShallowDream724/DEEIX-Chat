@@ -682,7 +682,13 @@ func (s *Service) Synthesize(ctx context.Context, user uint, in TTSInput) (TTSRe
 	if s.store == nil {
 		return TTSResult{}, domain.ErrUnavailable
 	}
-	cacheKey := "cache-" + digest("tts-v1", userKey(user), in.Provider, in.Text, in.Voice, in.Format)
+	cacheParts := []string{"tts-v1", userKey(user), in.Provider, in.Text, in.Voice, in.Format}
+	if scoped, ok := p.(interface{ CacheIdentity(string) string }); ok {
+		if identity := scoped.CacheIdentity("tts"); identity != "" {
+			cacheParts = append(cacheParts, identity)
+		}
+	}
+	cacheKey := "cache-" + digest(cacheParts...)
 	requestKey := "request-" + digest(userKey(user), in.RequestID)
 	s.synthMu.Lock()
 	defer s.synthMu.Unlock()
