@@ -112,6 +112,7 @@ export function resolveModelOptionPolicyProtocol(protocol: string): ModelOptionP
   switch (protocol.trim().toLowerCase()) {
     case "openai":
     case "openai_responses":
+    case "deepseek_responses":
       return "openai_responses";
     case "openrouter_chat_completions":
       return "openrouter_chat_completions";
@@ -154,6 +155,11 @@ export function resolveModelOptionPolicyProtocol(protocol: string): ModelOptionP
     default:
       return "openai_responses";
   }
+}
+
+/** Tool transport identity stays distinct even when protocols share parameter rules. */
+export function resolveModelNativeToolProtocol(protocol: string): string {
+  return protocol.trim().toLowerCase() === "deepseek_responses" ? "deepseek_responses" : resolveModelOptionPolicyProtocol(protocol);
 }
 
 export function effectiveModelOptionPaths(rules: ModelOptionRuleMap, protocol: string): string[] {

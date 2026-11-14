@@ -1,5 +1,9 @@
 # 分支排期
 
+## 2026-11-14 DeepSeek Responses 文档能力
+
+已实现独立 `Responses (DeepSeek)` 协议与末尾“文档”多模态选项，PDF 独立、Chat01 附件不混入；模板恢复 `DeepSeek（Responses）`。Word/PPT/电子书共用原有 Files 缓存及发送链，Excel 仍默认本地解析。格式和解析用途集中维护，普通及临时上传补齐 EPUB/MOBI 内容识别；保留既有模型配置和管理员上传白名单。后端相关测试、前端专项测试、类型检查与生产构建通过。本地服务已更新，尚未发布镜像。设计与兼容边界见 [DeepSeek Responses 与文档输入](deepseek-responses-documents.md)。
+
 ## 2026-11-14 DeepSeek 应用 API 与语音批次
 
 本批已实现并通过本地集成验收，尚未打镜像：Flash 新版搜索/URL 阅读/图文 Files、手机模型计费详情，以及可选 DeepSeek ASR/TTS、豆包输入法和微信输入法。语音输入统一增加提前 10 秒提醒、到限结束与跨次追加；DeepSeek ASR 无流式识别，TTS 首播流式读取。Excel 开发对照后保留本地解析默认，用户发送时不运行双份比较。具体边界见 [接入方案](deepseek-application-api-plan.md)，实际测试见 [验证记录](deepseek-speech-validation-20261114.md)。

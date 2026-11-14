@@ -64,3 +64,20 @@ func TestSplitCatalogEntriesKeepsReasoningIndexUnchanged(t *testing.T) {
 		t.Fatalf("modality index must include text-only models, got %#v", modalities)
 	}
 }
+
+func TestDocumentInputModalityPreservesMediaOrderAndIsNotAnOutput(t *testing.T) {
+	values := []string{"attachment", "document", "video", "audio", "pdf", "image", "document"}
+	want := []string{"text", "image", "pdf", "audio", "video", "document", "attachment"}
+	if got := NormalizeInputModalities(values); !reflect.DeepEqual(got, want) {
+		t.Fatalf("input order = %v, want %v", got, want)
+	}
+	if got := NormalizeOutputModalities(values); !reflect.DeepEqual(got, []string{"image", "pdf", "audio", "video"}) {
+		t.Fatalf("input-only documents and attachments leaked into output modalities: %v", got)
+	}
+	if err := ValidateModelCapsOverrides(`{"inputModalities":["document"]}`); err != nil {
+		t.Fatalf("document declaration rejected: %v", err)
+	}
+	if got := ResolveInputModalities(`{"inputModalities":["document"]}`, nil); !got.Supports(InputModalityDocument) || got.Supports(InputModalityAttachment) {
+		t.Fatalf("document must not imply Chat01 attachments: %#v", got)
+	}
+}

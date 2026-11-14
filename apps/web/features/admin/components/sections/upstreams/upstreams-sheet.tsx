@@ -111,6 +111,7 @@ const PROTOCOL_OPTIONS_BY_KIND: Record<(typeof PROTOCOL_DEFAULT_KINDS)[number], 
   chat: [
     "openai_chat_completions",
     "openai_responses",
+    "deepseek_responses",
     "anthropic_messages",
     "google_generate_content",
     "gemini_interactions",

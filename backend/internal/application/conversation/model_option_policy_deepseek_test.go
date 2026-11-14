@@ -7,7 +7,7 @@ import (
 
 func TestDeepSeekNativeWebToolsOnAllProtocols(t *testing.T) {
 	capabilities := `{"nativeToolKeys":["deepseek.tool_search","deepseek.tool_fetch"]}`
-	for _, protocol := range []string{llm.AdapterOpenAIResponses, llm.AdapterOpenAIChatCompletions, llm.AdapterAnthropicMessages} {
+	for _, protocol := range []string{llm.AdapterDeepSeekResponses, llm.AdapterOpenAIResponses, llm.AdapterOpenAIChatCompletions, llm.AdapterAnthropicMessages} {
 		t.Run(protocol, func(t *testing.T) {
 			filtered := filterModelOptions(map[string]any{"tools": []map[string]any{{"type": "web_search"}, {"type": "web_fetch"}}}, protocol, modelOptionPolicyConfig{ModelCapabilitiesJSON: capabilities})
 			tools := providerToolOptionPayloads(filtered["tools"])

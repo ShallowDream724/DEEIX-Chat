@@ -16,6 +16,7 @@ const PROTOCOL_LABEL_KEYS: Record<ProviderImportProtocol, `protocols.${ProviderI
   chat01_chat_completions: "protocols.chat01_chat_completions",
   openai_chat_completions: "protocols.openai_chat_completions",
   openai_responses: "protocols.openai_responses",
+  deepseek_responses: "protocols.deepseek_responses",
   anthropic_messages: "protocols.anthropic_messages",
   google_generate_content: "protocols.google_generate_content",
   gemini_interactions: "protocols.gemini_interactions",

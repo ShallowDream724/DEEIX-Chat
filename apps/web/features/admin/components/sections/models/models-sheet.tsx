@@ -74,6 +74,7 @@ import {
 } from "@/features/admin/model/admin-unions";
 import {
   ModelIcon,
+  hasDeepSeekResponsesProtocol,
   parseKindsJSON,
   parseProtocolsJSON,
   resolveModelIconURL,
@@ -846,6 +847,7 @@ export function ModelSheet({ open, mode, target, models, vendors, displayGroups,
                   </div>
                   <ModelModalitiesField
                     attachmentInput={usesChat01Protocol(routeProtocols)}
+                    documentInput={hasDeepSeekResponsesProtocol(routeProtocols)}
                     override={inputModalitiesOverride}
                     resolution={catalogResolution.result}
                     disabled={pending}

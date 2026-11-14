@@ -17,6 +17,7 @@ const PROTOCOLS: Record<string, { vendor: string; name: string; kind: ModelProto
   chat01_chat_completions: { vendor: "Chat01", name: "Chat Completions", kind: "chat" },
   openai_chat_completions: { vendor: "OpenAI", name: "Chat Completions", kind: "chat" },
   openai_responses: { vendor: "OpenAI", name: "Responses", kind: "chat" },
+  deepseek_responses: { vendor: "DeepSeek", name: "Responses", kind: "chat" },
   openai_image_generations: { vendor: "OpenAI", name: "Images Generations", kind: "image" },
   openai_image_edits: { vendor: "OpenAI", name: "Images Edits", kind: "image" },
   anthropic_messages: { vendor: "Anthropic", name: "Messages", kind: "chat" },

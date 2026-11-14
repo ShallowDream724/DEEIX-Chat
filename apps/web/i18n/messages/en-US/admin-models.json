@@ -433,6 +433,7 @@
         "pdf": "PDF",
         "audio": "Audio",
         "video": "Video",
+        "document": "Document",
         "attachment": "File"
       }
     },

@@ -389,6 +389,11 @@ func nativeToolCapabilitiesFromConfig(raw string, protocolKey string) []nativeTo
 			}
 		}
 		tool.Protocol = strings.TrimSpace(tool.Protocol)
+		// Adapter identity is explicit in saved configuration; runtime option
+		// matching shares the established Responses policy and deduplicates aliases.
+		if tool.Protocol == llm.AdapterDeepSeekResponses {
+			tool.Protocol = llm.OptionPolicyProtocolKey(tool.Protocol)
+		}
 		tool.Type = strings.TrimSpace(tool.Type)
 		if tool.Type == "" {
 			tool.Type = strings.TrimSpace(modelOptionStringValue(tool.Payload["type"]))

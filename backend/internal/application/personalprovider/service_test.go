@@ -696,6 +696,7 @@ func TestAllowedProtocolsAreTheStreamingChatProtocols(t *testing.T) {
 	want := []string{
 		llm.AdapterOpenAIChatCompletions,
 		llm.AdapterOpenAIResponses,
+		llm.AdapterDeepSeekResponses,
 		llm.AdapterAnthropicMessages,
 		llm.AdapterGoogleGenerateContent,
 		llm.AdapterGeminiInteractions,

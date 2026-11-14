@@ -18,6 +18,7 @@ import (
 	"time"
 
 	portllm "github.com/DEEIX-AI/DEEIX-Chat/backend/internal/ports/llm"
+	"github.com/DEEIX-AI/DEEIX-Chat/backend/internal/shared/deepseekfiles"
 	"github.com/google/uuid"
 )
 
@@ -31,11 +32,11 @@ func (c *Client) SetNativeFileBilling(billing portllm.NativeFileBilling) {
 // Capability resolution happens in the application layer. This second boundary
 // guards accidental activation on Pro or an unsupported transport.
 func deepSeekFilesRoute(route portllm.RouteConfig, input portllm.GenerateInput) bool {
-	if !input.NativeFiles || strings.ToLower(strings.TrimSpace(route.UpstreamModel)) != "deepseek-flash" {
+	if !input.NativeFiles || !deepseekfiles.SupportsModel(route.UpstreamModel) {
 		return false
 	}
 	switch portllm.NormalizeAdapter(route.Protocol) {
-	case portllm.AdapterOpenAIChatCompletions, portllm.AdapterOpenAIResponses, portllm.AdapterAnthropicMessages:
+	case portllm.AdapterDeepSeekResponses, portllm.AdapterOpenAIChatCompletions, portllm.AdapterOpenAIResponses, portllm.AdapterAnthropicMessages:
 		return true
 	}
 	return false
@@ -116,15 +117,8 @@ func (c *Client) prepareDeepSeekFiles(ctx context.Context, route portllm.RouteCo
 }
 
 func deepSeekFilePurpose(part portllm.ContentPart) string {
-	ext := strings.ToLower(filepath.Ext(part.FileName))
-	switch ext {
-	case ".pdf", ".doc", ".docx", ".ppt", ".pptx":
-		return "rich_layout_recognition"
-	case ".xls", ".xlsx", ".txt", ".md", ".csv", ".json", ".epub", ".mobi":
-		return "user_data"
-	}
-	if nativeDocumentMIME(part) == "application/pdf" && part.Kind == portllm.ContentPartDocument {
-		return "rich_layout_recognition"
+	if format, ok := deepseekfiles.Resolve(part.FileName, part.MimeType); ok {
+		return format.Purpose
 	}
 	return ""
 }

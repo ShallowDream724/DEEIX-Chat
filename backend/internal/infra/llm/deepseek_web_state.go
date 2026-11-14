@@ -92,7 +92,7 @@ func isDeepSeekNativeBlock(block map[string]any) bool {
 }
 
 func retainDeepSeekStateForRoute(route portllm.RouteConfig, input portllm.GenerateInput) portllm.GenerateInput {
-	allowed := strings.EqualFold(strings.TrimSpace(route.UpstreamModel), "deepseek-flash") && (input.NativeFiles || isDeepSeekBaseURL(route.BaseURL))
+	allowed := strings.EqualFold(strings.TrimSpace(route.UpstreamModel), "deepseek-flash") && (portllm.NormalizeAdapter(route.Protocol) == portllm.AdapterDeepSeekResponses || input.NativeFiles || isDeepSeekBaseURL(route.BaseURL))
 	for _, key := range input.NativeToolKeys {
 		if strings.HasPrefix(key, "deepseek.") {
 			allowed = strings.EqualFold(strings.TrimSpace(route.UpstreamModel), "deepseek-flash")

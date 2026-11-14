@@ -1,12 +1,20 @@
 import { parseCapabilitiesObject, stringifyCapabilitiesObject } from "@/features/admin/model/capabilities-json";
 
 // Keep in sync with the backend (domain/channel/model_input_modalities.go).
-export const MODEL_MODALITIES = ["text", "image", "pdf", "audio", "video", "attachment"] as const;
+export const MODEL_MODALITIES = ["text", "image", "pdf", "audio", "video", "document", "attachment"] as const;
 
 export type ModelModality = (typeof MODEL_MODALITIES)[number];
 
 // Modalities an administrator can toggle; text is always accepted.
 export const CONFIGURABLE_INPUT_MODALITIES = ["image", "pdf", "audio", "video"] as const satisfies readonly ModelModality[];
+
+export function configurableInputModalities({ attachmentInput = false, documentInput = false }: {
+  attachmentInput?: boolean;
+  documentInput?: boolean;
+}): readonly ModelModality[] {
+  if (attachmentInput) return ["image", "attachment"];
+  return documentInput ? [...CONFIGURABLE_INPUT_MODALITIES, "document"] : CONFIGURABLE_INPUT_MODALITIES;
+}
 
 const INPUT_MODALITIES_KEY = "inputModalities";
 

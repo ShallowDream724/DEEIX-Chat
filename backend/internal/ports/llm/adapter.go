@@ -10,6 +10,7 @@ import (
 // 已支持的协议常量。每个协议固定对应一个 HTTP 端点，任务能力由模型类别和路由规则约束。
 const (
 	AdapterOpenAIResponses        = "openai_responses"            // POST /v1/responses
+	AdapterDeepSeekResponses      = "deepseek_responses"          // POST /v1/responses（DeepSeek）
 	AdapterOpenRouterChat         = "openrouter_chat_completions" // POST /v1/chat/completions（OpenRouter）
 	AdapterOpenRouterResponses    = "openrouter_responses"        // POST /v1/responses（OpenRouter Responses Beta）
 	AdapterOpenRouterImages       = "openrouter_images"           // POST /v1/images（OpenRouter 统一图片端点，生成与参考图编辑）
@@ -47,7 +48,7 @@ func NormalizeAdapter(raw string) string {
 // IsImplementedAdapter 返回协议是否已有可用的传输层实现。
 func IsImplementedAdapter(raw string) bool {
 	switch NormalizeAdapter(raw) {
-	case AdapterOpenAIResponses, AdapterOpenRouterChat, AdapterOpenRouterResponses, AdapterOpenRouterImages, AdapterOpenAIChatCompletions, AdapterChat01ChatCompletions, AdapterOpenAIImageGenerations, AdapterOpenAIImageEdits, AdapterXAIResponses,
+	case AdapterOpenAIResponses, AdapterDeepSeekResponses, AdapterOpenRouterChat, AdapterOpenRouterResponses, AdapterOpenRouterImages, AdapterOpenAIChatCompletions, AdapterChat01ChatCompletions, AdapterOpenAIImageGenerations, AdapterOpenAIImageEdits, AdapterXAIResponses,
 		AdapterAnthropicMessages, AdapterGoogleGenerateContent, AdapterGoogleImageGeneration, AdapterGeminiInteractions, AdapterXAIImage, AdapterXAIImageEdits, AdapterXAIVideo, AdapterXAIVideoExtensions:
 		return true
 	default:
@@ -59,6 +60,7 @@ func IsImplementedAdapter(raw string) bool {
 func SupportsStreamingAdapter(raw string) bool {
 	switch NormalizeAdapter(raw) {
 	case AdapterOpenAIResponses,
+		AdapterDeepSeekResponses,
 		AdapterOpenRouterChat,
 		AdapterOpenRouterResponses,
 		AdapterOpenRouterImages,
@@ -154,7 +156,7 @@ func DefaultEndpointForAdapter(adapter string) string {
 	case AdapterGeminiInteractions:
 		return EndpointInteractions
 	default:
-		// openai_responses、openrouter_responses、xai_responses 及所有未知值均使用 Responses 端点。
+		// openai_responses、deepseek_responses、openrouter_responses、xai_responses 及所有未知值均使用 Responses 端点。
 		return EndpointResponses
 	}
 }
@@ -171,6 +173,9 @@ func OptionPolicyProtocolKey(protocol string) string {
 	switch NormalizeAdapter(protocol) {
 	case "openai":
 		return "openai_responses"
+	case AdapterDeepSeekResponses:
+		// DeepSeek 复用 Responses 参数与工具声明格式，路由身份仍由 NormalizeAdapter 保留。
+		return AdapterOpenAIResponses
 	case "openrouter":
 		return "openrouter_responses"
 	case "anthropic", "claude":

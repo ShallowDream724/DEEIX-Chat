@@ -32,7 +32,8 @@ import { cn } from "@/lib/utils";
 import type { AdminLLMModelDTO } from "@/features/admin/api/llm-types";
 import { ModelCapabilitiesPresetDialog } from "@/features/admin/components/sections/models/models-capabilities-presets";
 import { canonicalNativeToolKey, mergeLegacyDeepSeekNativeTools } from "@/features/admin/model/native-tool-migration";
-import { nativeToolIsRecommended, nativeToolMatchesProvider } from "@/features/admin/model/native-tool-recommendations";
+import { nativeToolIsRecommended } from "@/features/admin/model/native-tool-recommendations";
+import { resolveProtocolLabel } from "@/features/admin/utils/llm-display";
 import { parseCapabilitiesObject, stringifyCapabilitiesObject } from "@/features/admin/model/capabilities-json";
 import {
   MODEL_CONTROL_ICON_NAMES,
@@ -43,6 +44,7 @@ import {
   nativeToolPayloadMatchesShape,
   nativeToolPayloadSignature,
   resolveModelOptionPolicyProtocol,
+  resolveModelNativeToolProtocol,
   resolveOptionControlPlacement,
   updateOptionControlPlacements,
 } from "@/entities/model";
@@ -535,8 +537,8 @@ function sortNativeToolOptionsByRoute(
   modelProvider: string,
 ): NativeToolOption[] {
   return [...options].sort((left, right) => {
-    const leftMatched = nativeToolIsRecommended(left.provider, left.protocols.map(resolveModelOptionPolicyProtocol), routeProtocolSet, modelProvider);
-    const rightMatched = nativeToolIsRecommended(right.provider, right.protocols.map(resolveModelOptionPolicyProtocol), routeProtocolSet, modelProvider);
+    const leftMatched = nativeToolIsRecommended(left.provider, left.protocols.map(resolveModelNativeToolProtocol), routeProtocolSet, modelProvider);
+    const rightMatched = nativeToolIsRecommended(right.provider, right.protocols.map(resolveModelNativeToolProtocol), routeProtocolSet, modelProvider);
     if (leftMatched !== rightMatched) {
       return leftMatched ? -1 : 1;
     }
@@ -555,7 +557,7 @@ function nativeToolOptionsFromCatalog(
   modelProvider = "",
 ): NativeToolOption[] {
   const options = new Map<string, NativeToolOption>();
-  const routeProtocolSet = new Set(routeProtocols.map((protocol) => resolveModelOptionPolicyProtocol(protocol)).filter(Boolean));
+  const routeProtocolSet = new Set(routeProtocols.map(resolveModelNativeToolProtocol).filter(Boolean));
   nativeTools.forEach((tool) => {
     if (tool.meteringOnly || tool.toolKey === "deepseek.tool_fetch") return;
     const toolKey = tool.toolKey.trim();
@@ -570,9 +572,9 @@ function nativeToolOptionsFromCatalog(
     );
     if (existing) {
       const existingMatchesRoute = existing.protocols.some((protocol) =>
-        routeProtocolSet.has(resolveModelOptionPolicyProtocol(protocol)),
+        routeProtocolSet.has(resolveModelNativeToolProtocol(protocol)),
       );
-      const toolMatchesRoute = routeProtocolSet.has(resolveModelOptionPolicyProtocol(protocol));
+      const toolMatchesRoute = routeProtocolSet.has(resolveModelNativeToolProtocol(protocol));
       if (toolMatchesRoute && !existingMatchesRoute) {
         existing.provider = tool.provider || "Provider";
         existing.label = tool.label || tool.type || tool.toolKey;
@@ -620,7 +622,7 @@ function nativeToolDefinitionMatchesRouteProtocols(tool: NativeToolDefinition, r
   if (routeProtocolSet.size === 0) {
     return true;
   }
-  return routeProtocolSet.has(resolveModelOptionPolicyProtocol(tool.protocol));
+  return routeProtocolSet.has(resolveModelNativeToolProtocol(tool.protocol));
 }
 
 function collectNativeToolKeysFromDefaultOptions(
@@ -634,7 +636,7 @@ function collectNativeToolKeysFromDefaultOptions(
   if (!isRecord(value)) {
     return { derivedKeys: [], matchingKeys };
   }
-  const routeProtocolSet = new Set(routeProtocols.map((protocol) => resolveModelOptionPolicyProtocol(protocol)).filter(Boolean));
+  const routeProtocolSet = new Set(routeProtocols.map(resolveModelNativeToolProtocol).filter(Boolean));
   const tools = Array.isArray(value.tools) ? value.tools : [];
   const derivedKeys: string[] = [];
   for (const rawTool of tools) {
@@ -649,7 +651,7 @@ function collectNativeToolKeysFromDefaultOptions(
     });
     const eligible = matchingTools.filter((tool) => !tool.meteringOnly && nativeToolDefinitionMatchesRouteProtocols(tool, routeProtocolSet));
     const selected = eligible.find((tool) => explicitKeys.includes(tool.toolKey))
-      ?? eligible.find((tool) => nativeToolMatchesProvider(tool.provider, modelProvider));
+      ?? eligible.find((tool) => nativeToolIsRecommended(tool.provider, [resolveModelNativeToolProtocol(tool.protocol)], routeProtocolSet, modelProvider));
     if (selected?.toolKey) {
       derivedKeys.push(selected.toolKey);
     }
@@ -723,7 +725,7 @@ function canonicalNativeToolProtocol(protocol: string): string {
 
 function formatNativeToolProtocols(protocols: string[]): string {
   return Array.from(new Set(protocols.map(canonicalNativeToolProtocol).filter(Boolean)))
-    .map((protocol) => (isModelOptionPolicyProtocol(protocol) ? MODEL_OPTION_POLICY_PROTOCOL_LABELS[protocol] : protocol))
+    .map((protocol) => (isModelOptionPolicyProtocol(protocol) ? MODEL_OPTION_POLICY_PROTOCOL_LABELS[protocol] : resolveProtocolLabel(protocol)))
     .join(" / ");
 }
 
@@ -753,14 +755,14 @@ function nativeToolProtocolSelectOptions(
   ];
   const seen = new Set<string>();
   return protocols.flatMap((protocol) => {
-    const normalized = resolveModelOptionPolicyProtocol(protocol.trim());
+    const normalized = resolveModelNativeToolProtocol(protocol);
     if (!normalized || seen.has(normalized)) {
       return [];
     }
     seen.add(normalized);
     return [{
       value: normalized,
-      label: MODEL_OPTION_POLICY_PROTOCOL_LABELS[normalized] ?? normalized,
+      label: isModelOptionPolicyProtocol(normalized) ? MODEL_OPTION_POLICY_PROTOCOL_LABELS[normalized] : resolveProtocolLabel(normalized),
     }];
   });
 }
@@ -905,12 +907,12 @@ function parseNativeToolRows(
   modelProvider = "",
 ): NativeToolRow[] {
   const options = nativeToolOptionsFromCatalog(nativeTools, routeProtocols, modelProvider);
-  const routeProtocolSet = new Set(routeProtocols.map((protocol) => resolveModelOptionPolicyProtocol(protocol)).filter(Boolean));
+  const routeProtocolSet = new Set(routeProtocols.map(resolveModelNativeToolProtocol).filter(Boolean));
   const rows = options.map((option) => nativeToolRowFromOption(option, false));
   const applyRow = (row: NativeToolRow) => {
     const configuredProtocols = new Set(
       parseNativeToolProtocolsInput(row.protocols)
-        .map((protocol) => resolveModelOptionPolicyProtocol(protocol))
+        .map(resolveModelNativeToolProtocol)
         .filter(Boolean),
     );
     const matchingIndexes = rows.flatMap((item, index) => {
@@ -919,7 +921,7 @@ function parseNativeToolRows(
       }
       const protocolMatched = configuredProtocols.size === 0
         || parseNativeToolProtocolsInput(item.protocols)
-          .some((protocol) => configuredProtocols.has(resolveModelOptionPolicyProtocol(protocol)));
+          .some((protocol) => configuredProtocols.has(resolveModelNativeToolProtocol(protocol)));
       return protocolMatched ? [index] : [];
     });
     if (matchingIndexes.length === 0) {
@@ -933,7 +935,7 @@ function parseNativeToolRows(
         continue;
       }
       const matchedProtocols = parseNativeToolProtocolsInput(catalogRow.protocols)
-        .filter((protocol) => configuredProtocols.size === 0 || configuredProtocols.has(resolveModelOptionPolicyProtocol(protocol)));
+        .filter((protocol) => configuredProtocols.size === 0 || configuredProtocols.has(resolveModelNativeToolProtocol(protocol)));
       const catalogPayload = parseJSONObjectOrEmpty(catalogRow.payload || "{}");
       rows[index] = {
         ...catalogRow,
@@ -961,7 +963,7 @@ function parseNativeToolRows(
   }
 
   resolveNativeToolKeysFromCapabilities(payload.nativeToolKeys, payload.defaultOptions, nativeTools, routeProtocols, modelProvider).forEach((key) => {
-    const matched = options.find((option) => option.toolKey === key && option.protocols.some((protocol) => routeProtocolSet.has(resolveModelOptionPolicyProtocol(protocol))))
+    const matched = options.find((option) => option.toolKey === key && option.protocols.some((protocol) => routeProtocolSet.has(resolveModelNativeToolProtocol(protocol))))
       ?? options.find((option) => option.toolKey === key);
     if (matched) {
       applyRow(nativeToolRowFromOption(matched, true));
@@ -1330,7 +1332,7 @@ export function ModelCapabilitiesQuickConfig({
   const [expandedNativeToolID, setExpandedNativeToolID] = useState("");
   const [parameterErrors, setParameterErrors] = useState<CapabilityRowErrors>({});
   const [nativeToolErrors, setNativeToolErrors] = useState<NativeToolRowErrors>({});
-  const routeProtocolSet = new Set(routeProtocols.map((protocol) => resolveModelOptionPolicyProtocol(protocol)).filter(Boolean));
+  const routeProtocolSet = new Set(routeProtocols.map(resolveModelNativeToolProtocol).filter(Boolean));
   const promptCacheSupported = supportsPromptCacheProtocols(routeProtocols);
 
   function loadDraft() {
@@ -1811,7 +1813,7 @@ export function ModelCapabilitiesQuickConfig({
                         const rowErrors = nativeToolErrors[row.id] ?? {};
                         const protocols = parseNativeToolProtocolsInput(row.protocols);
                         const protocolText = formatNativeToolProtocols(protocols);
-                        const protocolMatched = nativeToolIsRecommended(row.provider, protocols.map(resolveModelOptionPolicyProtocol), routeProtocolSet, modelProvider);
+                        const protocolMatched = nativeToolIsRecommended(row.provider, protocols.map(resolveModelNativeToolProtocol), routeProtocolSet, modelProvider);
                         const protocolOptions = nativeToolProtocolSelectOptions(routeProtocols, row.protocols);
                         const displayName = nativeToolDisplayName(row);
                         const expanded = expandedNativeToolID === row.id;

@@ -3,7 +3,7 @@ import {
   type NativeToolDefinition,
   nativeToolDefinitionVariantsFromConfig,
   nativeToolPayloadSignature,
-  resolveModelOptionPolicyProtocol,
+  resolveModelNativeToolProtocol,
 } from "@/entities/model";
 import type { ConversationOptions } from "@/shared/api/conversation-types";
 
@@ -88,9 +88,9 @@ export function nativeToolVisualOptionsFromConfigs(
         });
         return;
       }
-      const variantSignature = `${resolveModelOptionPolicyProtocol(definition.protocol)}:${nativeToolPayloadSignature(definition.payload)}`;
+      const variantSignature = `${resolveModelNativeToolProtocol(definition.protocol)}:${nativeToolPayloadSignature(definition.payload)}`;
       const hasVariant = existing.variants.some((candidate) =>
-        `${resolveModelOptionPolicyProtocol(candidate.protocol)}:${nativeToolPayloadSignature(candidate.payload)}` === variantSignature
+        `${resolveModelNativeToolProtocol(candidate.protocol)}:${nativeToolPayloadSignature(candidate.payload)}` === variantSignature
       );
       if (!hasVariant) {
         existing.variants.push(definition);

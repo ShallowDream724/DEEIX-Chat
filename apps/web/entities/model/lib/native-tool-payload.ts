@@ -1,7 +1,7 @@
 import {
   type ModelNativeToolConfig,
   type NativeToolDefinition,
-  resolveModelOptionPolicyProtocol,
+  resolveModelNativeToolProtocol,
 } from "@/entities/model/lib/model-option-policy";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -45,20 +45,20 @@ function nativeToolDefinitionFromConfig(
   const key = config.key.trim();
   const protocols = config.protocols.length > 0 ? config.protocols : (config.protocol.trim() ? [config.protocol.trim()] : []);
   const type = config.type.trim() || nativeToolConfigPayloadType(config);
-  const configuredProtocolSet = new Set(protocols.map(resolveModelOptionPolicyProtocol).filter(Boolean));
-  const modelProtocolSet = new Set(modelProtocols.map(resolveModelOptionPolicyProtocol).filter(Boolean));
+  const configuredProtocolSet = new Set(protocols.map(resolveModelNativeToolProtocol).filter(Boolean));
+  const modelProtocolSet = new Set(modelProtocols.map(resolveModelNativeToolProtocol).filter(Boolean));
   const matched = (key && configuredProtocolSet.size > 0
-    ? catalog.find((tool) => tool.toolKey === key && configuredProtocolSet.has(resolveModelOptionPolicyProtocol(tool.protocol)))
+    ? catalog.find((tool) => tool.toolKey === key && configuredProtocolSet.has(resolveModelNativeToolProtocol(tool.protocol)))
     : undefined)
     ?? (key && modelProtocolSet.size > 0
-      ? catalog.find((tool) => tool.toolKey === key && modelProtocolSet.has(resolveModelOptionPolicyProtocol(tool.protocol)))
+      ? catalog.find((tool) => tool.toolKey === key && modelProtocolSet.has(resolveModelNativeToolProtocol(tool.protocol)))
       : undefined)
     ?? catalog.find((tool) => tool.toolKey === key)
     ?? (type && configuredProtocolSet.size > 0
-      ? catalog.find((tool) => tool.type === type && configuredProtocolSet.has(resolveModelOptionPolicyProtocol(tool.protocol)))
+      ? catalog.find((tool) => tool.type === type && configuredProtocolSet.has(resolveModelNativeToolProtocol(tool.protocol)))
       : undefined)
     ?? (type && modelProtocolSet.size > 0
-      ? catalog.find((tool) => tool.type === type && modelProtocolSet.has(resolveModelOptionPolicyProtocol(tool.protocol)))
+      ? catalog.find((tool) => tool.type === type && modelProtocolSet.has(resolveModelNativeToolProtocol(tool.protocol)))
       : undefined)
     ?? (type ? catalog.find((tool) => tool.type === type) : undefined);
   if (!matched && !key && !type && Object.keys(config.payload).length === 0) {
@@ -97,9 +97,9 @@ export function nativeToolDefinitionVariantsFromConfig(
   const explicitProtocols = config.protocols.length > 0
     ? config.protocols
     : [config.protocol].filter(Boolean);
-  const modelProtocolSet = new Set(modelProtocols.map(resolveModelOptionPolicyProtocol));
+  const modelProtocolSet = new Set(modelProtocols.map(resolveModelNativeToolProtocol));
   const inferredProtocols = matchingDefinitions
-    .filter((tool) => modelProtocolSet.has(resolveModelOptionPolicyProtocol(tool.protocol)))
+    .filter((tool) => modelProtocolSet.has(resolveModelNativeToolProtocol(tool.protocol)))
     .map((tool) => tool.protocol);
   const sourceProtocols = explicitProtocols.length > 0
     ? explicitProtocols
@@ -110,7 +110,7 @@ export function nativeToolDefinitionVariantsFromConfig(
   }
   return protocols.map((protocol) => {
     const catalogDefinition = matchingDefinitions.find((tool) =>
-      resolveModelOptionPolicyProtocol(tool.protocol) === resolveModelOptionPolicyProtocol(protocol)
+      resolveModelNativeToolProtocol(tool.protocol) === resolveModelNativeToolProtocol(protocol)
     );
     if (!catalogDefinition) {
       return { ...base, protocol };

@@ -1,12 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { usesChat01Protocol, withoutLocalToolOptions } from "./model-route-capabilities.ts";
+import { hasDeepSeekResponsesProtocol, usesChat01Protocol, withoutLocalToolOptions } from "./model-route-capabilities.ts";
 
 test("only a dedicated Chat01 route disables local tools before server routing", () => {
   assert.equal(usesChat01Protocol([]), false);
   assert.equal(usesChat01Protocol(["chat01_chat_completions"]), true);
   assert.equal(usesChat01Protocol(["chat01_chat_completions", "openai_responses"]), false);
   assert.equal(usesChat01Protocol(["openai_chat_completions"]), false);
+  assert.equal(usesChat01Protocol(["deepseek_responses"]), false);
+});
+
+test("document configuration follows explicit DeepSeek routes without assuming a vendor", () => {
+  assert.equal(hasDeepSeekResponsesProtocol(["deepseek_responses"]), true);
+  assert.equal(hasDeepSeekResponsesProtocol(["openai_responses", "deepseek_responses"]), true);
+  assert.equal(hasDeepSeekResponsesProtocol(["openai_responses"]), false);
+  assert.equal(hasDeepSeekResponsesProtocol(["chat01_chat_completions"]), false);
+  assert.equal(hasDeepSeekResponsesProtocol([]), false);
 });
 
 test("effective tool options are omitted without changing saved preferences", () => {

@@ -22,6 +22,15 @@ test("common text and code extensions share the existing text preflight path", (
   }
 });
 
+test("ebooks retain their own MIME for the administrator allowlist", () => {
+  for (const [extension, want] of Object.entries({ epub: "application/epub+zip", mobi: "application/x-mobipocket-ebook" })) {
+    for (const type of ["", "application/octet-stream", "application/zip", "text/plain"]) {
+      assert.equal(normalizeUploadMimeForPolicy({ name: `book.${extension}`, type }), want);
+    }
+  }
+  assert.equal(normalizeUploadMimeForPolicy({ name: "book.zip", type: "application/zip" }), "application/zip");
+});
+
 test("MIME aliases match equivalent administrator entries", () => {
   for (const [raw, want] of Object.entries({
     " APPLICATION/X-ZIP-COMPRESSED; charset=binary ": "application/zip",

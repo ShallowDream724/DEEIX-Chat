@@ -738,6 +738,7 @@
       "pdf": "PDF",
       "audio": "audio",
       "video": "video",
+      "document": "documents",
       "attachment": "files"
     },
     "viewPricing": "View pricing",

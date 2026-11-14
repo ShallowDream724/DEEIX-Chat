@@ -21,6 +21,7 @@ const EXTENSION_MIMES: Record<string, string> = {
   doc: "application/msword", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
   ppt: "application/vnd.ms-powerpoint", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
   xls: "application/vnd.ms-excel", csv: "text/csv", md: "text/markdown", markdown: "text/markdown",
+  epub: "application/epub+zip", mobi: "application/x-mobipocket-ebook",
   json: "application/json", yaml: "text/yaml", yml: "text/yaml", toml: "application/toml",
   zip: "application/zip", "7z": "application/x-7z-compressed", rar: "application/vnd.rar", tar: "application/x-tar",
   gz: "application/gzip", tgz: "application/gzip", bz2: "application/x-bzip2", tbz: "application/x-bzip2",

@@ -738,6 +738,7 @@
       "pdf": "PDF",
       "audio": "音频",
       "video": "视频",
+      "document": "文档",
       "attachment": "文件"
     },
     "viewPricing": "查看价格",

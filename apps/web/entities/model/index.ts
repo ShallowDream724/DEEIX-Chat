@@ -28,6 +28,7 @@ export {
   isModelOptionPathFiltered,
   parseModelOptionRuleMap,
   resolveModelOptionPolicyProtocol,
+  resolveModelNativeToolProtocol,
   uniqueModelOptionPaths,
 } from "@/entities/model/lib/model-option-policy";
 export { resolveModelPresentationGroup } from "@/entities/model/lib/model-presentation";
@@ -67,4 +68,4 @@ export {
 } from "@/entities/model/lib/native-tool-payload";
 export { parseKindsJSON, stringifyKinds } from "@/entities/model/model/llm-schema";
 export type { ModelSelectOption } from "@/entities/model/types/model-select";
-export { usesChat01Protocol, withoutLocalToolOptions } from "./lib/model-route-capabilities";
+export { hasDeepSeekResponsesProtocol, usesChat01Protocol, withoutLocalToolOptions } from "./lib/model-route-capabilities";

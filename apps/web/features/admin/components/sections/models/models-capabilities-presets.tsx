@@ -19,7 +19,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import type { AdminLLMAdapter, AdminLLMModelDTO } from "@/features/admin/api/llm-types";
-import { nativeToolIsRecommended } from "@/features/admin/model/native-tool-recommendations";
+import { capabilityPresetIsRecommended } from "@/features/admin/model/native-tool-recommendations";
+import { resolveProtocolLabel } from "@/features/admin/utils/llm-display";
 import { cn } from "@/lib/utils";
 import {
   MODEL_OPTION_POLICY_PROTOCOL_LABELS,
@@ -251,20 +252,19 @@ const GOOGLE_IMAGE_SIZES = ["1K", "2K", "4K"];
 const MODEL_CAPABILITY_PRESETS: CapabilityPreset[] = [
   {
     id: "deepseek_responses",
-    label: "DeepSeek Flash",
+    label: "DeepSeek（Responses）",
     provider: "DeepSeek",
-    protocol: "openai_responses",
-    protocols: ["openai_responses", "openai_chat_completions", "anthropic_messages"],
+    protocol: "deepseek_responses",
     payload: {
-      inputModalities: ["text", "image", "pdf", "attachment"],
+      inputModalities: ["text", "image", "pdf", "document"],
       reasoning: {
         format: "openai",
         levels: ["none", "low", "high", "max"],
         default: "high",
       },
       nativeTools: [
-        { key: "deepseek.tool_search", provider: "DeepSeek", protocols: ["openai_responses", "openai_chat_completions", "anthropic_messages"], type: "deepseek_web_search", label: "DeepSeek Search", enabled: true, defaultEnabled: true, payload: { type: "deepseek_web_search" } },
-        { key: "deepseek.tool_fetch", provider: "DeepSeek", protocols: ["openai_responses", "openai_chat_completions", "anthropic_messages"], type: "deepseek_read_url", label: "DeepSeek Read URL", enabled: true, defaultEnabled: true, payload: { type: "deepseek_read_url" } },
+        { key: "deepseek.tool_search", provider: "DeepSeek", protocols: ["deepseek_responses"], type: "deepseek_web_search", label: "DeepSeek Search", enabled: true, defaultEnabled: true, payload: { type: "deepseek_web_search" } },
+        { key: "deepseek.tool_fetch", provider: "DeepSeek", protocols: ["deepseek_responses"], type: "deepseek_read_url", label: "DeepSeek Read URL", enabled: true, defaultEnabled: true, payload: { type: "deepseek_read_url" } },
       ],
       nativeFiles: { provider: "deepseek", enabled: true, spreadsheet: "local" },
     },
@@ -862,13 +862,8 @@ function formatCapabilitiesJSON(value: Record<string, unknown>): string {
   return Object.keys(value).length > 0 ? JSON.stringify(value, null, 2) : "";
 }
 
-function capabilityPresetMatched(preset: CapabilityPreset, routeProtocolSet: Set<string>, modelProvider: string): boolean {
-  return nativeToolIsRecommended(
-    preset.provider ?? preset.protocol.split("_")[0],
-    (preset.protocols ?? [preset.protocol]).map(resolveModelOptionPolicyProtocol),
-    routeProtocolSet,
-    modelProvider,
-  );
+function capabilityPresetMatched(preset: CapabilityPreset, routeProtocolSet: Set<string>): boolean {
+  return capabilityPresetIsRecommended(preset.protocols ?? [preset.protocol], routeProtocolSet);
 }
 
 function hasModelCapabilities(value: string | null | undefined): boolean {
@@ -896,7 +891,7 @@ function capabilityPresetProtocolLabel(protocol: AdminLLMAdapter): string {
 function capabilityModelProtocolLabel(model: AdminLLMModelDTO): string {
   const protocols = parseProtocolsJSON(model.protocolsJSON);
   return protocols
-    .map((protocol) => (isModelOptionPolicyProtocol(protocol) ? MODEL_OPTION_POLICY_PROTOCOL_LABELS[protocol] : protocol))
+    .map((protocol) => (isModelOptionPolicyProtocol(protocol) ? MODEL_OPTION_POLICY_PROTOCOL_LABELS[protocol] : resolveProtocolLabel(protocol)))
     .join(" / ");
 }
 
@@ -906,7 +901,6 @@ export function ModelCapabilitiesPresetDialog({
   models,
   currentModelID,
   routeProtocols,
-  modelProvider = "",
   t,
   commonT,
   onApply,
@@ -924,10 +918,10 @@ export function ModelCapabilitiesPresetDialog({
   const optionLabels = useTranslations("chat.optionLabels");
   const imageDescriptions = useTranslations("chat.image26OptionDescriptions");
   const [activeTab, setActiveTab] = useState<PresetDialogTab>("presets");
-  const routeProtocolSet = new Set(routeProtocols.map((protocol) => resolveModelOptionPolicyProtocol(protocol)).filter(Boolean));
+  const routeProtocolSet = new Set(routeProtocols.map((protocol) => protocol.trim()).filter(Boolean));
   const sortedPresets = [...MODEL_CAPABILITY_PRESETS].sort((left, right) => {
-    const leftMatched = capabilityPresetMatched(left, routeProtocolSet, modelProvider);
-    const rightMatched = capabilityPresetMatched(right, routeProtocolSet, modelProvider);
+    const leftMatched = capabilityPresetMatched(left, routeProtocolSet);
+    const rightMatched = capabilityPresetMatched(right, routeProtocolSet);
     if (leftMatched !== rightMatched) {
       return leftMatched ? -1 : 1;
     }
@@ -1038,7 +1032,7 @@ export function ModelCapabilitiesPresetDialog({
                 <div className="max-h-[min(44vh,260px)] overflow-y-auto rounded-md bg-muted/25 p-1">
                   <div className="space-y-0.5">
                     {sortedPresets.map((preset) => {
-                      const matched = capabilityPresetMatched(preset, routeProtocolSet, modelProvider);
+                      const matched = capabilityPresetMatched(preset, routeProtocolSet);
                       const selected = selectedPreset?.id === preset.id;
                       const summary = capabilityPresetSummary(preset);
                       const protocolLabel = preset.label ?? capabilityPresetProtocolLabel(preset.protocol);

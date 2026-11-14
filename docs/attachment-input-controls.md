@@ -64,9 +64,9 @@ MCP 图片处理器的输入总大小、单图识别结果字符数、合计识�
 
 单次发送的原生读取缓存、处理后图片缓存、供应商prompt cache、OpenAI `previous_response_id`是不同机制。Gemini原生PDF/音视频继续采用inlineData；续接不适用时重新提供完整有效上下文与原件。
 
-DeepSeek Flash 的官方地址默认支持 Files；兼容地址须以 `nativeFiles: {provider: "deepseek", enabled: true}` 明确声明，实际上游模型仍须为 `deepseek-flash`。PDF、Word、PowerPoint 采用 `rich_layout_recognition`，在三个对话协议中引用解析后的 `file_id`，文字和识别出的图进入模型。Excel 默认保留本站解析路径，可通过 `nativeFiles.spreadsheet: "native"` 改用免费 `user_data` 转换；不在每次发送时并行运行两种解析。Pro 本批不启用 Files。
+新增 `Responses (DeepSeek)` 独立适配器，复用 Responses 引擎并明确承载 DeepSeek 扩展。该协议的多模态保留现有顺序和 PDF，在末尾追加“文档”；PDF 与 Word/PPT/电子书文档独立控制，Chat01 的“附件”保持专属。实际 Files 型号仍须为 `deepseek-flash`，不依据厂商展示名启用。旧通用协议的官方地址及明确 `nativeFiles.provider` 配置兼容保留。PDF、Word、PowerPoint 采用 `rich_layout_recognition`；EPUB/MOBI 采用 `user_data`。Excel 默认保留本站解析，可通过 `nativeFiles.spreadsheet: "native"` 切换上游转换；不并行运行两条解析。完整规则与模块职责见 [DeepSeek Responses 与文档输入](deepseek-responses-documents.md)。
 
-管理员显式限定的输入模态仍生效；Flash 预设包含 PDF 与原件能力。Files 供应商硬限制另行检查：解析文档单份 100 MiB、1,000 页，`user_data` 单份 32 MiB，整次请求最多 20 处文档引用；解析后的文字合计 8 MiB 与裁出图片的数量由上游权威校验，本地不把压缩原件字节数当作解析文本大小。
+管理员显式限定的输入模态仍生效；DeepSeek（Responses）预设包含 PDF 与受限文档，不包含通用附件。Files 供应商硬限制另行检查：解析文档单份 100 MiB、1,000 页，`user_data` 单份 32 MiB，整次请求最多 20 处文档引用；解析后的文字合计 8 MiB 与裁出图片的数量由上游权威校验，本地不把压缩原件字节数当作解析文本大小。
 
 上游文件缓存按用户、供应商凭据范围、不可变原件、解析用途与版本隔离，存储在 `llm_native_files`，并发使用原子租约合并上传。上游文件设置 30 天有效期；明确过期后才能重新上传解析。上传响应不明时保存 `uncertain`，之后按该次专用文件名、用途与大小查询上游恢复 `file_id`，不会因客户端超时直接重传计费。没有匹配结果时明确返回待恢复错误，可后续重试查询，保留本地原件。解析费用票据随文件记录持久化，缓存复用不重新解析或计费；页数未知使用独立标识，不把未知冒充零页。
 
@@ -94,7 +94,7 @@ DeepSeek Flash 在 Responses、Chat Completions、Messages 分别声明 `deepsee
 
 上游返回的 `kind`、`signature` 等续接块由服务器保存并原样回传；普通会话沿消息祖先与分支保存，临时会话只使用按用户、session、实际路由和消息/附件祖先指纹隔离的 30 分钟内存缓存（最多 128 项、16 MiB），不信任客户端提交的原始工具签名。HTTP 200 中的生成错误仍按失败处理，并保留已经确认的 token 与成功工具用量供幂等结算。
 
-Flash 能力模板优先列出 Responses，同时针对官方支持的 Responses、Chat Completions、Messages 三种协议参与推荐；供应商与协议均须匹配，不向其他供应商推荐 DeepSeek 工具。
+DeepSeek 能力模板恢复为 `DeepSeek（Responses）`，仅对显式 `deepseek_responses` 协议推荐，不按厂商名称判断。新协议复用 Responses 参数规则，但不丢失原生工具的供应商协议身份；旧三种协议的 DeepSeek 工具配置继续兼容。
 
 独立 Fetch 的正文受单页 2 MiB、单轮合计 4 MiB 保护，成功计量先于本地保护与后续模型调用；超过保护不会截取正文冒充完整结果。已读正文随服务器私有状态沿原消息保存，后续没有 URL 的提问可以复用同一内容，不重新抓取或收费。该去重范围是本站的显式链接读取；深度搜索仍可自主打开网页，官方没有承诺它与独立 Fetch 跨 API 共享去重缓存，因此同一网页若被深度搜索再次联网读取，仍可能产生额外的真实读取用量。
 

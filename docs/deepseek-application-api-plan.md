@@ -4,6 +4,7 @@
 
 ## 本轮范围
 
+- 模型来源新增 `Responses (DeepSeek)`；选此协议即可在多模态原顺序末尾配置“文档”，PDF 独立，附件仍限 Chat01。模板恢复 `DeepSeek（Responses）`，推荐依据明确协议，实际 Files 准入继续校验模型与格式。新旧协议兼容、共享格式边界和测试见 [DeepSeek Responses 与文档输入](deepseek-responses-documents.md)。
 - Flash 新版联网工具、URL 阅读与 Files 接入，统一复用既有多模态、文件权限、附件引用、缓存、预算及分支处理。能力按供应商、协议、实际模型配置声明，为后续 Pro 多模态扩展保留边界；本批不新增 Pro Files 支持。
 - 搜索、URL 阅读默认开启，不让用户额外选择搜索深度。搜索跟随最终规范化后的 thinking 状态：off 普通，其余启用思考时使用深度搜索；DeepSeek 的 medium 官方映射为 high。不能把本地某个努力档位随意解释成普通搜索。
 - 深度搜索不独立执行 read_url 时，对用户明确给出的 URL 按需要采用 Fetch 适配；按轮次去重，不对没有 URL 的普通消息新增抓取等待。计量按上游真实成功用量，补齐图片搜索及供应商协议字段。

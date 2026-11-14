@@ -1,7 +1,7 @@
 "use client";
 
 import type * as React from "react";
-import { AudioLines, FileText, Image as ImageIcon, MoveRight, Paperclip, Type, Video } from "lucide-react";
+import { AudioLines, Files, FileText, Image as ImageIcon, MoveRight, Paperclip, Type, Video } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { DropdownMenuLabel, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
@@ -12,7 +12,7 @@ import {
   ModelCapabilityRow,
 } from "@/features/admin/components/sections/models/models-capability-row";
 import {
-  CONFIGURABLE_INPUT_MODALITIES,
+  configurableInputModalities,
   type ModelModality,
   normalizeModalities,
 } from "@/features/admin/model/model-input-modalities";
@@ -24,6 +24,7 @@ const MODALITY_ICONS: Record<ModelModality, React.ComponentType<{ className?: st
   pdf: FileText,
   audio: AudioLines,
   video: Video,
+  document: Files,
   attachment: Paperclip,
 };
 
@@ -33,6 +34,7 @@ type ModelModalitiesFieldProps = {
   resolution: AdminLLMModelCatalogResolution | null;
   disabled?: boolean;
   attachmentInput?: boolean;
+  documentInput?: boolean;
   onChange: (modalities: ModelModality[] | null) => boolean;
 };
 
@@ -40,12 +42,12 @@ type ModelModalitiesFieldProps = {
  * Input → output modalities of the model, as resolved by the server: an explicit `inputModalities`
  * declaration wins, otherwise the models.dev catalog. Output modalities come from the catalog only.
  */
-export function ModelModalitiesField({ override, resolution, disabled = false, attachmentInput = false, onChange }: ModelModalitiesFieldProps) {
+export function ModelModalitiesField({ override, resolution, disabled = false, attachmentInput = false, documentInput = false, onChange }: ModelModalitiesFieldProps) {
   const t = useTranslations("adminModels");
   const match = resolution?.matched ? resolution : null;
   const catalogInputs = normalizeModalities(match?.inputModalities);
   const outputs = normalizeModalities(match?.outputModalities);
-  const inputChoices: readonly ModelModality[] = attachmentInput ? ["image", "attachment"] : CONFIGURABLE_INPUT_MODALITIES;
+  const inputChoices = configurableInputModalities({ attachmentInput, documentInput });
   const defaultInputs: ModelModality[] = attachmentInput ? ["text", "image", "attachment"] : catalogInputs;
   const inputs = (override ?? defaultInputs)
     .filter((modality) => modality === "text" || inputChoices.includes(modality));
@@ -55,6 +57,7 @@ export function ModelModalitiesField({ override, resolution, disabled = false, a
     pdf: t("sheet.modalities.names.pdf"),
     audio: t("sheet.modalities.names.audio"),
     video: t("sheet.modalities.names.video"),
+    document: t("sheet.modalities.names.document"),
     attachment: t("sheet.modalities.names.attachment"),
   };
 

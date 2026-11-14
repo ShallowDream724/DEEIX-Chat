@@ -82,7 +82,7 @@ func buildResponsesRequestBody(request responsesRequestInput) map[string]any {
 	appendToolDeclarations(payload, request.ProviderTools, webSearchTools, buildOpenAITools(request.ToolDefinitions, false))
 	// 有状态会话：提供 previous_response_id 时服务端续接存储的历史，
 	// input 仅包含本轮新消息，避免全量重传。
-	if prevID := strings.TrimSpace(input.PreviousResponseID); !input.Ephemeral && prevID != "" {
+	if prevID := strings.TrimSpace(input.PreviousResponseID); portllm.SupportsPreviousResponseID(adapter) && !input.Ephemeral && prevID != "" {
 		payload["previous_response_id"] = prevID
 	}
 	if streamOptions := responsesStreamOptions(request.ProviderStreamOptions); request.Stream && len(streamOptions) > 0 {
@@ -118,7 +118,7 @@ func responsesProtectedProviderOptionKeys(adapter string, hasManagedInstructions
 		"text",
 		"tools",
 	}
-	if adapter == portllm.AdapterOpenAIResponses {
+	if adapter == portllm.AdapterOpenAIResponses || adapter == portllm.AdapterDeepSeekResponses {
 		keys = append(keys, "background", "store")
 	}
 	if adapter != portllm.AdapterOpenAIResponses {

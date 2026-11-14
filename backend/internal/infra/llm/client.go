@@ -525,6 +525,7 @@ func newClientWithUntrustedPolicy(outboundPolicy security.OutboundPolicy, untrus
 	})
 	client.adapters = map[string]transportAdapter{
 		portllm.AdapterOpenAIResponses:        &openAIResponsesAdapter{client: client},
+		portllm.AdapterDeepSeekResponses:      &deepSeekResponsesAdapter{openAIResponsesAdapter: openAIResponsesAdapter{client: client}},
 		portllm.AdapterOpenRouterChat:         &openRouterChatCompletionsAdapter{client: client},
 		portllm.AdapterOpenRouterResponses:    &openRouterResponsesAdapter{client: client},
 		portllm.AdapterOpenRouterImages:       &openRouterImagesAdapter{client: client},

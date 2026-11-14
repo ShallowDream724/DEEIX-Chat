@@ -105,6 +105,7 @@ func nativeInputMIME(att AttachmentInput) string {
 type nativeInputPolicy struct {
 	DeepSeekFiles       bool
 	DeepSeekSpreadsheet bool
+	Document            bool
 	Attachment          bool
 	HTTPS               bool
 	Budget              nativeInputBudget
@@ -152,7 +153,7 @@ func inlineRequestByteLimit(p nativeInputPolicy) int64 {
 
 // accepts 判断附件能否在该路由上原生发送（不含预算）。
 func (p nativeInputPolicy) accepts(att AttachmentInput) bool {
-	if p.DeepSeekFiles && deepSeekNativeDocument(att, p.DeepSeekSpreadsheet) {
+	if p.DeepSeekFiles && p.Document && deepSeekNativeDocument(att, p.DeepSeekSpreadsheet) {
 		return true
 	}
 	if p.Attachment && !isImageOriginal(att) {
@@ -217,11 +218,21 @@ func resolveNativeInputPolicy(route *channel.ResolvedRoute, configuration ...str
 		policy.PDF = true
 	}
 	policy.DeepSeekFiles, policy.DeepSeekSpreadsheet = deepSeekNativeFilesPolicy(route)
-	if modalities.Source == domainchannel.InputModalitiesSourceExplicit && !modalities.Supports(domainchannel.InputModalityPDF) && !modalities.Supports(domainchannel.InputModalityAttachment) {
-		policy.DeepSeekFiles, policy.DeepSeekSpreadsheet = false, false
-	}
 	if policy.DeepSeekFiles {
-		policy.PDF = true
+		// Existing generic-protocol configurations used PDF/attachment as the Files
+		// switch. Keep those settings readable; the explicit adapter separates both.
+		legacy := llm.NormalizeAdapter(route.Protocol) != llm.AdapterDeepSeekResponses && !modalities.Supports(domainchannel.InputModalityDocument)
+		if legacy {
+			policy.DeepSeekFiles = modalities.Source != domainchannel.InputModalitiesSourceExplicit || modalities.Supports(domainchannel.InputModalityPDF) || modalities.Supports(domainchannel.InputModalityAttachment)
+			policy.PDF, policy.Document = policy.DeepSeekFiles, policy.DeepSeekFiles
+		} else {
+			policy.PDF = modalities.Supports(domainchannel.InputModalityPDF)
+			policy.Document = modalities.Supports(domainchannel.InputModalityDocument)
+			policy.DeepSeekFiles = policy.PDF || policy.Document
+		}
+	}
+	if !policy.DeepSeekFiles {
+		policy.DeepSeekSpreadsheet = false
 	}
 	return policy
 }

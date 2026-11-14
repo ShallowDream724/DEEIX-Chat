@@ -23,6 +23,7 @@ const (
 var allowedProtocols = []string{
 	llm.AdapterOpenAIChatCompletions,
 	llm.AdapterOpenAIResponses,
+	llm.AdapterDeepSeekResponses,
 	llm.AdapterAnthropicMessages,
 	llm.AdapterGoogleGenerateContent,
 	llm.AdapterGeminiInteractions,
@@ -37,6 +38,7 @@ var allowedProtocols = []string{
 var modelProtocols = []string{
 	llm.AdapterOpenAIChatCompletions,
 	llm.AdapterOpenAIResponses,
+	llm.AdapterDeepSeekResponses,
 	llm.AdapterOpenAIImageGenerations,
 	llm.AdapterOpenAIImageEdits,
 	llm.AdapterAnthropicMessages,

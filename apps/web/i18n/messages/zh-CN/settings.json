@@ -732,6 +732,7 @@
       "chat01_chat_completions": "Chat Completions (Chat01)",
       "openai_chat_completions": "Chat Completions (OpenAI)",
       "openai_responses": "Responses (OpenAI)",
+      "deepseek_responses": "Responses (DeepSeek)",
       "anthropic_messages": "Messages (Anthropic)",
       "google_generate_content": "Generate Content (Google)",
       "gemini_interactions": "Interactions (Google)",

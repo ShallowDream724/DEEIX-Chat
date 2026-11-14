@@ -2,6 +2,24 @@ package nativetool
 
 import "testing"
 
+func TestDeepSeekResponsesNativeToolsKeepDistinctCatalogIdentity(t *testing.T) {
+	for _, protocol := range []string{"deepseek_responses", "openai_responses"} {
+		for _, toolType := range []string{"deepseek_web_search", "deepseek_read_url"} {
+			definition, ok := Find(protocol, toolType)
+			if !ok || definition.Protocol != protocol || definition.Provider != "DeepSeek" {
+				t.Fatalf("%s/%s missing distinct DeepSeek definition: %#v", protocol, toolType, definition)
+			}
+		}
+		keys := UsageKeysForTool(protocol, "deepseek.tool_search")
+		if keys["tool_fetch"] != "deepseek.tool_fetch" || keys["tool_image_search"] != "deepseek.tool_image_search" {
+			t.Fatalf("%s lost downstream DeepSeek metering identities: %#v", protocol, keys)
+		}
+	}
+	if _, ok := Find("deepseek_responses", "code_interpreter"); ok {
+		t.Fatal("DeepSeek protocol must not advertise OpenAI native tools")
+	}
+}
+
 func TestDeepSeekReadURLAndImageMeterHaveStableIdentities(t *testing.T) {
 	for _, toolType := range []string{"web_fetch", "tool_fetch"} {
 		if _, _, ok := PayloadFromOption("openai_responses", map[string]any{"type": toolType}); ok {

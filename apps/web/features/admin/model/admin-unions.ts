@@ -19,6 +19,7 @@ export const isAdminLLMModelAccessScope = isOneOf(ADMIN_LLM_MODEL_ACCESS_SCOPES)
 export const ADMIN_LLM_ADAPTERS = [
   "chat01_chat_completions",
   "openai_responses",
+  "deepseek_responses",
   "openrouter_chat_completions",
   "openrouter_responses",
   "openrouter_images",

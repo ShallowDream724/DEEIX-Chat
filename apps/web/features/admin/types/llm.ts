@@ -23,6 +23,7 @@ export type ModelSortValue = (typeof MODEL_SORT_OPTIONS)[number]["value"];
 export const ADAPTER_LABELS: Record<string, string> = {
   chat01_chat_completions: resolveProtocolLabel("chat01_chat_completions"),
   openai_responses: resolveProtocolLabel("openai_responses"),
+  deepseek_responses: resolveProtocolLabel("deepseek_responses"),
   openrouter_chat_completions: resolveProtocolLabel("openrouter_chat_completions"),
   openrouter_responses: resolveProtocolLabel("openrouter_responses"),
   openrouter_images: resolveProtocolLabel("openrouter_images"),

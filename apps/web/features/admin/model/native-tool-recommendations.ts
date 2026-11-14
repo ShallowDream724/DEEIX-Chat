@@ -14,6 +14,14 @@ export function nativeToolIsRecommended(
   routeProtocols: ReadonlySet<string>,
   modelProvider: string,
 ): boolean {
+  if (routeProtocols.has("deepseek_responses")) {
+    return canonicalProvider(toolProvider) === "deepseek" && protocols.includes("deepseek_responses");
+  }
   return nativeToolMatchesProvider(toolProvider, modelProvider)
     && (routeProtocols.size === 0 || protocols.some((protocol) => routeProtocols.has(protocol)));
+}
+
+/** Templates follow the selected transport identity, independently of display vendor names. */
+export function capabilityPresetIsRecommended(protocols: readonly string[], routeProtocols: ReadonlySet<string>): boolean {
+  return protocols.some((protocol) => routeProtocols.has(protocol));
 }

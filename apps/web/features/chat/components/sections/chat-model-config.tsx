@@ -55,6 +55,7 @@ import {
   type NativeToolDefinition,
   resolveModelOptionLabel,
   resolveModelOptionPolicyProtocol,
+  resolveModelNativeToolProtocol,
 } from "@/entities/model";
 import { isOneOf, isRecord } from "@/shared/lib/type-guards";
 
@@ -655,8 +656,8 @@ function resolveModelOptionFilterStatus(
 }
 
 function resolveNativeToolRouteStatus(modelProtocols: string[], toolProtocols: string[]): ModelOptionFilterStatus {
-  const modelProtocolSet = new Set(modelProtocols.map(resolveModelOptionPolicyProtocol).filter(Boolean));
-  const toolProtocolSet = new Set(toolProtocols.map(resolveModelOptionPolicyProtocol).filter(Boolean));
+  const modelProtocolSet = new Set(modelProtocols.map(resolveModelNativeToolProtocol).filter(Boolean));
+  const toolProtocolSet = new Set(toolProtocols.map(resolveModelNativeToolProtocol).filter(Boolean));
   if (modelProtocolSet.size === 0 || toolProtocolSet.size === 0) {
     return "passed";
   }
