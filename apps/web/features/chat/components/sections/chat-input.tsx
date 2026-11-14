@@ -103,6 +103,26 @@ const TEMPORARY_NOTICE_TRANSITION = {
 };
 const TEMPORARY_MENTION_KINDS = ["model", "knowledge", "tool", "skill", "prompt"] as const;
 
+function revealSpeechCaret(textarea: HTMLTextAreaElement, index: number) {
+  if (index === textarea.value.length) { textarea.scrollTop = textarea.scrollHeight; return; }
+  if (textarea.scrollHeight <= textarea.clientHeight) return;
+  // Native setSelectionRange does not scroll a controlled textarea's middle insertion into view.
+  const styles = window.getComputedStyle(textarea);
+  const mirror = document.createElement("div");
+  for (const key of ["font", "fontFamily", "fontSize", "fontWeight", "lineHeight", "letterSpacing", "padding", "tabSize", "wordBreak", "overflowWrap", "textTransform", "textIndent", "direction"] as const) mirror.style[key] = styles[key];
+  Object.assign(mirror.style, { position: "fixed", left: "-10000px", top: "0", visibility: "hidden", pointerEvents: "none", boxSizing: "border-box", width: `${textarea.clientWidth}px`, whiteSpace: "pre-wrap" });
+  mirror.textContent = textarea.value.slice(0, index);
+  const marker = document.createElement("span"); marker.textContent = textarea.value.slice(index) || "\u200b"; mirror.append(marker);
+  document.body.append(mirror);
+  try {
+    const top = marker.getBoundingClientRect().top - mirror.getBoundingClientRect().top;
+    const height = Number.parseFloat(styles.lineHeight) || 24;
+    const padding = Number.parseFloat(styles.paddingBottom) || 0;
+    if (top < textarea.scrollTop) textarea.scrollTop = top;
+    else if (top + height > textarea.scrollTop + textarea.clientHeight - padding) textarea.scrollTop = top + height - textarea.clientHeight + padding;
+  } finally { mirror.remove(); }
+}
+
 type QueuedComposerMessage = {
   id: string;
   content: string;
@@ -282,7 +302,7 @@ function ChatInputComponent({
   const [editingQueuedMessageContent, setEditingQueuedMessageContent] = React.useState("");
   const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
   const voiceSelectionMoved = React.useRef(false);
-  const pendingVoiceFocus = React.useRef<{ scopeKey: string; draft: string; selectionEnd: number } | null>(null);
+  const pendingVoiceFocus = React.useRef<{ scopeKey: string; draft: string; selectionEnd: number; restoreFocus?: boolean } | null>(null);
   const handleSpeechInputError = React.useCallback((error: SpeechInputErrorCode) => {
     toast.error(tComposer("voiceErrorTitle"), {
       id: "chat-speech-input-error",
@@ -293,15 +313,19 @@ function ChatInputComponent({
     draft,
     scopeKey: autoFocusKey,
     language: locale,
-    listeningPlaceholder: tComposer("voiceListeningPlaceholder"),
-    onDraftChange,
+    onDraftChange: (next, selectionEnd) => {
+      const textarea = textareaRef.current;
+      if (textarea && selectionEnd !== undefined) {
+        pendingVoiceFocus.current = { scopeKey: autoFocusKey, draft: next, selectionEnd: selectionEnd ?? next.length };
+      }
+      onDraftChange(next);
+    },
     onDraftPersist,
     onResultCommitted: (result) => {
-      if (!voiceSelectionMoved.current) pendingVoiceFocus.current = result;
+      if (!voiceSelectionMoved.current) pendingVoiceFocus.current = { ...result, restoreFocus: true };
     },
     onError: handleSpeechInputError,
     placeholder: tComposer("inputPlaceholder"),
-    startingPlaceholder: tComposer("voiceStartingPlaceholder"),
   });
   const sendMessageRef = React.useRef(onSendMessage);
   sendMessageRef.current = onSendMessage;
@@ -310,7 +334,17 @@ function ChatInputComponent({
     voiceSelectionMoved.current = false;
     pendingVoiceFocus.current = null;
     setIsVoiceHovered(false);
-    void speechInput.start();
+    const textarea = textareaRef.current;
+    const insertionIndex = textarea?.selectionEnd ?? draft.length;
+    textarea?.focus({ preventScroll: true });
+    textarea?.setSelectionRange(insertionIndex, insertionIndex);
+    void speechInput.start(insertionIndex);
+  };
+  const interruptSpeechForEditing = (value?: string) => {
+    if (!speechInput.active) return;
+    voiceSelectionMoved.current = true;
+    pendingVoiceFocus.current = null;
+    speechInput.interruptForEditing(value);
   };
   const cancelSpeech = () => {
     pendingVoiceFocus.current = null;
@@ -384,7 +418,7 @@ function ChatInputComponent({
   React.useLayoutEffect(() => {
     const request = pendingVoiceFocus.current;
     if (!request) return;
-    if (request.scopeKey !== autoFocusKey || voiceSelectionMoved.current) {
+    if (request.scopeKey !== autoFocusKey) {
       pendingVoiceFocus.current = null;
       return;
     }
@@ -394,9 +428,10 @@ function ChatInputComponent({
     const focused = document.activeElement;
     if (focused instanceof HTMLElement && focused !== textarea &&
       (focused.matches("input,textarea,select") || focused.isContentEditable)) return;
+    if (!request.restoreFocus && focused !== textarea) return;
     textarea.focus({ preventScroll: true });
     textarea.setSelectionRange(request.selectionEnd, request.selectionEnd);
-    if (request.selectionEnd === textarea.value.length) textarea.scrollTop = textarea.scrollHeight;
+    revealSpeechCaret(textarea, request.selectionEnd);
   });
 
   // Only relevant in RAG mode: all document attachments opted out of RAG.
@@ -620,7 +655,7 @@ function ChatInputComponent({
     textareaRef,
     toolsDisabled: isMediaMode,
     enabledKinds: temporaryMode ? TEMPORARY_MENTION_KINDS : undefined,
-    onDraftChange,
+    onDraftChange: (value) => { interruptSpeechForEditing(value); onDraftChange(value); },
     onFileSelect: onAttachExistingFile,
     onModelCatalogRefresh,
     onModelChange,
@@ -1008,7 +1043,7 @@ function ChatInputComponent({
             ref={textareaRef}
             value={draft}
             disabled={loading}
-            placeholder={dropActive ? tChat("attachments.dropTitle") : speechInput.active ? speechInput.placeholder : mediaPlaceholder || speechInput.placeholder}
+            placeholder={speechInput.active ? "" : dropActive ? tChat("attachments.dropTitle") : mediaPlaceholder || speechInput.placeholder}
             rows={1}
             aria-controls={showMentionMenu ? mentionMenuID : undefined}
             aria-expanded={showMentionMenu ? true : undefined}
@@ -1021,8 +1056,8 @@ function ChatInputComponent({
             )}
             onFocus={handleMentionFocus}
             onBlur={handleMentionBlur}
-            onChange={(event) => handleMentionChange(event.target.value)}
-            onPointerDown={() => { if (speechInput.active) voiceSelectionMoved.current = true; }}
+            onChange={(event) => { pendingVoiceFocus.current = null; handleMentionChange(event.target.value); }}
+            onPointerDown={() => interruptSpeechForEditing()}
             onClick={handleMentionSelectionChange}
             onKeyUp={handleMentionSelectionChange}
             onSelect={handleMentionSelectionChange}
@@ -1070,7 +1105,7 @@ function ChatInputComponent({
               composingRef.current = false;
             }}
             onKeyDown={(event) => {
-              if (speechInput.active && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key)) voiceSelectionMoved.current = true;
+              if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key) || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a")) interruptSpeechForEditing();
               if (isImeComposingKeyEvent(event, composingRef.current)) {
                 return;
               }
@@ -1090,28 +1125,28 @@ function ChatInputComponent({
           />
 
           {speechInput.active ? (
-            <div data-speech-controls className="flex w-full items-center gap-3 px-3 pb-3 pt-3" role="group" aria-label={tComposer("voiceInput")} aria-busy={speechInput.status !== "listening"}>
-              <InputGroupButton type="button" variant="outline" size="icon-sm" className="size-11 shrink-0 rounded-full border-border/50 bg-transparent text-foreground shadow-none hover:bg-accent/50" onClick={cancelSpeech} aria-label={tComposer("cancelVoiceInput")}>
-                <X aria-hidden className="size-6" strokeWidth={1.8} />
+            <div data-speech-controls className="flex w-full items-center gap-2 px-3 pb-2 pt-1" role="group" aria-label={tComposer("voiceInput")} aria-busy={speechInput.status !== "listening"}>
+              <InputGroupButton type="button" variant="outline" size="icon-sm" className="relative size-8 shrink-0 rounded-full border-border/50 bg-transparent text-foreground shadow-none before:absolute before:-inset-1 before:content-[''] hover:bg-accent/50" onClick={cancelSpeech} aria-label={tComposer("cancelVoiceInput")}>
+                <X aria-hidden className="size-4.5" strokeWidth={1.8} />
               </InputGroupButton>
-              <div className="relative flex h-11 min-w-0 flex-1 items-center">
-                <MediaWaveform active={speechInput.status === "listening"} />
+              <div className="relative flex h-8 min-w-0 flex-1 items-center">
+                <MediaWaveform active={speechInput.status === "listening"} className={cn("h-6", speechInput.status !== "listening" && "invisible")} />
                 {speechInput.status !== "listening" ? (
-                  <span className="absolute inset-0 flex items-center justify-center gap-2 bg-background/95 text-xs text-muted-foreground" role="status">
-                    <LoaderCircle aria-hidden className="size-4 shrink-0 animate-spin" />
-                    {speechInput.status === "transcribing" ? tComposer("voiceTranscribing") : tComposer("voiceStartingPlaceholder")}
+                  <span className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground" role="status">
+                    <LoaderCircle aria-hidden className="size-3.5 shrink-0 animate-spin" />
+                    <span className="sr-only">{speechInput.status === "transcribing" ? tComposer("voiceTranscribing") : tComposer("voiceStartingPlaceholder")}</span>
                   </span>
                 ) : speechInput.remainingMS <= 10000 ? (
                   <span className="absolute inset-x-0 -top-2 text-center text-[11px] tabular-nums text-muted-foreground" role="status" aria-live="polite">
-                    {tComposer("voiceRemaining", { seconds: Math.ceil(speechInput.remainingMS / 1000) })}
+                    <span aria-hidden>{Math.ceil(speechInput.remainingMS / 1000)}s</span><span className="sr-only">{tComposer("voiceRemaining", { seconds: Math.ceil(speechInput.remainingMS / 1000) })}</span>
                   </span>
                 ) : <span className="sr-only" role="status">{tComposer("voiceRecording")}</span>}
               </div>
-              <InputGroupButton type="button" variant="outline" size="icon-sm" className="size-11 shrink-0 rounded-full border-border/50 bg-transparent text-foreground shadow-none hover:bg-accent/50" disabled={speechInput.status !== "listening"} onClick={() => void speechInput.stop()} aria-label={tComposer("voiceStop")}>
-                <Square aria-hidden className="size-4" fill="currentColor" strokeWidth={0} />
+              <InputGroupButton type="button" variant="outline" size="icon-sm" className="relative size-8 shrink-0 rounded-full border-border/50 bg-transparent text-foreground shadow-none before:absolute before:-inset-1 before:content-[''] hover:bg-accent/50" disabled={speechInput.status !== "listening"} onClick={() => void speechInput.stop()} aria-label={tComposer("voiceStop")}>
+                <Square aria-hidden className="size-2.5" fill="currentColor" strokeWidth={0} />
               </InputGroupButton>
-              <InputGroupButton type="button" variant="default" size="icon-sm" className="size-11 shrink-0 rounded-full bg-foreground text-background shadow-none hover:bg-foreground/90" disabled={speechInput.status === "starting" || loading || uploading || waitingForAttachments} onClick={() => void sendComposer()} aria-label={tComposer("voiceSend")}>
-                <ArrowUp aria-hidden className="size-6" strokeWidth={2} />
+              <InputGroupButton type="button" variant="default" size="icon-sm" className="relative size-8 shrink-0 rounded-full bg-foreground text-background shadow-none before:absolute before:-inset-1 before:content-[''] hover:bg-foreground/90" disabled={speechInput.status === "starting" || loading || uploading || waitingForAttachments} onClick={() => void sendComposer()} aria-label={tComposer("voiceSend")}>
+                <ArrowUp aria-hidden className="size-4.5" strokeWidth={2} />
               </InputGroupButton>
             </div>
           ) : null}

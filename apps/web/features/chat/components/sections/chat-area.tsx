@@ -707,7 +707,7 @@ export function ChatArea({
             <MessageScrollerViewport
               ref={messageViewportBoundaryRef}
               preserveScrollOnPrepend={false}
-              className={cn("px-3 pt-2 has-data-[screenshot-capturing=true]:pb-8 md:px-6", splitRightInset && "lg:pr-8")}
+              className={cn("px-3 pt-2 has-data-[screenshot-capturing=true]:pb-8 md:px-6", splitRightInset && "lg:pr-8 lg:group-has-[[data-slot=sidebar][data-side=left][data-state=expanded][data-hover-expanded=false]]/sidebar-wrapper:pl-8")}
               onScroll={onScroll}
             >
               <MessageScrollerContent

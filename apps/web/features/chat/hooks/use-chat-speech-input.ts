@@ -45,9 +45,9 @@ function release(session: Session) {
 }
 
 export function useChatSpeechInput(params: {
-  draft: string; scopeKey: string; language: string; listeningPlaceholder: string;
-  onDraftChange: (value: string) => void; onError: (error: SpeechInputErrorCode) => void;
-  placeholder: string; startingPlaceholder: string;
+  draft: string; scopeKey: string; language: string;
+  onDraftChange: (value: string, selectionEnd?: number | null) => void; onError: (error: SpeechInputErrorCode) => void;
+  placeholder: string;
   onDraftPersist?: (draft: string) => void;
   onResultCommitted?: (result: { scopeKey: string; sessionID: string; draft: string; selectionEnd: number }) => void;
 }) {
@@ -74,7 +74,7 @@ export function useChatSpeechInput(params: {
     const next = session.segment.update(text);
     session.draft = next;
     latest.current = { ...latest.current, draft: next };
-    latest.current.onDraftChange(next);
+    latest.current.onDraftChange(next, session.segment.selectionEnd);
   };
   const complete = (session: Session, success: boolean) => {
     const visible = current(session);
@@ -171,14 +171,14 @@ export function useChatSpeechInput(params: {
   }, [cancel]);
 
   const supported = providerID === "browser" ? browserSupported : Boolean(capability && captureSupported && (!capability.streaming || opusSupported));
-  const start = async () => {
+  const start = async (insertionIndex = latest.current.draft.length) => {
     if (sessionRef.current || sendPendingRef.current) return;
     if (!browserSupported && !captureSupported) { latest.current.onError("unavailable"); return; }
     let resolveCompleted: (success: boolean) => void = () => {};
     const completed = new Promise<boolean>((resolve) => { resolveCompleted = resolve; });
     const duration = Math.min(capabilities.max_recording_duration_ms || 120000, capability?.max_duration_ms || Infinity);
     const maxSamples = Math.max(1, Math.floor(Math.min(duration * 16, capability?.max_bytes && !capability.streaming ? (capability.max_bytes - 44) / 2 : Infinity)));
-    const session: Session = { id: crypto.randomUUID(), scope: latest.current.scopeKey, userID, accessToken: token, providerID, controller: new AbortController(), segment: new SpeechDraftSegment(latest.current.draft), draft: latest.current.draft, userEdited: false, persistDraft: latest.current.onDraftPersist, disposers: [], cancelled: false, stopping: false, failed: false, sequence: -1, samples: 0, maxDuration: maxSamples / 16, frames: [], completed, resolveCompleted };
+    const session: Session = { id: crypto.randomUUID(), scope: latest.current.scopeKey, userID, accessToken: token, providerID, controller: new AbortController(), segment: new SpeechDraftSegment(latest.current.draft, insertionIndex), draft: latest.current.draft, userEdited: false, persistDraft: latest.current.onDraftPersist, disposers: [], cancelled: false, stopping: false, failed: false, sequence: -1, samples: 0, maxDuration: maxSamples / 16, frames: [], completed, resolveCompleted };
     sessionRef.current = session; setElapsedMS(0); setMaxDurationMS(session.maxDuration); setStatus("starting");
     session.activity = beginRecordingActivity(session.id);
     try {
@@ -195,11 +195,11 @@ export function useChatSpeechInput(params: {
       setMaxDurationMS(session.maxDuration);
       const capture = () => startSpeechCapture({
         context: session.captureContext, signal: session.controller.signal, maxSamples: Math.floor(session.maxDuration * 16),
-        onFrame: (frame) => {
+        onFrame: (frame, bands) => {
           if (!current(session)) return;
           session.samples += frame.length;
           let squared = 0; for (const value of frame) squared += value * value;
-          session.activity?.publishLevel(Math.min(1, Math.sqrt(squared / frame.length) * 4));
+          session.activity?.publishLevel(Math.min(1, Math.sqrt(squared / frame.length) * 4), bands);
           if (session.samples % 3200 < frame.length) setElapsedMS(session.samples / 16);
           if (providerID === "browser") return;
           if (session.encoder) { try { session.encoder.encode(frame); } catch { fail(session, "audioUnavailable"); } }
@@ -236,7 +236,11 @@ export function useChatSpeechInput(params: {
             for (let i = 0; i < event.results.length; i++) { const result = event.results.item(i); if (result.length) pieces.push(result.item(0).transcript); }
             lastText = pieces.join(" ").trim(); update(session, [prefix, lastText].filter(Boolean).join(" "));
           };
-          recognition.onerror = ({ error }) => { if (error === "aborted" && !session.stopping) fail(session, "interrupted"); else if (error !== "no-speech" && error !== "aborted") fail(session, browserError[error] ?? "unavailable"); };
+          recognition.onerror = ({ error }) => {
+            if (!current(session) || session.recognition !== recognition) return;
+            if (error === "aborted" && !session.stopping) fail(session, "interrupted");
+            else if (error !== "no-speech" && error !== "aborted") fail(session, browserError[error] ?? "unavailable");
+          };
           recognition.onend = () => {
             if (!current(session) || session.recognition !== recognition) return;
             if (session.stopping) { if ((prefix + lastText).trim()) complete(session, true); else fail(session, "noSpeech"); return; }
@@ -317,7 +321,11 @@ export function useChatSpeechInput(params: {
       if (scope === latest.current.scopeKey) await send(latest.current.draft);
     } finally { sendPendingRef.current = false; }
   };
-  return { supported, status, active: status !== "idle", elapsedMS, maxDurationMS, remainingMS: Math.max(0, maxDurationMS - elapsedMS), start, stop, cancel: () => cancel(), finishAndSend,
+  const interruptForEditing = (draft = latest.current.draft) => {
+    latest.current = { ...latest.current, draft };
+    cancel(false);
+  };
+  return { supported, status, active: status !== "idle", elapsedMS, maxDurationMS, remainingMS: Math.max(0, maxDurationMS - elapsedMS), start, stop, cancel: () => cancel(), finishAndSend, interruptForEditing,
     toggle: () => { if (sessionRef.current) void stopRef.current(); else void start(); },
-    placeholder: status === "starting" ? params.startingPlaceholder : status === "listening" ? params.listeningPlaceholder : params.placeholder };
+    placeholder: params.placeholder };
 }

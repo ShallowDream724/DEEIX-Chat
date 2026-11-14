@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -240,6 +241,11 @@ func TestDoubaoStreamsAndOnlySessionFinishedCommits(t *testing.T) {
 					}
 					audioFrames++
 					payload = `{"results":[{"index":0,"text":"hello","is_interim":false,"is_vad_finished":true},{"index":1,"text":" world","is_interim":true}]}`
+					if audioFrames == 2 {
+						payload = `{"results":[{"text":"Hello world!","extra":{"nonstream_result":true}},{"text":"Hello world!","stream_asr_finish":true,"extra":{"nonstream_result":true}}]}`
+					} else if audioFrames == 3 {
+						payload = `{"results":[{"text":"Hello world! After pause","is_interim":true},{"text":"Hello world!","stream_asr_finish":true,"extra":{"nonstream_result":true}},{"text":"After pause","stream_asr_finish":false}]}`
+					}
 				} else if integer(f, 9) == 9 {
 					sawLast = true
 				}
@@ -249,7 +255,7 @@ func TestDoubaoStreamsAndOnlySessionFinishedCommits(t *testing.T) {
 					return
 				}
 				event = "SessionFinished"
-				payload = `{"results":[{"text":"hello world!","stream_asr_finish":true}]}`
+				payload = `{"results":[{"text":"Hello world! After pause.","stream_asr_finish":true,"extra":{"nonstream_result":true}},{"text":"After pause.","stream_asr_finish":true,"extra":{"nonstream_result":true}}]}`
 			}
 			if event != "" || payload != "" {
 				response := proto{}.s(4, event).v(5, 20000000)
@@ -273,7 +279,7 @@ func TestDoubaoStreamsAndOnlySessionFinishedCommits(t *testing.T) {
 	done := make(chan error, 1)
 	go func() {
 		r, e := p.Stream(context.Background(), domain.StreamRequest{UserID: 1, SessionID: "session"}, frames, func(e domain.Event) error { partial <- e; return nil })
-		if e == nil && r.Text != "hello world!" {
+		if e == nil && r.Text != "Hello world! After pause." {
 			e = errors.New("final revision missing")
 		}
 		done <- e
@@ -287,7 +293,28 @@ func TestDoubaoStreamsAndOnlySessionFinishedCommits(t *testing.T) {
 		t.Fatal("partial waited for recording end")
 	}
 	frames <- []byte{0x98, 2}
+	select {
+	case e := <-partial:
+		if e.Text != "Hello world!" {
+			t.Fatal("VAD correction was filtered", e)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("utterance correction stalled")
+	}
+	select {
+	case <-done:
+		t.Fatal("utterance finish ended the session")
+	default:
+	}
 	frames <- []byte{0x98, 3}
+	select {
+	case e := <-partial:
+		if e.Text != "Hello world! After pause" {
+			t.Fatal("old corrected sentence suppressed resumed speech", e)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("resumed speech waited for recording end")
+	}
 	close(frames)
 	select {
 	case <-partial:
@@ -449,27 +476,29 @@ func TestDoubaoCandidateSnapshotsAndIndexedCorrections(t *testing.T) {
 		if e != nil || partial != native {
 			t.Fatal("native partial did not progress during audio input", partial, e)
 		}
-		if _, e = transcript.final(); !errors.Is(e, domain.ErrUncertain) {
-			t.Fatal("provisional ASR was already considered final", e)
-		}
 	}
 	actual := []byte(`{"results":[{"text":"这是语音输入测试，请保留前面的文字，再追加这一句话。","start_time":0.062,"end_time":5.562,"is_interim":true,"stream_asr_finish":true},{"text":"这是语音输入测试请保留前面的文字再追加这一句话","start_time":0.062,"end_time":5.562,"is_interim":true,"stream_asr_finish":true,"extra":{"seq_id":4}}]}`)
 	text, e := transcript.update(actual)
 	if e != nil || text != "这是语音输入测试，请保留前面的文字，再追加这一句话。" {
 		t.Fatal("cumulative alternatives were appended or truncated", text, e)
 	}
-	for _, raw := range []string{`{"results":[{"text":"这是语音输入测试。","stream_asr_finish":true,"extra":{"nonstream_result":true}},{"text":"这是语音输入测试。","extra":{"nonstream_result":true}}]}`, `{"results":[{"text":"这是语音输入测试。","is_interim":false,"is_vad_finished":true},{"text":"这是语音输入测试。","stream_asr_finish":true,"extra":{"nonstream_result":true}}]}`, `{"results":null,"extra":{"heartbeat_num":41}}`, `{"results":[{"text":"","is_interim":true}]}`} {
+	corrected := `{"results":[{"text":"这是语音输入测试。","stream_asr_finish":true,"extra":{"nonstream_result":true}},{"text":"这是语音输入测试。","extra":{"nonstream_result":true}}]}`
+	text, e = transcript.update([]byte(corrected))
+	if e != nil || text != "这是语音输入测试。" {
+		t.Fatal("built-in cumulative correction was filtered", text, e)
+	}
+	for _, raw := range []string{`{"results":null,"extra":{"heartbeat_num":41}}`, `{"results":[{"text":"","is_interim":true},{"text":"old sentence","extra":{"nonstream_result":true}}]}`} {
 		text, e = transcript.update([]byte(raw))
-		if e != nil || text != "这是语音输入测试，请保留前面的文字，再追加这一句话。" {
-			t.Fatal("polish/heartbeat overwrote literal ASR", text, e)
+		if e != nil || text != "这是语音输入测试。" {
+			t.Fatal("heartbeat/auxiliary sentence overwrote cumulative ASR", text, e)
 		}
 	}
-	if final, e := transcript.final(); e != nil || final != "这是语音输入测试，请保留前面的文字，再追加这一句话。" {
-		t.Fatal("native ASR final lost", final, e)
+	text, e = transcript.update([]byte(`{"results":[{"text":"这是语音输入测试。继续说话","is_interim":true},{"text":"这是语音输入测试。","stream_asr_finish":true,"extra":{"nonstream_result":true}},{"text":"继续说话","stream_asr_finish":false}]}`))
+	if e != nil || text != "这是语音输入测试。继续说话" {
+		t.Fatal("prior VAD correction froze new utterance", text, e)
 	}
-	_, _ = transcript.update([]byte(`{"results":[{"text":"next unfinished utterance","is_interim":true}]}`))
-	if _, e = transcript.final(); !errors.Is(e, domain.ErrUncertain) {
-		t.Fatal("a new provisional tail reused an earlier native final", e)
+	if final, e := transcript.final(); e != nil || final != text {
+		t.Fatal("session final lost latest cumulative snapshot", final, e)
 	}
 	transcript = doubaoTranscript{}
 	text, e = transcript.update([]byte(`{"results":[{"text":"Hello","index":0,"is_interim":false,"is_vad_finished":true},{"text":"world","index":1,"is_interim":true}]}`))
@@ -483,6 +512,34 @@ func TestDoubaoCandidateSnapshotsAndIndexedCorrections(t *testing.T) {
 	text, e = transcript.update([]byte(`{"results":[{"text":"world!","index":1,"is_interim":false,"is_vad_finished":true}]}`))
 	if e != nil || text != "Hi world!" {
 		t.Fatal(text, e)
+	}
+}
+
+func TestDoubaoRealVADPauseCumulativeFixture(t *testing.T) {
+	b, err := os.ReadFile("testdata/doubao-vad-pauses.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fixture struct {
+		ExpectedFinal string `json:"expectedFinal"`
+		Events        []struct {
+			Payload  json.RawMessage `json:"payload"`
+			Expected string          `json:"expected_snapshot"`
+		} `json:"events"`
+	}
+	if err = json.Unmarshal(b, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	transcript := doubaoTranscript{}
+	for i, event := range fixture.Events {
+		text, err := transcript.update(event.Payload)
+		if err != nil || text != event.Expected {
+			t.Fatalf("pause event %d did not preserve cumulative snapshot: %v", i, err)
+		}
+	}
+	text, err := transcript.final()
+	if err != nil || text != fixture.ExpectedFinal {
+		t.Fatal("session final dropped an utterance", err)
 	}
 }
 func TestIMEHandshakeCanBeCancelled(t *testing.T) {

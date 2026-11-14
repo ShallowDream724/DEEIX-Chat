@@ -1,0 +1,352 @@
+{
+  "source": "Synthetic speech repeated three times, separated by 4 seconds silence; real Doubao response structure, 2026-11-14.",
+  "expectedFinal": "这是语音输入测试。这是语音输入测试，请保留前面的文字，再追加这一句话。这是语音输入测试，请保留前面的文字，再追加这一句话。",
+  "events": [
+    {
+      "elapsed_ms": 806,
+      "payload": {
+        "results": null
+      },
+      "expected_snapshot": ""
+    },
+    {
+      "elapsed_ms": 6972,
+      "payload": {
+        "results": [
+          {
+            "text": "这是语音输入测试，请保留前面的文字，再追加这一句话",
+            "start_time": 0.062,
+            "end_time": 6.112,
+            "is_interim": true
+          },
+          {
+            "text": "这是语音输入测试请保留前面的文字再追加这一句话",
+            "start_time": 0.062,
+            "end_time": 6.112,
+            "is_interim": true,
+            "stream_asr_finish": true
+          }
+        ]
+      },
+      "expected_snapshot": "这是语音输入测试，请保留前面的文字，再追加这一句话"
+    },
+    {
+      "elapsed_ms": 7174,
+      "payload": {
+        "results": [
+          {
+            "text": "这是语音输入测试。",
+            "start_time": 0,
+            "end_time": 6.112,
+            "is_interim": true,
+            "extra": {
+              "nonstream_result": true
+            }
+          },
+          {
+            "text": "这是语音输入测试。",
+            "start_time": 0,
+            "end_time": 6.112,
+            "is_interim": true,
+            "stream_asr_finish": true,
+            "extra": {
+              "nonstream_result": true
+            }
+          }
+        ]
+      },
+      "expected_snapshot": "这是语音输入测试。"
+    },
+    {
+      "elapsed_ms": 11286,
+      "payload": {
+        "results": [
+          {
+            "text": "这是语音输入测试。这",
+            "start_time": 0,
+            "end_time": 10.142,
+            "is_interim": true
+          },
+          {
+            "text": "这是语音输入测试。",
+            "start_time": 0,
+            "end_time": 6.112,
+            "is_interim": true,
+            "stream_asr_finish": true,
+            "extra": {
+              "nonstream_result": true
+            }
+          },
+          {
+            "text": "这",
+            "start_time": 9.632,
+            "end_time": 10.142,
+            "is_interim": true,
+            "stream_asr_finish": false
+          }
+        ]
+      },
+      "expected_snapshot": "这是语音输入测试。这"
+    },
+    {
+      "elapsed_ms": 11391,
+      "payload": {
+        "results": [
+          {
+            "text": "这是语音输入测试。这是",
+            "start_time": 0,
+            "end_time": 10.382006,
+            "is_interim": true
+          },
+          {
+            "text": "这是语音输入测试。",
+            "start_time": 0,
+            "end_time": 6.112,
+            "is_interim": true,
+            "stream_asr_finish": true,
+            "extra": {
+              "nonstream_result": true
+            }
+          },
+          {
+            "text": "这是",
+            "start_time": 9.632,
+            "end_time": 10.382006,
+            "is_interim": true,
+            "stream_asr_finish": false
+          }
+        ]
+      },
+      "expected_snapshot": "这是语音输入测试。这是"
+    },
+    {
+      "elapsed_ms": 16753,
+      "payload": {
+        "results": [
+          {
+            "text": "这是语音输入测试。这是语音输入测试，请保留前面的文字，再追加这一句话",
+            "start_time": 0,
+            "end_time": 15.672,
+            "is_interim": true
+          },
+          {
+            "text": "这是语音输入测试。",
+            "start_time": 0,
+            "end_time": 6.112,
+            "is_interim": false,
+            "is_vad_finished": true,
+            "stream_asr_finish": true,
+            "extra": {
+              "nonstream_result": true
+            }
+          },
+          {
+            "text": "这是语音输入测试请保留前面的文字再追加这一句话",
+            "start_time": 9.632,
+            "end_time": 15.672,
+            "is_interim": true,
+            "stream_asr_finish": true
+          }
+        ]
+      },
+      "expected_snapshot": "这是语音输入测试。这是语音输入测试，请保留前面的文字，再追加这一句话"
+    },
+    {
+      "elapsed_ms": 16989,
+      "payload": {
+        "results": [
+          {
+            "text": "这是语音输入测试。这是语音输入测试，请保留前面的文字，再追加这一句话。",
+            "start_time": 0,
+            "end_time": 15.672,
+            "is_interim": true,
+            "extra": {
+              "nonstream_result": true
+            }
+          },
+          {
+            "text": "这是语音输入测试，请保留前面的文字，再追加这一句话。",
+            "start_time": 6.112,
+            "end_time": 15.672,
+            "is_interim": true,
+            "stream_asr_finish": true,
+            "extra": {
+              "nonstream_result": true
+            }
+          }
+        ]
+      },
+      "expected_snapshot": "这是语音输入测试。这是语音输入测试，请保留前面的文字，再追加这一句话。"
+    },
+    {
+      "elapsed_ms": 21011,
+      "payload": {
+        "results": [
+          {
+            "text": "这是语音输入测试。这是语音输入测试，请保留前面的文字，再追加这一句话。这",
+            "start_time": 0,
+            "end_time": 19.702,
+            "is_interim": true
+          },
+          {
+            "text": "这是语音输入测试，请保留前面的文字，再追加这一句话。",
+            "start_time": 6.112,
+            "end_time": 15.672,
+            "is_interim": true,
+            "stream_asr_finish": true,
+            "extra": {
+              "nonstream_result": true
+            }
+          },
+          {
+            "text": "这",
+            "start_time": 19.202,
+            "end_time": 19.702,
+            "is_interim": true,
+            "stream_asr_finish": false
+          }
+        ]
+      },
+      "expected_snapshot": "这是语音输入测试。这是语音输入测试，请保留前面的文字，再追加这一句话。这"
+    },
+    {
+      "elapsed_ms": 21135,
+      "payload": {
+        "results": [
+          {
+            "text": "这是语音输入测试。这是语音输入测试，请保留前面的文字，再追加这一句话。这是",
+            "start_time": 0,
+            "end_time": 19.942005,
+            "is_interim": true
+          },
+          {
+            "text": "这是语音输入测试，请保留前面的文字，再追加这一句话。",
+            "start_time": 6.112,
+            "end_time": 15.672,
+            "is_interim": true,
+            "stream_asr_finish": true,
+            "extra": {
+              "nonstream_result": true
+            }
+          },
+          {
+            "text": "这是",
+            "start_time": 19.202,
+            "end_time": 19.942005,
+            "is_interim": true,
+            "stream_asr_finish": false
+          }
+        ]
+      },
+      "expected_snapshot": "这是语音输入测试。这是语音输入测试，请保留前面的文字，再追加这一句话。这是"
+    },
+    {
+      "elapsed_ms": 25928,
+      "payload": {
+        "results": [
+          {
+            "text": "这是语音输入测试。这是语音输入测试，请保留前面的文字，再追加这一句话。这是语音输入测试，请保留前面的文字，再追加这一句话。",
+            "start_time": 0,
+            "end_time": 24.682,
+            "is_interim": true,
+            "stream_asr_finish": true
+          },
+          {
+            "text": "这是语音输入测试，请保留前面的文字，再追加这一句话。",
+            "start_time": 6.112,
+            "end_time": 15.672,
+            "is_interim": false,
+            "is_vad_finished": true,
+            "stream_asr_finish": true,
+            "extra": {
+              "nonstream_result": true
+            }
+          },
+          {
+            "text": "这是语音输入测试请保留前面的文字再追加这一句话",
+            "start_time": 19.202,
+            "end_time": 24.682,
+            "is_interim": true,
+            "stream_asr_finish": true
+          }
+        ]
+      },
+      "expected_snapshot": "这是语音输入测试。这是语音输入测试，请保留前面的文字，再追加这一句话。这是语音输入测试，请保留前面的文字，再追加这一句话。"
+    },
+    {
+      "elapsed_ms": 26112,
+      "payload": {
+        "results": [
+          {
+            "text": "这是语音输入测试。这是语音输入测试，请保留前面的文字，再追加这一句话。这是语音输入测试，请保留前面的文字，再追加这一句话。",
+            "start_time": 0,
+            "end_time": 24.68,
+            "is_interim": true,
+            "stream_asr_finish": true,
+            "extra": {
+              "nonstream_result": true
+            }
+          },
+          {
+            "text": "这是语音输入测试，请保留前面的文字，再追加这一句话。",
+            "start_time": 15.672,
+            "end_time": 24.68,
+            "is_interim": true,
+            "stream_asr_finish": true,
+            "extra": {
+              "nonstream_result": true
+            }
+          }
+        ]
+      },
+      "expected_snapshot": "这是语音输入测试。这是语音输入测试，请保留前面的文字，再追加这一句话。这是语音输入测试，请保留前面的文字，再追加这一句话。"
+    },
+    {
+      "elapsed_ms": 26326,
+      "payload": {
+        "results": [
+          {
+            "text": "这是语音输入测试。这是语音输入测试，请保留前面的文字，再追加这一句话。这是语音输入测试，请保留前面的文字，再追加这一句话。",
+            "start_time": 0,
+            "end_time": 24.682,
+            "is_interim": false,
+            "is_vad_finished": true
+          },
+          {
+            "text": "这是语音输入测试。",
+            "start_time": 0,
+            "end_time": 6.112,
+            "is_interim": false,
+            "is_vad_finished": true,
+            "stream_asr_finish": true,
+            "extra": {
+              "nonstream_result": true
+            }
+          },
+          {
+            "text": "这是语音输入测试，请保留前面的文字，再追加这一句话。",
+            "start_time": 6.112,
+            "end_time": 15.672,
+            "is_interim": false,
+            "is_vad_finished": true,
+            "stream_asr_finish": true,
+            "extra": {
+              "nonstream_result": true
+            }
+          },
+          {
+            "text": "这是语音输入测试，请保留前面的文字，再追加这一句话。",
+            "start_time": 15.672,
+            "end_time": 24.682,
+            "is_interim": true,
+            "stream_asr_finish": true,
+            "extra": {
+              "nonstream_result": true
+            }
+          }
+        ]
+      },
+      "expected_snapshot": "这是语音输入测试。这是语音输入测试，请保留前面的文字，再追加这一句话。这是语音输入测试，请保留前面的文字，再追加这一句话。"
+    }
+  ]
+}

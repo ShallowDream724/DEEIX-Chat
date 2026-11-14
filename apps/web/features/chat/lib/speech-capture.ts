@@ -1,3 +1,5 @@
+import { createMediaSpectrum } from "@/shared/lib/media-spectrum";
+
 export type SpeechCapture = { track: MediaStreamTrack; stop: () => Promise<void>; cancel: () => void };
 /** The optional start(track) overload has no safe probe; restrict it to the documented desktop Chrome implementation. */
 export function supportsBrowserRecognitionTrack() {
@@ -33,7 +35,7 @@ export function prepareSpeechCaptureContext() {
 
 export async function startSpeechCapture(options: {
   maxSamples: number;
-  onFrame: (frame: Float32Array) => void;
+  onFrame: (frame: Float32Array, bands?: Float32Array<ArrayBuffer>) => void;
   onLimit: () => void;
   onError: (error: SpeechCaptureError) => void;
   context?: AudioContext;
@@ -44,6 +46,7 @@ export async function startSpeechCapture(options: {
   let context: AudioContext | undefined = options.context;
   let node: AudioWorkletNode | undefined;
   let source: MediaStreamAudioSourceNode | undefined;
+  let analyser: AnalyserNode | undefined;
   let stopping = false;
   let released = false;
   let armed = false;
@@ -59,6 +62,7 @@ export async function startSpeechCapture(options: {
     if (node) { node.port.onmessage = null; node.onprocessorerror = null; }
     try { source?.disconnect(); } catch {}
     try { node?.disconnect(); } catch {}
+    try { analyser?.disconnect(); } catch {}
     for (const track of stream.getTracks()) track.stop();
     if (context?.state !== "closed") void context?.close().catch(() => {});
   };
@@ -80,11 +84,14 @@ export async function startSpeechCapture(options: {
     await context.audioWorklet.addModule("/speech-capture-worklet.js");
     if (released || options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
     source = context.createMediaStreamSource(stream);
+    analyser = context.createAnalyser();
+    const spectrum = createMediaSpectrum(analyser, context.sampleRate);
+    source.connect(analyser);
     node = new AudioWorkletNode(context, "speech-capture", { processorOptions: { maxSamples: options.maxSamples } });
     node.port.onmessage = ({ data }: MessageEvent<{ type: string; frame?: Float32Array }>) => {
       if (released) return;
       if (data.type === "frame" && data.frame) {
-        try { options.onFrame(data.frame); if (!released) node?.port.postMessage("ack"); }
+        try { options.onFrame(data.frame, spectrum.sample()); if (!released) node?.port.postMessage("ack"); }
         catch { interrupted("audioUnavailable"); }
       }
       if (data.type === "error") interrupted("audioUnavailable");

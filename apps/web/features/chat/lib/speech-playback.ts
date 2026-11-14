@@ -1,6 +1,7 @@
 import { authedFetch } from "@/shared/api/authed-client";
 import { getSpeechSynthesis, synthesizeSpeech, type SpeechSynthesis } from "@/shared/api/speech";
 import { beginPlaybackActivity, isRecordingActive } from "@/shared/lib/media-activity";
+import { createMediaSpectrum } from "@/shared/lib/media-spectrum";
 
 export type SpeechPlaybackState = { messageID: string; status: "idle" | "loading" | "playing" | "paused" | "error" };
 const idle: SpeechPlaybackState = { messageID: "", status: "idle" };
@@ -163,7 +164,7 @@ export async function playSpeech(messageID: string, text: string, onError: (reas
   const identity = JSON.stringify([messageID, config.voice, normalizeSpeechText(text)]);
   if (active && active.identity === identity) {
     if (state.status === "loading") return;
-    if (state.status === "playing") { await active.context.suspend(); update({ messageID, status: "paused" }); return; }
+    if (state.status === "playing") { active.activity?.publishLevel(0); await active.context.suspend(); update({ messageID, status: "paused" }); return; }
     if (state.status === "paused") { await active.context.resume(); active.resume(); update({ messageID, status: "playing" }); return; }
   }
   stopSpeechPlayback();
@@ -174,14 +175,15 @@ export async function playSpeech(messageID: string, text: string, onError: (reas
   const context = new AudioContext();
   const playback: NonNullable<typeof active> = { controller: new AbortController(), context, identity, duration: 0, resume: () => {} };
   active = playback;
-  const analyzer = context.createAnalyser(); analyzer.fftSize = 256; analyzers.set(context, analyzer);
+  const analyzer = context.createAnalyser(); analyzers.set(context, analyzer);
+  const spectrum = createMediaSpectrum(analyzer, context.sampleRate);
   const waveform = new Float32Array(analyzer.fftSize);
   playback.activity = beginPlaybackActivity(messageID, "tts", () => stopSpeechPlayback());
   const timer = setInterval(() => {
     if (context.state !== "running" || document.hidden) { playback.activity?.publishLevel(0); return; }
     analyzer.getFloatTimeDomainData(waveform);
     let squared = 0; for (const value of waveform) squared += value * value;
-    playback.activity?.publishLevel(Math.min(1, Math.sqrt(squared / waveform.length) * 4));
+    playback.activity?.publishLevel(Math.min(1, Math.sqrt(squared / waveform.length) * 4), spectrum.sample());
   }, 34);
   update({ messageID, status: "loading" });
   try {
@@ -216,5 +218,5 @@ export async function playSpeech(messageID: string, text: string, onError: (reas
       stopSpeechPlayback(); update({ messageID, status: "error" });
       if (!(error instanceof DOMException && error.name === "AbortError")) onError("failed");
     }
-  } finally { clearInterval(timer); playback.activity?.stop(); if (context.state !== "closed") void context.close(); }
+  } finally { clearInterval(timer); playback.activity?.stop(); analyzer.disconnect(); analyzers.delete(context); if (context.state !== "closed") void context.close(); }
 }

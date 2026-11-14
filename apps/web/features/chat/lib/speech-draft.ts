@@ -1,13 +1,17 @@
 /** One mutable range belongs to this recording. Edits elsewhere stay outside it. */
 export class SpeechDraftSegment {
   private prefix: string;
-  private suffix = "";
+  private suffix: string;
   private text = "";
   private rendered: string;
   private insertedSeparator = false;
   private detached = false;
-  constructor(draft: string) {
-    this.prefix = draft;
+  private appendParagraph: boolean;
+  constructor(draft: string, insertionIndex = draft.length) {
+    const index = Math.max(0, Math.min(draft.length, insertionIndex));
+    this.prefix = draft.slice(0, index);
+    this.suffix = draft.slice(index);
+    this.appendParagraph = index === draft.length;
     this.rendered = draft;
   }
   reconcile(draft: string) {
@@ -34,7 +38,7 @@ export class SpeechDraftSegment {
   update(text: string) {
     if (this.detached) return this.rendered;
     const trimmed = text.trim();
-    if (this.text === "" && trimmed && this.prefix && !this.prefix.endsWith("\n")) {
+    if (this.appendParagraph && this.text === "" && trimmed && this.prefix && !this.prefix.endsWith("\n")) {
       this.prefix += "\n";
       this.insertedSeparator = true;
     }

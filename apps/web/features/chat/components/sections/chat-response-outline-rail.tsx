@@ -10,7 +10,6 @@ import {
 } from "@/components/ui/message-scroller";
 import { cn } from "@/lib/utils";
 import { useScrollFadeFallbackRef } from "@/shared/hooks/use-scroll-fade-fallback-ref";
-import { useChatMediaRailFeedback } from "@/features/chat/hooks/use-chat-media-rail-feedback";
 
 const OUTLINE_GUIDE_OFFSET_PX = 48;
 const OUTLINE_RAIL_WIDTH_PX = 24;
@@ -168,7 +167,6 @@ function ChatResponseOutlineRailComponent({
   const menuScrollFadeRef = useScrollFadeFallbackRef(menuViewportRef);
   const menuItemRefs = React.useRef(new Map<number, HTMLButtonElement>());
   const visibleMessageIDsRef = React.useRef(visibleMessageIds);
-  useChatMediaRailFeedback(railViewportRef, disabled || !railSpaceAvailable ? "" : headingSignatureRef.current);
   const attachRailViewport = React.useCallback((node: HTMLElement | null) => {
     railViewportRef.current = node;
     if (node) node.style.right = `${railRightInsetRef.current}px`;

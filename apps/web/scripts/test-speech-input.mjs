@@ -13,6 +13,38 @@ async function load(path, names, globals = {}) {
   return scope.exports;
 }
 const { SpeechDraftSegment } = await load("../features/chat/lib/speech-draft.ts", ["SpeechDraftSegment"]);
+const { createMediaSpectrum } = await load("../shared/lib/media-spectrum.ts", ["createMediaSpectrum"]);
+
+test("recording spectrum taps one existing microphone source and releases it with capture", async () => {
+  let requests = 0; let sources = 0; let analysers = 0; let stopped = 0; let disconnected = 0; let worklet;
+  const track = new EventTarget();
+  Object.assign(track, { readyState: "live", muted: false, getSettings: () => ({}), stop() { stopped++; } });
+  const mediaDevices = new EventTarget();
+  mediaDevices.getUserMedia = async () => { requests++; return { getAudioTracks: () => [track], getTracks: () => [track] }; };
+  class Context extends EventTarget {
+    constructor() { super(); this.state = "running"; this.sampleRate = 48000; this.audioWorklet = { addModule: async () => {} }; }
+    createMediaStreamSource() { sources++; return { connect() {}, disconnect() { disconnected++; } }; }
+    createAnalyser() { analysers++; return { fftSize: 256, getFloatFrequencyData(data) { data.fill(-100); data[10] = -24; }, disconnect() { disconnected++; } }; }
+    async resume() {}
+    async close() { this.state = "closed"; }
+  }
+  class Worklet extends EventTarget {
+    constructor() { super(); worklet = this; this.port = { postMessage() {}, onmessage: null }; }
+    connect() {}
+    disconnect() { disconnected++; }
+  }
+  const received = [];
+  const { startSpeechCapture } = await load("../features/chat/lib/speech-capture.ts", ["startSpeechCapture"], { createMediaSpectrum, AudioContext: Context, AudioWorkletNode: Worklet, navigator: { mediaDevices } });
+  const capture = await startSpeechCapture({ maxSamples: 16000, onFrame: (frame, bands) => received.push({ frame, bands }), onLimit() {}, onError(error) { assert.fail(error); } });
+  worklet.port.onmessage({ data: { type: "frame", frame: new Float32Array(320) } });
+  assert.equal(requests, 1); assert.equal(sources, 1); assert.equal(analysers, 1);
+  assert.equal(received[0].bands.length, 8);
+  assert.ok(received[0].bands[3] > 0);
+  assert.equal(received[0].bands.filter((value) => value > 0).length, 1);
+  capture.cancel();
+  assert.equal(stopped, 1); assert.equal(disconnected, 3);
+  assert.equal(worklet.port.onmessage, null);
+});
 
 test("active speech revisions replace one range; intentional recordings start a new paragraph", () => {
   const segment = new SpeechDraftSegment("Existing draft.");
@@ -33,6 +65,16 @@ test("edits outside speech survive partial revisions and cancellation; edits ins
   const edited = new SpeechDraftSegment("Draft"); edited.update("partial"); edited.reconcile("Draft\nmy correction");
   assert.equal(edited.update("late final"), "Draft\nmy correction");
   assert.equal(edited.cancel(), "Draft\nmy correction");
+});
+
+test("new speech inserts at the caret without deleting selected or trailing text", () => {
+  const segment = new SpeechDraftSegment("前😀后 English", 3);
+  assert.equal(segment.update("新句"), "前😀新句后 English");
+  assert.equal(segment.selectionEnd, 5);
+  assert.equal(segment.update("新句修订。"), "前😀新句修订。后 English");
+  assert.equal(segment.cancel(), "前😀后 English");
+  const beginning = new SpeechDraftSegment("suffix", 0);
+  assert.equal(beginning.update("hello "), "hellosuffix");
 });
 
 test("capture resamples 48k to exact 16k sample limit and flushes the last partial frame", async () => {
@@ -118,10 +160,55 @@ async function setup(provider = "browser", duration = 120000, sharedTrack = fals
     window: Object.assign(new EventTarget(), { isSecureContext: true, SpeechRecognition: Recognition, AudioWorkletNode: class {} }), navigator: { mediaDevices: {} }, supportsSpeechOpus: () => true,
     requestAnimationFrame: (callback) => { queueMicrotask(callback); },
   });
-  const render = () => { const capturedScope = scope; return runtime.render(() => api.useChatSpeechInput({ draft, scopeKey: scope, language: "en", onDraftChange: (value) => { draft = value; }, onDraftPersist: (value) => persisted.push({ scope: capturedScope, draft: value }), onResultCommitted: (result) => committed.push(result), onError: (error) => errors.push(error), placeholder: "", listeningPlaceholder: "", startingPlaceholder: "" })); };
+  const render = () => { const capturedScope = scope; return runtime.render(() => api.useChatSpeechInput({ draft, scopeKey: scope, language: "en", onDraftChange: (value) => { draft = value; }, onDraftPersist: (value) => persisted.push({ scope: capturedScope, draft: value }), onResultCommitted: (result) => committed.push(result), onError: (error) => errors.push(error), placeholder: "" })); };
   render();
   return { render, recognitions, errors, persisted, committed, remote, set provider(value) { selectedProvider = value; }, get draft() { return draft; }, set draft(value) { draft = value; }, set scope(value) { scope = value; }, get stopped() { return stopped; }, cleanup: runtime.cleanup };
 }
+test("manual editing ends the current segment immediately, persists partial and ignores late final/error", async () => {
+  const state = await setup();
+  try {
+    await state.render().start(5);
+    const recognition = state.recognitions[0]; recognition.result("Hello"); state.render();
+    assert.equal(state.draft, "PriorHello draft");
+    const result = recognition.onresult; const error = recognition.onerror;
+    state.render().interruptForEditing(); state.render();
+    result({ results: { length: 1, item: () => ({ length: 1, item: () => ({ transcript: "late replacement" }) }) } });
+    error({ error: "aborted" });
+    assert.equal(state.draft, "PriorHello draft");
+    assert.equal(state.render().active, false);
+    assert.equal(state.persisted.at(-1).draft, state.draft);
+    assert.deepEqual(state.errors, []);
+    await state.render().start(5); state.recognitions.at(-1).result("新😀"); state.render();
+    assert.equal(state.draft, "Prior新😀Hello draft");
+  } finally { state.cleanup(); }
+});
+
+test("old browser recognition errors cannot terminate the replacement recognition", async () => {
+  const state = await setup();
+  try {
+    await state.render().start();
+    const first = state.recognitions[0]; first.result("First"); const lateError = first.onerror;
+    first.onend(); state.render();
+    lateError({ error: "aborted" });
+    state.recognitions.at(-1).result("Second"); state.render();
+    assert.equal(state.render().active, true);
+    assert.equal(state.draft, "Prior draft\nFirst Second");
+    assert.deepEqual(state.errors, []);
+  } finally { state.cleanup(); }
+});
+
+test("manual interruption before nonstreaming transcription keeps only existing text and never uploads", async () => {
+  const state = await setup("deepseek");
+  try {
+    await state.render().start();
+    state.render().interruptForEditing(); state.render();
+    assert.equal(state.render().active, false);
+    assert.equal(state.draft, "Prior draft");
+    assert.equal(state.persisted.at(-1).draft, "Prior draft");
+    assert.deepEqual(state.remote.uploads, []);
+  } finally { state.cleanup(); }
+});
+
 test("stop keeps browser tail and sending is exactly once; late callbacks cannot revive sent text", async () => {
   const state = await setup();
   try {
@@ -293,7 +380,7 @@ async function playbackSetup({ fail = false, failTimes = fail ? Infinity : 0, de
     async resume() { this.state = "running"; }
     async suspend() { this.state = "suspended"; }
     async close() { if (this.state !== "closed") stats.closed++; this.state = "closed"; }
-    createAnalyser() { return { fftSize: 256, getFloatTimeDomainData(buffer) { buffer.fill(0); } }; }
+    createAnalyser() { return { fftSize: 256, getFloatTimeDomainData(buffer) { buffer.fill(0); }, disconnect() {} }; }
     createBuffer(_channels, count) { return { getChannelData: () => new Float32Array(count) }; }
     createBufferSource() { return { connect() {}, disconnect() {}, start() {} }; }
   }
@@ -302,7 +389,7 @@ async function playbackSetup({ fail = false, failTimes = fail ? Infinity : 0, de
   for (const [offset, text] of [[0, "RIFF"], [8, "WAVEfmt "], [36, "data"]]) for (let i = 0; i < text.length; i++) audio[offset + i] = text.charCodeAt(i);
   view.setUint32(4, audio.length - 8, true); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, 24000, true); view.setUint16(34, 16, true); view.setUint32(40, 480, true);
   const api = await load("../features/chat/lib/speech-playback.ts", ["configureSpeechPlayback", "playSpeech", "stopSpeechPlayback", "getSpeechPlaybackState", "splitSpeechText"], {
-    AudioContext: Context, document: { hidden: false }, window: { location: { origin: "https://example.test" } }, URL,
+    AudioContext: Context, createMediaSpectrum, document: { hidden: false }, window: { location: { origin: "https://example.test" } }, URL,
     isRecordingActive: () => stats.recording, beginPlaybackActivity: () => ({ stop() {}, publishLevel() {} }),
     synthesizeSpeech: (_token, _text, _voice, requestID, retry) => { stats.syntheses++; stats.requests.push({ requestID, retry }); if (stats.syntheses <= failTimes) return Promise.reject(new Error("failed")); const result = { id: `audio-${stats.syntheses}`, media_url: "/api/v1/speech/tts/audio/audio", status: statuses[stats.syntheses - 1] ?? "pending" }; return deferred ? new Promise((resolve) => { stats.resolve = () => resolve(result); }) : Promise.resolve(result); },
     getSpeechSynthesis: async () => ({ status: incomplete ? "uncertain" : "complete" }),

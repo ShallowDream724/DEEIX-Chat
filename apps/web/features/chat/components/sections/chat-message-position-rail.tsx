@@ -329,14 +329,14 @@ function ChatMessagePositionRailComponent({
   const rail = (
     <nav
       ref={railViewportRef}
-      className="pointer-events-auto h-full w-6 overflow-y-auto overscroll-contain text-muted-foreground/55 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      className="pointer-events-none h-full w-24 overflow-x-hidden overflow-y-auto overscroll-contain pr-[4.5rem] text-muted-foreground/55 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       aria-label={t("positionRail")}
       onScroll={clearPreview}
     >
       <div
         ref={railContentRef}
         className={cn(
-          "flex min-h-full flex-col items-center gap-0.5 px-1 py-1",
+          "pointer-events-auto flex min-h-full flex-col items-center gap-0.5 px-1 py-1",
           !railOverflowing && "justify-center",
         )}
       >
@@ -344,11 +344,11 @@ function ChatMessagePositionRailComponent({
           const distance = Math.abs(index - activeIndex);
           const lineWidthRem = resolveRailLineWidthRem(distance, railLineDistributionActive);
           const lineClassName = cn(
-            "h-0.5 rounded-full bg-current opacity-35 transition-[height,opacity,width] duration-150 ease-out motion-reduce:transition-none",
+            "pointer-events-none h-0.5 rounded-full bg-current opacity-35 [--media-rail-base-opacity:0.35] transition-[height,opacity,width] duration-150 ease-out motion-reduce:transition-none",
             hoveredID === item.id && "h-1",
-            distance === 0 && "text-foreground opacity-100",
-            distance === 1 && "opacity-70",
-            distance === 2 && "opacity-50",
+            distance === 0 && "text-foreground opacity-100 [--media-rail-base-opacity:1]",
+            distance === 1 && "opacity-70 [--media-rail-base-opacity:0.7]",
+            distance === 2 && "opacity-50 [--media-rail-base-opacity:0.5]",
           );
           return (
             <div key={item.id} className="relative flex w-6 justify-center">
@@ -361,7 +361,7 @@ function ChatMessagePositionRailComponent({
                   itemRefs.current.delete(item.id);
                 }}
                 type="button"
-                className="flex h-2 w-6 items-center justify-start rounded-sm"
+                className="pointer-events-auto flex h-2 w-6 items-center justify-start rounded-sm"
                 onMouseEnter={(event) => activatePreview(item.id, event.currentTarget)}
                 onFocus={(event) => activatePreview(item.id, event.currentTarget)}
                 onClick={() => scrollToMessage(item.id, { align: "start", behavior: "smooth", scrollMargin: 16 })}

@@ -136,71 +136,59 @@ func doubaoRequest(method, token, payload, id string, audio []byte, kind uint64)
 }
 
 type doubaoTranscript struct {
-	sentences      map[int]string
-	current        string
-	currentIndex   *int
-	seenNative     bool
-	nativeComplete bool
-	literalFinal   string
+	sentences    map[int]string
+	current      string
+	currentIndex *int
+}
+
+type doubaoResult struct {
+	Text           string `json:"text"`
+	Index          *int   `json:"index"`
+	Interim        *bool  `json:"is_interim"`
+	VAD            bool   `json:"is_vad_finished"`
+	StreamFinished bool   `json:"stream_asr_finish"`
+	Extra          struct {
+		Final bool `json:"nonstream_result"`
+	} `json:"extra"`
+}
+
+func (r doubaoResult) finished() bool {
+	return r.Extra.Final || r.StreamFinished || (r.Interim != nil && !*r.Interim && r.VAD)
 }
 
 func (t *doubaoTranscript) update(raw []byte) (string, error) {
 	var v struct {
-		Results []struct {
-			Text           string `json:"text"`
-			Index          *int   `json:"index"`
-			Interim        *bool  `json:"is_interim"`
-			VAD            bool   `json:"is_vad_finished"`
-			StreamFinished bool   `json:"stream_asr_finish"`
-			Extra          struct {
-				Final bool `json:"nonstream_result"`
-			} `json:"extra"`
-		} `json:"results"`
+		Results []doubaoResult `json:"results"`
 	}
 	if err := json.Unmarshal(raw, &v); err != nil {
 		return "", err
 	}
 	indexed := false
-	nativeFinished := false
 	for _, r := range v.Results {
-		// A result batch can put the unmarked polished candidate first and
-		// mark only its auxiliary candidate. Classify the whole batch, never
-		// promote the first polished candidate as literal ASR.
-		if r.Extra.Final {
-			return t.text(), nil
-		}
 		if r.Index != nil {
 			indexed = true
 		}
-		if r.Text != "" && (r.StreamFinished || (r.Interim != nil && !*r.Interim && r.VAD)) {
-			nativeFinished = true
-		}
 	}
-	before := t.text()
 	if !indexed {
-		selected := ""
-		for _, r := range v.Results {
-			if r.Text != "" {
-				selected = r.Text
-				break
-			}
-		}
-		if selected != "" {
+		// In this protocol variant results[0] is the complete cumulative
+		// snapshot. Later candidates can be old VAD sentences or new tails;
+		// never let their nonstream flags suppress the aggregate or substitute
+		// an auxiliary sentence when the aggregate is empty.
+		if len(v.Results) > 0 && v.Results[0].Text != "" {
 			t.sentences = map[int]string{}
-			t.current = selected
+			t.current = v.Results[0].Text
 			t.currentIndex = nil
 		}
-		t.observeNative(before, t.text(), nativeFinished)
 		return t.text(), nil
 	}
 	if t.sentences == nil {
 		t.sentences = map[int]string{}
 	}
 	for _, r := range v.Results {
-		if r.Text == "" {
+		if r.Text == "" || r.Index == nil {
 			continue
 		}
-		if r.StreamFinished || (r.Interim != nil && !*r.Interim && r.VAD) {
+		if r.finished() {
 			idx := len(t.sentences)
 			if r.Index != nil {
 				idx = *r.Index
@@ -215,29 +203,12 @@ func (t *doubaoTranscript) update(raw []byte) (string, error) {
 			t.currentIndex = r.Index
 		}
 	}
-	t.observeNative(before, t.text(), nativeFinished && t.current == "")
 	return t.text(), nil
 }
-func (t *doubaoTranscript) observeNative(before, after string, finished bool) {
-	if after == "" {
-		return
-	}
-	t.seenNative = true
-	if finished {
-		t.nativeComplete = true
-		t.literalFinal = after
-	} else if before != after {
-		t.nativeComplete = false
-	}
-}
 func (t *doubaoTranscript) final() (string, error) {
-	if !t.seenNative {
-		return "", nil
-	}
-	if !t.nativeComplete {
-		return "", domain.ErrUncertain
-	}
-	return t.literalFinal, nil
+	// Only SessionFinished invokes this method; utterance finish markers do
+	// not end the recording or prevent later cumulative snapshots.
+	return t.text(), nil
 }
 func (t *doubaoTranscript) text() string {
 	keys := make([]int, 0, len(t.sentences))
@@ -300,9 +271,8 @@ func (d *Doubao) Stream(ctx context.Context, in domain.StreamRequest, frames <-c
 	if e = expect("TaskStarted"); e != nil {
 		return domain.Transcript{}, e
 	}
-	// The observed upstream exposes its native streaming branch with twopass
-	// enabled. Its later nonstream polishing is a separate stage and must not
-	// overwrite literal recognition; the normalizer enforces that distinction.
+	// Keep the verified upstream streaming parameters. Its cumulative result
+	// includes built-in recognition corrections; no additional rewrite is run.
 	payload, _ := json.Marshal(map[string]any{"audio_info": map[string]any{"channel": 1, "format": "speech_opus", "sample_rate": 16000}, "enable_punctuation": true, "enable_speech_rejection": true, "extra": map[string]any{"app_name": "oime", "cell_compress_rate": 8, "did": did, "enable_asr_threepass": false, "enable_asr_twopass": true, "input_mode": "stream"}})
 	if e = sendIME(ws, doubaoRequest("StartSession", "OrnqKvSSrs", string(payload), id, nil, 0)); e != nil {
 		return domain.Transcript{}, e
