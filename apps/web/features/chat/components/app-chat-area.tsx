@@ -1053,7 +1053,6 @@ export function AppChatArea() {
                   canOperateConversation={temporaryMode ? false : canOperateConversation}
                   messages={displayMessages}
                   attachmentContentLoader={temporaryMode ? temporaryRuntime.loadAttachmentContent : undefined}
-                  persistMessageFeedback={!temporaryMode}
                   uiBlockState={chatUIBlockState}
                   allowFullToolResults={!temporaryMode}
                   busy={composerSending}

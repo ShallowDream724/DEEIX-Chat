@@ -530,15 +530,21 @@ function InputModalityIcons({
   );
 }
 
-function ModelPricingButton({ viewPricingLabel, ...props }: ModelPricingTooltipContentProps & { viewPricingLabel: string }) {
-  const [pinned, setPinned] = React.useState(false);
-  const [hovered, setHovered] = React.useState(false);
+type ModelPricingMode = "hover" | "pinned";
+type ModelPricingControl = {
+  pricingMode: ModelPricingMode | null;
+  onPricingOpenChange: (mode: ModelPricingMode, open: boolean) => void;
+};
+
+function ModelPricingButton({ viewPricingLabel, pricingMode, onPricingOpenChange, ...props }: ModelPricingTooltipContentProps & ModelPricingControl & { viewPricingLabel: string }) {
+  const pinned = pricingMode === "pinned";
+  const hovered = pricingMode === "hover";
   // Preserve mouse hover behavior; touch, pen and keyboard can pin the same pricing content.
   const allowPinRef = React.useRef(true);
 
   return (
-    <Popover open={pinned} onOpenChange={(next) => { if (!next || allowPinRef.current) setPinned(next); }}>
-      <Tooltip open={hovered && !pinned} onOpenChange={setHovered}>
+    <Popover open={pinned} onOpenChange={(next) => { if (!next || allowPinRef.current) onPricingOpenChange("pinned", next); }}>
+      <Tooltip open={hovered} onOpenChange={(next) => onPricingOpenChange("hover", next)}>
         <PopoverTrigger asChild>
           <TooltipTrigger asChild>
             <button
@@ -549,18 +555,18 @@ function ModelPricingButton({ viewPricingLabel, ...props }: ModelPricingTooltipC
               onKeyDown={() => { allowPinRef.current = true; }}
               onClick={(event) => {
                 event.stopPropagation();
-                setHovered(false);
+                onPricingOpenChange("hover", false);
               }}
             >
               {props.pricing.isFree ? <TicketSlash className="size-3.5" strokeWidth={1.8} /> : <CircleDollarSign className="size-3.5" strokeWidth={1.8} />}
             </button>
           </TooltipTrigger>
         </PopoverTrigger>
-        <TooltipContent side="right" align="center" sideOffset={8} className="z-[80] max-w-[min(92vw,35rem)] text-left font-medium tabular-nums">
+        {hovered ? <TooltipContent side="right" align="center" sideOffset={8} className="z-[80] max-w-[min(92vw,35rem)] text-left font-medium tabular-nums">
           <ModelPricingTooltipContent {...props} />
-        </TooltipContent>
+        </TooltipContent> : null}
       </Tooltip>
-      <PopoverContent
+      {pinned ? <PopoverContent
         data-model-pricing-content=""
         side="right"
         align="center"
@@ -574,11 +580,11 @@ function ModelPricingButton({ viewPricingLabel, ...props }: ModelPricingTooltipC
         onCloseAutoFocus={(event) => {
           // Outside clicks keep their target focus; closing must not reopen the hover tooltip.
           event.preventDefault();
-          setHovered(false);
+          onPricingOpenChange("hover", false);
         }}
       >
         <ModelPricingTooltipContent {...props} />
-      </PopoverContent>
+      </PopoverContent> : null}
     </Popover>
   );
 }
@@ -597,6 +603,8 @@ function ChatModelMenuItem({
   reservePricingSlot = false,
   onHover,
   rowRef,
+  pricingMode,
+  onPricingOpenChange,
 }: {
   model: ChatModelOption;
   selected: boolean;
@@ -620,7 +628,7 @@ function ChatModelMenuItem({
   onHover?: () => void;
   /** The row element, so the detail pane can be placed level with the row it describes. */
   rowRef?: (node: HTMLDivElement | null) => void;
-}) {
+} & ModelPricingControl) {
   const platformModelName = resolveModelOptionLabel(model.platformModelName);
   const iconURL = React.useMemo(() => resolveModelOptionIconUrl(model), [model]);
   const inputModalityDescription = describeInputModalities(model.inputModalities, inputModalityLabels);
@@ -677,6 +685,8 @@ function ChatModelMenuItem({
               billingDisplay={billingDisplay}
               labels={pricingLabels}
               viewPricingLabel={viewPricingLabel}
+              pricingMode={pricingMode}
+              onPricingOpenChange={onPricingOpenChange}
             />
           ) : null}
         </>
@@ -964,6 +974,16 @@ export function ChatModelPicker({
   const [open, setOpen] = React.useState(false);
   const [activeGroupKey, setActiveGroupKey] = React.useState("");
   const [mobileGroupKey, setMobileGroupKey] = React.useState<string | null>(null);
+  const [activePricing, setActivePricing] = React.useState<{ modelName: string; mode: ModelPricingMode } | null>(null);
+  const handlePricingOpenChange = React.useCallback((modelName: string, mode: ModelPricingMode, nextOpen: boolean) => {
+    setActivePricing((current) => {
+      // Closing a displaced row must not dismiss the replacement. Focus on an
+      // already pinned trigger must not turn its popover back into a tooltip.
+      if (!nextOpen) return current?.modelName === modelName && current.mode === mode ? null : current;
+      if (current?.modelName === modelName && (current.mode === mode || current.mode === "pinned" && mode === "hover")) return current;
+      return { modelName, mode };
+    });
+  }, []);
   const [desktopSubmenuSide, setDesktopSubmenuSide] = React.useState<"right" | "left">("right");
   const [desktopSubmenuTop, setDesktopSubmenuTop] = React.useState(0);
   const [desktopSubmenuWidth, setDesktopSubmenuWidth] = React.useState(DESKTOP_MODEL_MENU_WIDTH);
@@ -1026,6 +1046,9 @@ export function ChatModelPicker({
     [mobileGroupKey, modelGroups],
   );
   const desktopDetailPaneVisible = desktopDetailLayout !== null && !isMobile;
+  React.useLayoutEffect(() => {
+    setActivePricing(null);
+  }, [isMobile, activeDesktopGroupKey, mobileGroupKey, desktopDetailPaneVisible]);
   // The third level opens only while a model row is hovered (or focused), like a submenu.
   const desktopDetailModel = React.useMemo(
     () => activeDesktopGroup?.items.find((item) => item.platformModelName === desktopDetailModelName) ?? null,
@@ -1376,6 +1399,7 @@ export function ChatModelPicker({
       }
       // Esc and outside clicks close the menu without a mouseleave, so drop the hovered row here.
       setDesktopDetailModel(null);
+      setActivePricing(null);
       setOpen(nextOpen);
     },
     [modelGroups, onModelCatalogRefresh, selectedGroupKey, setDesktopDetailModel],
@@ -1492,6 +1516,8 @@ export function ChatModelPicker({
                             viewPricingLabel={t("viewPricing")}
                             freeBadgeLabel={t("freeBadge")}
                             reservePricingSlot={mobileGroup.items.some((item) => item.pricing)}
+                            pricingMode={open && activePricing?.modelName === item.platformModelName ? activePricing.mode : null}
+                            onPricingOpenChange={(mode, nextOpen) => handlePricingOpenChange(item.platformModelName, mode, nextOpen)}
                           />
                         ))}
                       </div>
@@ -1572,6 +1598,8 @@ export function ChatModelPicker({
                                 viewPricingLabel={t("viewPricing")}
                                 reservePricingSlot={desktopGroupHasPricing}
                                 withDetailPane={desktopDetailPaneVisible}
+                                pricingMode={open && activePricing?.modelName === item.platformModelName ? activePricing.mode : null}
+                                onPricingOpenChange={(mode, nextOpen) => handlePricingOpenChange(item.platformModelName, mode, nextOpen)}
                                 describedBy={
                                   desktopDetailShown && desktopDetailLayout && desktopDetailModel?.platformModelName === item.platformModelName
                                     ? desktopDetailPaneId

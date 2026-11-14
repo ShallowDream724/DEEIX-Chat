@@ -196,11 +196,9 @@ function PublicSharedMessage({
     return (
       <ChatMessageBot
         item={item}
-        reaction={null}
         onRetryAssistantMessage={noopAsync}
         onEditAssistantMessage={async () => false}
         onCycleMessageBranch={onCycleBranch}
-        onReactAssistantMessage={noop}
         onCopy={noop}
         showModelInfo
         showLatency

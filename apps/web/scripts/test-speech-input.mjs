@@ -467,28 +467,40 @@ test("track-overload allowlist excludes mobile, unknown Chromium brands and old 
   assert.equal(await run({ ...browser, userAgent: "iPhone Chrome/140" }), false);
 });
 
-async function playbackSetup({ fail = false, failTimes = fail ? Infinity : 0, deferred = false, incomplete = false, statuses = [], expiredReads = 0 } = {}) {
-  const stats = { syntheses: 0, requests: [], reads: 0, contexts: 0, closed: 0, recording: false, resolve: null };
+async function playbackSetup({ fail = false, failTimes = fail ? Infinity : 0, deferred = false, incomplete = false, statuses = [], expiredReads = 0, sampleCount = 240, clockScale = 1, chunkSizes = [], streamingHeader = false } = {}) {
+  const stats = { syntheses: 0, requests: [], reads: 0, contexts: 0, closed: 0, recording: false, resolve: null, samples: 0, maxBufferSamples: 0, cancelled: 0 };
   class Context {
     constructor() { stats.contexts++; this.state = "running"; this.started = performance.now(); }
-    get currentTime() { return (performance.now() - this.started) / 1000; }
+    get currentTime() { return (performance.now() - this.started) / 1000 * clockScale; }
     async resume() { this.state = "running"; }
     async suspend() { this.state = "suspended"; }
     async close() { if (this.state !== "closed") stats.closed++; this.state = "closed"; }
     createAnalyser() { return { fftSize: 256, getFloatTimeDomainData(buffer) { buffer.fill(0); }, disconnect() {} }; }
-    createBuffer(_channels, count) { return { getChannelData: () => new Float32Array(count) }; }
+    createBuffer(_channels, count) { stats.samples += count; stats.maxBufferSamples = Math.max(stats.maxBufferSamples, count); return { getChannelData: () => new Float32Array(count) }; }
     createBufferSource() { return { connect() {}, disconnect() {}, start() {} }; }
   }
-  const audio = new Uint8Array(44 + 480);
+  const audio = new Uint8Array(44 + sampleCount * 2);
   const view = new DataView(audio.buffer);
   for (const [offset, text] of [[0, "RIFF"], [8, "WAVEfmt "], [36, "data"]]) for (let i = 0; i < text.length; i++) audio[offset + i] = text.charCodeAt(i);
-  view.setUint32(4, audio.length - 8, true); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, 24000, true); view.setUint16(34, 16, true); view.setUint32(40, 480, true);
+  view.setUint32(4, streamingHeader ? 0xffffffff : audio.length - 8, true); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, 24000, true); view.setUint16(34, 16, true); view.setUint32(40, streamingHeader ? 0xffffffff : sampleCount * 2, true);
   const api = await load("../features/chat/lib/speech-playback.ts", ["configureSpeechPlayback", "playSpeech", "stopSpeechPlayback", "getSpeechPlaybackState", "splitSpeechText"], {
     AudioContext: Context, createMediaSpectrum, document: { hidden: false }, window: { location: { origin: "https://example.test" } }, URL,
     isRecordingActive: () => stats.recording, beginPlaybackActivity: () => ({ stop() {}, publishLevel() {} }),
     synthesizeSpeech: (_token, _text, _voice, requestID, retry) => { stats.syntheses++; stats.requests.push({ requestID, retry }); if (stats.syntheses <= failTimes) return Promise.reject(new Error("failed")); const result = { id: `audio-${stats.syntheses}`, media_url: "/api/v1/speech/tts/audio/audio", status: statuses[stats.syntheses - 1] ?? "pending" }; return deferred ? new Promise((resolve) => { stats.resolve = () => resolve(result); }) : Promise.resolve(result); },
     getSpeechSynthesis: async () => ({ status: incomplete ? "uncertain" : "complete" }),
-    authedFetch: async () => { stats.reads++; if (stats.reads <= expiredReads) throw Object.assign(new Error("expired"), { status: 410 }); return new Response(audio); },
+    authedFetch: async () => {
+      stats.reads++;
+      if (stats.reads <= expiredReads) throw Object.assign(new Error("expired"), { status: 410 });
+      let offset = 0; let index = 0;
+      return new Response(new ReadableStream({
+        pull(controller) {
+          if (offset >= audio.length) { controller.close(); return; }
+          const end = Math.min(audio.length, offset + (chunkSizes[index++] ?? audio.length));
+          controller.enqueue(audio.subarray(offset, end)); offset = end;
+        },
+        cancel() { stats.cancelled++; },
+      }));
+    },
   });
   const config = { scope: "conversation", user: "user", token: "token", voice: "stella", enabled: true };
   api.configureSpeechPlayback(config);
@@ -503,6 +515,19 @@ test("TTS synthesis identity is separate from playback: repeated play reuses one
   api.configureSpeechPlayback({ ...config, voice: "tide" }); await api.playSpeech("message", "Hello", (error) => errors.push(error));
   assert.equal(stats.syntheses, 2); assert.equal(stats.closed, stats.contexts);
   assert.throws(() => api.splitSpeechText("汉".repeat(5001)), /tooLong/);
+});
+
+test("TTS plays large transport chunks and fragmented streaming WAV headers without dropping audio or allocating large PCM buffers", async () => {
+  for (const chunkSizes of [[44 + 3 * 48000], [1, 7, 13, 22, 2, 144001]]) {
+    const { api, stats } = await playbackSetup({ sampleCount: 28 * 24000, clockScale: 1000, chunkSizes, streamingHeader: true });
+    const errors = [];
+    await api.playSpeech("message", "Long audio", error => errors.push(error));
+    assert.deepEqual(errors, []);
+    assert.equal(stats.samples, 28 * 24000);
+    assert.ok(stats.maxBufferSamples <= 4800);
+    assert.equal(stats.closed, stats.contexts);
+    assert.equal(api.getSpeechPlaybackState().status, "idle");
+  }
 });
 
 test("TTS failure does not automatically resynthesize and an incomplete stream is not successful", async () => {

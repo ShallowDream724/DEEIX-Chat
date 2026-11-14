@@ -95,6 +95,9 @@ async function readWav(response: Response, playback: NonNullable<typeof active>,
   let cursor = playback.context.currentTime;
   let samples = 0;
   let formatValid = false;
+  let incoming: Uint8Array | undefined;
+  let incomingOffset = 0;
+  let done = false;
   const ensureActive = () => { if (active !== playback || config.scope !== scope || playback.controller.signal.aborted) throw abortError(); };
   const wait = async () => {
     ensureActive();
@@ -105,10 +108,18 @@ async function readWav(response: Response, playback: NonNullable<typeof active>,
   try {
     while (true) {
       await wait();
-      const { value, done } = await reader.read();
+      // Fetch chunks are transport-dependent: a proxy or buffered response can
+      // deliver megabytes at once. Bound our parsing/copying, not its chunk size.
+      if (!incoming || incomingOffset >= incoming.length) {
+        const next = await reader.read();
+        incoming = next.value;
+        incomingOffset = 0;
+        done = next.done;
+      }
       ensureActive();
-      if (value) {
-        if (value.length > 1024 * 1024) throw new Error("audioBufferLimit");
+      const value = incoming?.subarray(incomingOffset, incomingOffset + 32 * 1024);
+      incomingOffset += value?.length ?? 0;
+      if (value?.length) {
         const joined = new Uint8Array(pending.length + value.length); joined.set(pending); joined.set(value, pending.length); pending = joined;
       }
       if (!headerRead) {

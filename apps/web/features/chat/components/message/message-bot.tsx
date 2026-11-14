@@ -14,7 +14,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { MessageAttachmentRow } from "@/features/chat/components/message/message-attachment";
 import { MessageKnowledgeSources } from "@/features/chat/components/message/message-knowledge-sources";
-import type { AssistantReaction } from "@/features/chat/components/message/message-meta";
 import { AssistantMessageMeta } from "@/features/chat/components/message/message-meta";
 import { SpeechPlaybackButton } from "@/features/chat/components/message/speech-playback-button";
 import { MessageAgentTrace, MessageProcessTrace } from "@/features/chat/components/message/message-process-trace";
@@ -141,14 +140,12 @@ function resolveEditableImageAttachment(
 type ChatMessageBotProps = {
   item: ChatAreaMessage;
   busy?: boolean;
-  reaction: AssistantReaction;
   onRetryAssistantMessage: (message: ChatAreaMessage) => Promise<void> | void;
   onContinueAssistantMessage?: (message: ChatAreaMessage) => Promise<void> | void;
   onEditAssistantMessage: (message: ChatAreaMessage, content: string) => Promise<boolean> | boolean;
   onForkMessage?: (message: ChatAreaMessage) => Promise<void> | void;
   onDeleteMessage?: (message: ChatAreaMessage) => Promise<void> | void;
   onCycleMessageBranch: (parentPublicID: string | null, direction: "previous" | "next") => void;
-  onReactAssistantMessage: (publicID: string, reaction: AssistantReaction) => void;
   onCopy: () => void;
   copySucceeded?: boolean;
   markdownRender?: boolean;
@@ -179,14 +176,12 @@ type ChatMessageBotProps = {
 export function ChatMessageBot({
   item,
   busy = false,
-  reaction,
   onRetryAssistantMessage,
   onContinueAssistantMessage,
   onEditAssistantMessage,
   onForkMessage,
   onDeleteMessage,
   onCycleMessageBranch,
-  onReactAssistantMessage,
   onCopy,
   copySucceeded = false,
   markdownRender = true,
@@ -515,7 +510,6 @@ export function ChatMessageBot({
       <AssistantMessageMeta
         item={item}
         busy={busy}
-        reaction={reaction}
         onCycleBranch={onCycleMessageBranch}
         onRetry={onRetry}
         onContinue={onContinueAssistantMessage ? onContinue : undefined}
@@ -524,7 +518,6 @@ export function ChatMessageBot({
         onFork={onForkMessage ? onFork : undefined}
         onDelete={onDeleteMessage ? onDelete : undefined}
         copySucceeded={copySucceeded}
-        onReact={(value) => onReactAssistantMessage(item.publicID, value)}
         showModelInfo={showModelInfo}
         showLatency={showLatency}
         showTokenUsage={showTokenUsage}

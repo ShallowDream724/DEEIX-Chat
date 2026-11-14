@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { flattenSpeechSettings, buildSpeechSettingsPatch, isSpeechSettingsFieldVisible, speechSettingsMissingAPIKey, changeSpeechSetting, canReuseSpeechConnection, speechCredentialsSourceOptions, speechSettingsMissingConnectionFields } from "./speech-settings.ts";
+import { flattenSpeechSettings, buildSpeechSettingsPatch, buildSpeechSettingsGroupSave, mergeSpeechSettingsDraft, isSpeechSettingsFieldVisible, speechSettingsMissingAPIKey, changeSpeechSetting, canReuseSpeechConnection, speechCredentialsSourceOptions, speechSettingsMissingConnectionFields } from "./speech-settings.ts";
 
 test("saving speech settings preserves a configured, masked API key", () => {
   const saved = flattenSpeechSettings([
@@ -100,4 +100,85 @@ test("connection reuse cannot create a cycle, and missing referenced configurati
     assert.equal(canReuseSpeechConnection("asr", invalid, []), false);
     assert.ok(speechSettingsMissingConnectionFields(invalid, []).has("deepseek_tts_base_url"));
   }
+});
+
+test("pricing saves independently of incomplete speech drafts and preserves those drafts", () => {
+  const saved = flattenSpeechSettings([]);
+  const current = { ...saved, input_provider: "deepseek", deepseek_tts_enabled: "true", charge_tts: "true", tts_cny_per_10000_characters: "2" };
+  const plan = buildSpeechSettingsGroupSave(current, saved, [], "pricing");
+  assert.deepEqual(plan.patches, [
+    { namespace: "speech", key: "charge_tts", value: "true" },
+    { namespace: "speech", key: "tts_cny_per_10000_characters", value: "2" },
+  ]);
+  assert.equal(plan.missingConnectionFields.size, 0);
+  const nextSaved = { ...saved, charge_tts: "true", tts_cny_per_10000_characters: "2" };
+  const merged = mergeSpeechSettingsDraft(current, saved, plan.patches, nextSaved);
+  assert.deepEqual(merged, current);
+  assert.deepEqual(buildSpeechSettingsPatch(merged, nextSaved).map((patch) => patch.key), ["input_provider", "deepseek_tts_enabled"]);
+  assert.equal(buildSpeechSettingsGroupSave(merged, nextSaved, [], "input").missingConnectionFields.has("deepseek_asr_api_key"), true);
+  assert.equal(buildSpeechSettingsGroupSave(merged, nextSaved, [], "output").missingConnectionFields.has("deepseek_tts_api_key"), true);
+});
+
+test("saving either speech role atomically includes a new reused connection but leaves the other group's controls unsaved", () => {
+  const saved = flattenSpeechSettings([]);
+  for (const [group, role, peer] of [["input", "asr", "tts"], ["output", "tts", "asr"]]) {
+    const current = {
+      ...saved,
+      input_provider: "deepseek",
+      deepseek_tts_enabled: "true",
+      max_recording_seconds: "180",
+      [`deepseek_${role}_credentials_source`]: peer,
+      [`deepseek_${peer}_base_url`]: "https://speech.example.test",
+      [`deepseek_${peer}_api_key`]: "new-peer-key",
+      charge_tts: "true",
+    };
+    const plan = buildSpeechSettingsGroupSave(current, saved, [], group);
+    const submitted = Object.fromEntries(plan.patches.map((patch) => [patch.key, patch.value]));
+    assert.equal(plan.missingConnectionFields.size, 0);
+    assert.equal(submitted[`deepseek_${role}_credentials_source`], peer);
+    assert.equal(submitted[`deepseek_${peer}_base_url`], "https://speech.example.test");
+    assert.equal(submitted[`deepseek_${peer}_api_key`], "new-peer-key");
+    assert.equal(submitted.charge_tts, undefined);
+    assert.equal(submitted[group === "input" ? "deepseek_tts_enabled" : "input_provider"], undefined);
+    if (group === "output") assert.equal(submitted.max_recording_seconds, undefined);
+
+    const nextSaved = { ...saved, ...submitted, [`deepseek_${peer}_api_key`]: "" };
+    const merged = mergeSpeechSettingsDraft(current, saved, plan.patches, nextSaved);
+    assert.equal(merged[`deepseek_${peer}_api_key`], "");
+    assert.equal(merged.charge_tts, "true");
+    assert.equal(merged[group === "input" ? "deepseek_tts_enabled" : "input_provider"], group === "input" ? "true" : "deepseek");
+  }
+});
+
+test("switching connection ownership saves the peer source and key together without a transient cycle", () => {
+  const items = [{ key: "deepseek_asr_api_key", configured: true }];
+  const saved = { ...flattenSpeechSettings([]), input_provider: "deepseek", deepseek_tts_enabled: "true", deepseek_tts_credentials_source: "asr" };
+  const current = { ...saved, deepseek_asr_credentials_source: "tts", deepseek_tts_credentials_source: "own", deepseek_tts_api_key: "new-output-key", deepseek_tts_enabled: "false" };
+  const plan = buildSpeechSettingsGroupSave(current, saved, items, "input");
+  assert.equal(plan.missingConnectionFields.size, 0);
+  assert.deepEqual(plan.patches.map((patch) => patch.key), ["deepseek_asr_credentials_source", "deepseek_tts_credentials_source", "deepseek_tts_api_key"]);
+  const cycle = buildSpeechSettingsGroupSave({ ...current, deepseek_tts_credentials_source: "asr" }, saved, items, "input");
+  assert.ok(cycle.missingConnectionFields.has("deepseek_asr_credentials_source"));
+  assert.ok(cycle.missingConnectionFields.has("deepseek_tts_credentials_source"));
+});
+
+test("a saved peer connection is reused without consuming its replacement-key draft", () => {
+  const items = [{ key: "deepseek_tts_api_key", configured: true }];
+  const saved = flattenSpeechSettings([]);
+  const current = { ...saved, input_provider: "deepseek", deepseek_asr_credentials_source: "tts", deepseek_tts_api_key: "replacement-key" };
+  const plan = buildSpeechSettingsGroupSave(current, saved, items, "input");
+  assert.equal(plan.missingConnectionFields.size, 0);
+  assert.deepEqual(plan.patches.map((patch) => patch.key), ["input_provider", "deepseek_asr_credentials_source"]);
+  const nextSaved = { ...saved, input_provider: "deepseek", deepseek_asr_credentials_source: "tts" };
+  const merged = mergeSpeechSettingsDraft(current, saved, plan.patches, nextSaved);
+  assert.equal(merged.deepseek_tts_api_key, "replacement-key");
+  assert.deepEqual(buildSpeechSettingsPatch(merged, nextSaved).map((patch) => patch.key), ["deepseek_tts_api_key"]);
+});
+
+test("a newer edit survives a response for an earlier submitted value", () => {
+  const saved = flattenSpeechSettings([]);
+  const submitted = [{ namespace: "speech", key: "max_recording_seconds", value: "180" }];
+  const current = { ...saved, max_recording_seconds: "240" };
+  const nextSaved = { ...saved, max_recording_seconds: "180" };
+  assert.equal(mergeSpeechSettingsDraft(current, saved, submitted, nextSaved).max_recording_seconds, "240");
 });

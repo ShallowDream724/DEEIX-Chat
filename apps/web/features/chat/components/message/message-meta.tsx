@@ -25,8 +25,6 @@ import { Copy } from "@/components/animate-ui/icons/copy";
 import { GitFork } from "@/components/animate-ui/icons/git-fork";
 import { Heart } from "@/components/animate-ui/icons/heart";
 import { RotateCcw } from "@/components/animate-ui/icons/rotate-ccw";
-import { ThumbsDown } from "@/components/animate-ui/icons/thumbs-down";
-import { ThumbsUp } from "@/components/animate-ui/icons/thumbs-up";
 import { Trash2 } from "@/components/animate-ui/icons/trash-2";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1008,7 +1006,6 @@ function QuickMemoryPin({ disabled }: { disabled?: boolean }) {
 export function AssistantMessageMeta({
   item,
   busy,
-  reaction,
   onCycleBranch,
   onRetry,
   onContinue,
@@ -1017,7 +1014,6 @@ export function AssistantMessageMeta({
   onFork,
   onDelete,
   copySucceeded = false,
-  onReact,
   showModelInfo = true,
   showLatency = true,
   showTokenUsage = true,
@@ -1031,7 +1027,8 @@ export function AssistantMessageMeta({
 }: {
   item: ChatMetaMessage;
   busy: boolean;
-  reaction: AssistantReaction;
+  /** @deprecated Feedback actions are no longer displayed. */
+  reaction?: AssistantReaction;
   onCycleBranch: (parentPublicID: string | null, direction: "previous" | "next") => void;
   onRetry: () => void;
   onContinue?: () => void;
@@ -1040,7 +1037,8 @@ export function AssistantMessageMeta({
   onFork?: () => Promise<void> | void;
   onDelete?: () => Promise<void> | void;
   copySucceeded?: boolean;
-  onReact: (value: AssistantReaction) => void;
+  /** @deprecated Feedback actions are no longer displayed. */
+  onReact?: (value: AssistantReaction) => void;
   showModelInfo?: boolean;
   showLatency?: boolean;
   showTokenUsage?: boolean;
@@ -1143,22 +1141,6 @@ export function AssistantMessageMeta({
                     <Brush strokeWidth={1.8} animateOnHover="default" />
                   </MetaIconButton>
                 ) : null}
-                <MetaIconButton
-                  label={t("likeReply")}
-                  className={reaction === "up" ? "text-foreground" : undefined}
-                  disabled={messagePending}
-                  onClick={() => onReact(reaction === "up" ? null : "up")}
-                >
-                  <ThumbsUp strokeWidth={1.8} animateOnHover="default" />
-                </MetaIconButton>
-                <MetaIconButton
-                  label={t("dislikeReply")}
-                  className={reaction === "down" ? "text-foreground" : undefined}
-                  disabled={messagePending}
-                  onClick={() => onReact(reaction === "down" ? null : "down")}
-                >
-                  <ThumbsDown strokeWidth={1.8} animateOnHover="default" />
-                </MetaIconButton>
                 {canRetry ? (
                   <MetaIconButton
                     label={t("retryReply")}

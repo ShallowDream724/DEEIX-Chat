@@ -184,23 +184,26 @@ export async function canonicalizeSrgbCanvasOutput(blob: Blob): Promise<Blob> {
 }
 
 function exifOrientation(data: Uint8Array): number {
+  // EXIF is optional metadata. Some screenshot exporters write an unspecified
+  // orientation (including LONG/0); it must not invalidate the image container.
+  // Only a well-formed SHORT orientation can override the native default.
   const start = ascii(data, 0, 6) === "Exif\0\0" ? 6 : 0;
-  if (data.length < start + 8) return invalid();
+  if (data.length < start + 8) return 1;
   const order = ascii(data, start, 2);
-  if (order !== "II" && order !== "MM") return invalid();
+  if (order !== "II" && order !== "MM") return 1;
   const view = new DataView(data.buffer, data.byteOffset + start, data.byteLength - start);
   const little = order === "II";
-  if (view.getUint16(2, little) !== 42) return invalid();
+  if (view.getUint16(2, little) !== 42) return 1;
   const offset = view.getUint32(4, little);
-  if (offset + 2 > view.byteLength) return invalid();
+  if (offset < 8 || offset + 2 > view.byteLength) return 1;
   const count = view.getUint16(offset, little);
-  if (offset + 2 + count * 12 > view.byteLength) return invalid();
+  if (offset + 2 + count * 12 > view.byteLength) return 1;
   for (let i = 0; i < count; i++) {
     const entry = offset + 2 + i * 12;
     if (view.getUint16(entry, little) !== 0x112) continue;
-    if (view.getUint16(entry + 2, little) !== 3 || view.getUint32(entry + 4, little) !== 1) return invalid();
+    if (view.getUint16(entry + 2, little) !== 3 || view.getUint32(entry + 4, little) !== 1) return 1;
     const value = view.getUint16(entry + 8, little);
-    if (value < 1 || value > 8) return invalid();
+    if (value < 1 || value > 8) return 1;
     return value;
   }
   return 1;

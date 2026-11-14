@@ -19,7 +19,6 @@ import {
   ChatInlineAlertCard,
   ChatMessageBot,
 } from "@/features/chat/components/message/message-bot";
-import type { AssistantReaction } from "@/features/chat/components/message/message-meta";
 import { ChatMessageUser } from "@/features/chat/components/message/message-user";
 import type { SendShortcut } from "@/features/settings";
 import { ChatLabel } from "@/features/chat/components/sections/chat-label";
@@ -30,7 +29,6 @@ import {
 import { ChatResponseOutlineRail } from "@/features/chat/components/sections/chat-response-outline-rail";
 import { ChatHistoryWindow, ChatHistoryWindowItem } from "@/features/chat/components/sections/chat-history-window";
 import { ChatScreenshotSelectionBar } from "@/features/chat/components/sections/chat-screenshot-selection-bar";
-import { useChatMessageFeedback } from "@/features/chat/hooks/use-chat-message-feedback";
 import { useChatUIBlockStateBinding } from "@/features/chat/hooks/use-chat-ui-block-state";
 import type { OpenCodeArtifactInput } from "@/features/chat/model/chat-artifacts";
 import { createChatUIBlockStateStore, type ChatUIBlockStateStore } from "@/features/chat/model/chat-ui-block-state-store";
@@ -96,7 +94,6 @@ type ChatAreaProps = {
   canOperateConversation: boolean;
   messages: ChatAreaMessage[];
   messagesReadOnly?: boolean;
-  persistMessageFeedback?: boolean;
   // Interactive component state. Absent: blocks keep plain local state.
   uiBlockState?: {
     store: ChatUIBlockStateStore;
@@ -281,7 +278,6 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
   uiBlockStateConversationID,
   busy,
   readOnly,
-  reaction,
   onRetryUserMessage,
   onRetryAssistantMessage,
   onContinueAssistantMessage,
@@ -297,7 +293,6 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
   onEditImageAttachment,
   onExtendVideoAttachment,
   onCycleMessageBranch,
-  onReactAssistantMessage,
   onOpenCodeArtifact,
   onOpenUIBlock,
   markdownRender,
@@ -322,7 +317,6 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
   uiBlockStateConversationID: string | null;
   busy: boolean;
   readOnly: boolean;
-  reaction: AssistantReaction;
   onRetryUserMessage: (message: ChatAreaMessage) => Promise<void> | void;
   onRetryAssistantMessage: (message: ChatAreaMessage) => Promise<void> | void;
   onContinueAssistantMessage?: (message: ChatAreaMessage) => Promise<void> | void;
@@ -338,7 +332,6 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
   onEditImageAttachment?: (attachment: MessageAttachment, sourceModelName?: string) => void;
   onExtendVideoAttachment?: (attachment: MessageAttachment, sourceModelName?: string) => void;
   onCycleMessageBranch: (parentPublicID: string | null, direction: "previous" | "next") => void;
-  onReactAssistantMessage: (publicID: string, reaction: AssistantReaction) => void;
   onOpenCodeArtifact?: (message: ChatAreaMessage, artifact: OpenCodeArtifactInput) => void;
   onOpenUIBlock?: (message: ChatAreaMessage, blockKey: string) => void;
   markdownRender: boolean;
@@ -442,14 +435,12 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
       <ChatMessageBot
         item={item}
         busy={busy}
-        reaction={reaction}
         onRetryAssistantMessage={onRetryAssistantMessage}
         onContinueAssistantMessage={onContinueAssistantMessage}
         onEditAssistantMessage={onEditAssistantMessage}
         onForkMessage={onForkMessage}
         onDeleteMessage={onDeleteMessage}
         onCycleMessageBranch={onCycleMessageBranch}
-        onReactAssistantMessage={onReactAssistantMessage}
         onCopy={() => void onCopy()}
         copySucceeded={isCopied(copyKey)}
         attachmentContentLoader={attachmentContentLoader}
@@ -496,7 +487,6 @@ const ChatMessageRow = React.memo(function ChatMessageRow({
   previous.readOnly === next.readOnly &&
   previous.uiBlockStateStore === next.uiBlockStateStore &&
   previous.uiBlockStateConversationID === next.uiBlockStateConversationID &&
-  previous.reaction === next.reaction &&
   previous.markdownRender === next.markdownRender &&
   previous.autoExpandThinking === next.autoExpandThinking &&
   previous.autoExpandToolCalls === next.autoExpandToolCalls &&
@@ -531,7 +521,6 @@ export function ChatArea({
   canOperateConversation,
   messages,
   messagesReadOnly = false,
-  persistMessageFeedback = true,
   uiBlockState,
   busy,
   messageContentRef,
@@ -583,9 +572,6 @@ export function ChatArea({
 }: ChatAreaProps) {
   const t = useTranslations("chat");
   const [localUIBlockStateStore] = React.useState(() => createChatUIBlockStateStore({ persist: async () => undefined }));
-  const { getReaction, onReactAssistantMessage } = useChatMessageFeedback(messages, {
-    persist: persistMessageFeedback,
-  });
   const stableOnRetryUserMessage = useStableEvent(onRetryUserMessage);
   const stableOnRetryAssistantMessage = useStableEvent(onRetryAssistantMessage);
   const stableOnContinueAssistantMessage = useStableEvent(onContinueAssistantMessage ?? ((): undefined => undefined));
@@ -602,7 +588,6 @@ export function ChatArea({
     onExtendVideoAttachment?.(attachment, sourceModelName);
   });
   const stableOnCycleMessageBranch = useStableEvent(onCycleMessageBranch);
-  const stableOnReactAssistantMessage = useStableEvent(onReactAssistantMessage);
   const editImageAttachmentHandler = onEditImageAttachment ? stableOnEditImageAttachment : undefined;
   const extendVideoAttachmentHandler = onExtendVideoAttachment ? stableOnExtendVideoAttachment : undefined;
   const shareLabel = shareActive ? t("manageShare") : t("shareConversation");
@@ -740,7 +725,6 @@ export function ChatArea({
                       uiBlockStateConversationID={uiBlockState?.conversationPublicID ?? null}
                       busy={busy}
                       readOnly={messagesReadOnly}
-                      reaction={getReaction(item)}
                       onRetryUserMessage={stableOnRetryUserMessage}
                       onRetryAssistantMessage={stableOnRetryAssistantMessage}
                       onContinueAssistantMessage={onContinueAssistantMessage ? stableOnContinueAssistantMessage : undefined}
@@ -756,7 +740,6 @@ export function ChatArea({
                       onEditImageAttachment={editImageAttachmentHandler}
                       onExtendVideoAttachment={extendVideoAttachmentHandler}
                       onCycleMessageBranch={stableOnCycleMessageBranch}
-                      onReactAssistantMessage={stableOnReactAssistantMessage}
                       onOpenCodeArtifact={onOpenCodeArtifact}
                       onOpenUIBlock={onOpenUIBlock}
                       markdownRender={markdownRender}

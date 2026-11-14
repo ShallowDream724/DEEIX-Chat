@@ -3,7 +3,7 @@ import { useTranslations } from "next-intl";
 import { toast } from "sonner";
 
 import { listAdminSettingsByNamespace, patchAdminSettings } from "@/features/admin/api/settings";
-import { buildSpeechSettingsPatch, changeSpeechSetting, flattenSpeechSettings, speechSettingsFromResponse, speechSettingsMissingConnectionFields } from "@/features/admin/model/speech-settings";
+import { buildSpeechSettingsGroupSave, buildSpeechSettingsPatch, changeSpeechSetting, flattenSpeechSettings, mergeSpeechSettingsDraft, speechSettingsFromResponse, speechSettingsMissingConnectionFields, type SpeechSettingsGroup } from "@/features/admin/model/speech-settings";
 import { resolveAdminErrorMessage } from "@/features/admin/utils/admin-error";
 import type { SettingItem } from "@/shared/api/settings-types";
 import { resolveAccessToken } from "@/shared/auth/resolve-access-token";
@@ -12,7 +12,8 @@ import { invalidateSpeechCapabilities } from "@/shared/hooks/use-speech-capabili
 export function useAdminSpeechSettings() {
   const t = useTranslations("adminSpeech");
   const [loading, setLoading] = React.useState(true);
-  const [saving, setSaving] = React.useState(false);
+  const [savingGroup, setSavingGroup] = React.useState<SpeechSettingsGroup | null>(null);
+  const saving = savingGroup !== null;
   const [error, setError] = React.useState("");
   const [items, setItems] = React.useState<SettingItem[]>([]);
   const [values, setValues] = React.useState(() => flattenSpeechSettings([]));
@@ -43,27 +44,37 @@ export function useAdminSpeechSettings() {
 
   const patches = React.useMemo(() => buildSpeechSettingsPatch(values, saved), [values, saved]);
   const missingConnectionFields = speechSettingsMissingConnectionFields(values, items);
-  const invalidConnection = missingConnectionFields.size > 0;
+  const groupSaves = React.useMemo(() => ({
+    input: buildSpeechSettingsGroupSave(values, saved, items, "input"),
+    output: buildSpeechSettingsGroupSave(values, saved, items, "output"),
+    pricing: buildSpeechSettingsGroupSave(values, saved, items, "pricing"),
+  }), [values, saved, items]);
   const setValue = React.useCallback((key: string, value: string) => {
     if (key.endsWith("_credentials_source")) explicitSources.current.add(key);
     setValues((current) => changeSpeechSetting(current, key, value, items, explicitSources.current));
   }, [items]);
   const dirtyKeys = React.useMemo(() => new Set(patches.map((item) => item.key)), [patches]);
-  const save = React.useCallback(async () => {
-    if (!patches.length || saving || loading || error || invalidConnection) return;
-    setSaving(true);
+  const save = React.useCallback(async (group: SpeechSettingsGroup) => {
+    const { patches: groupPatches, missingConnectionFields: missing } = groupSaves[group];
+    if (!groupPatches.length || saving || loading || error || missing.size > 0) return;
+    setSavingGroup(group);
     try {
       const token = await resolveAccessToken();
       if (!token) throw new Error(t("sessionExpired"));
-      applyItems(speechSettingsFromResponse(await patchAdminSettings(token, { items: patches })));
+      const nextItems = speechSettingsFromResponse(await patchAdminSettings(token, { items: groupPatches }));
+      const nextSaved = flattenSpeechSettings(nextItems);
+      setItems(nextItems);
+      setSaved(nextSaved);
+      setValues((current) => mergeSpeechSettingsDraft(current, saved, groupPatches, nextSaved));
+      for (const patch of groupPatches) explicitSources.current.delete(patch.key);
       invalidateSpeechCapabilities();
       toast.success(t("saved"));
     } catch (cause) {
       toast.error(t("saveFailed"), { description: resolveAdminErrorMessage(cause, t("unknownError")) });
     } finally {
-      setSaving(false);
+      setSavingGroup(null);
     }
-  }, [applyItems, patches, saving, loading, error, invalidConnection, t]);
+  }, [groupSaves, saved, saving, loading, error, t]);
 
-  return { loading, saving, error, items, values, setValue, dirtyKeys, invalidConnection, missingConnectionFields, load, save };
+  return { loading, saving, savingGroup, error, items, values, setValue, dirtyKeys, groupSaves, missingConnectionFields, load, save };
 }

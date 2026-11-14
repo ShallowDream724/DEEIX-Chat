@@ -38,6 +38,24 @@ test("EXIF orientation, HDR/gain-map exclusions, and JPEG dimensions are inspect
   assert.equal(inspectImageMetadata(png(100, 100, [chunk("cICP", [9, 16, 0, 1])])).colorSpace, "unsupported");
 });
 
+test("optional EXIF cannot reject decodable screenshots, while valid rotation and container checks remain", () => {
+  const exif = (type, value, count = 1) => bytes(Buffer.from("Exif\0\0II"), [42, 0, 8, 0, 0, 0, 1, 0, 18, 1, type, 0, count, 0, 0, 0, value, 0, 0, 0, 0, 0, 0, 0]);
+  const withExif = data => jpeg(1320, 2868, [bytes([255, 225, (data.length + 2) >>> 8, (data.length + 2) & 255], data)]);
+  // Both user-provided screenshots use TIFF LONG / count 1 / value 0.
+  for (const data of [exif(4, 0), exif(3, 0), exif(3, 9), exif(3, 6, 2), exif(4, 6), exif(3, 6).subarray(0, 20), bytes(Buffer.from("Exif\0\0"))]) {
+    const source = withExif(data);
+    const metadata = inspectImageMetadata(source);
+    assert.equal(metadata.orientation, 1);
+    assert.deepEqual([metadata.width, metadata.height], [1320, 2868]);
+    assert.throws(() => inspectImageMetadata(source.subarray(0, source.length - 2)), { code: "IMAGE_INVALID" });
+  }
+  for (let value = 1; value <= 8; value++) assert.equal(inspectImageMetadata(withExif(exif(3, value))).orientation, value);
+  const bigEndian = bytes(Buffer.from("Exif\0\0MM"), [0, 42, 0, 0, 0, 8, 0, 1, 1, 18, 0, 3, 0, 0, 0, 1, 0, 8, 0, 0, 0, 0, 0, 0]);
+  assert.equal(inspectImageMetadata(withExif(bigEndian)).orientation, 8);
+  const outOfBounds = exif(3, 6); outOfBounds.fill(255, 10, 14);
+  assert.equal(inspectImageMetadata(withExif(outOfBounds)).orientation, 1);
+});
+
 test("plans resize once, preserve aspect and alpha, round JPEG decode upward, and honor 0", () => {
   const metadata = inspectImageMetadata(jpeg());
   const plan = planImagePreparation(metadata, 1024, { maxDimension: 1536, version: "image-normalize-v1:1536" });

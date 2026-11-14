@@ -127,6 +127,47 @@ export function buildSpeechSettingsPatch(current: Record<string, string>, saved:
     .map((field) => ({ namespace: "speech", key: field.key, value: current[field.key] ?? "" }));
 }
 
+export function buildSpeechSettingsGroupSave(
+  current: Record<string, string>, saved: Record<string, string>, items: readonly SettingItem[], group: SpeechSettingsGroup,
+) {
+  const dirty = buildSpeechSettingsPatch(current, saved);
+  const groupKeys = new Set(SPEECH_SETTINGS_FIELDS.filter((field) => field.group === group).map((field) => field.key));
+  const patches = dirty.filter((item) => groupKeys.has(item.key));
+  if (group === "pricing" || patches.length === 0) return { patches, missingConnectionFields: new Set<string>() };
+
+  const effective = { ...saved, ...Object.fromEntries(patches.map((item) => [item.key, item.value])) };
+  const role = group === "input" ? "asr" : "tts";
+  const peer = peerRole(role);
+  // A new reference may need the peer's connection in the same transaction,
+  // while its enable switch and other unsaved fields remain local drafts.
+  if (effective[speechCredentialsSourceKey(role)] === peer && !canReuseSpeechConnection(role, effective, items)) {
+    const dependencyKeys = new Set(SPEECH_SETTINGS_FIELDS.filter((field) => field.subgroupKey === peer).map((field) => field.key));
+    for (const patch of dirty.filter((item) => dependencyKeys.has(item.key))) {
+      patches.push(patch);
+      effective[patch.key] = patch.value;
+    }
+  }
+  const missingConnectionFields = new Set(speechSettingsMissingConnectionFields(effective, items));
+  if (effective.deepseek_asr_credentials_source === "tts" && effective.deepseek_tts_credentials_source === "asr") {
+    missingConnectionFields.add(speechCredentialsSourceKey("asr"));
+    missingConnectionFields.add(speechCredentialsSourceKey("tts"));
+  }
+  return { patches, missingConnectionFields };
+}
+
+export function mergeSpeechSettingsDraft(
+  current: Record<string, string>, saved: Record<string, string>, patches: readonly PatchSettingItem[], nextSaved: Record<string, string>,
+): Record<string, string> {
+  const next = { ...nextSaved };
+  const submitted = new Map(patches.map((item) => [item.key, item.value]));
+  for (const field of SPEECH_SETTINGS_FIELDS) {
+    if (current[field.key] !== saved[field.key] && (!submitted.has(field.key) || current[field.key] !== submitted.get(field.key))) {
+      next[field.key] = current[field.key];
+    }
+  }
+  return next;
+}
+
 export function speechSettingsFromResponse(grouped: SettingsGrouped): SettingItem[] {
   return grouped.speech ?? [];
 }
