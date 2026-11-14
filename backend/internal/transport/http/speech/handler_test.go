@@ -147,6 +147,20 @@ func TestErrorEnvelopeMasksInternalDetails(t *testing.T) {
 		t.Fatal(body, e)
 	}
 }
+
+func TestDurationLimitHasStablePublicCode(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/limit", func(c *gin.Context) { fail(c, domain.ErrDurationLimit) })
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/limit", nil))
+	var body struct {
+		Code string `json:"errorCode"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || response.Code != http.StatusRequestEntityTooLarge || body.Code != "speech.duration_limit" {
+		t.Fatal(response.Code, body, err)
+	}
+}
 func TestSlowUpstreamHasBoundedBufferAndExplicitBackpressure(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	store, e := infra.NewFileStore(t.TempDir(), 1<<20, time.Hour)

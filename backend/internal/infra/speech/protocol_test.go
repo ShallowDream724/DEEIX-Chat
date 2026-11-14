@@ -348,6 +348,9 @@ func TestWeTypeEncryptedStreamingProtocol(t *testing.T) {
 		defer ws.Close()
 		var key []byte
 		polishedOnlyFinal := strings.Contains(ws.Request().URL.RawQuery, "polished_only")
+		delayedCorrection := strings.Contains(ws.Request().URL.RawQuery, "delayed")
+		staleCorrection := strings.Contains(ws.Request().URL.RawQuery, "stale")
+		endCalls := 0
 		for {
 			raw, e := recvIME(ws, 2*time.Second)
 			if e != nil {
@@ -404,10 +407,15 @@ func TestWeTypeEncryptedStreamingProtocol(t *testing.T) {
 					}
 					result := proto{}.s(4, "ordinary text")
 					if integer(inner, 6) == 1 {
+						endCalls++
 						if polishedOnlyFinal {
 							result = proto{}
 						}
-						result = result.s(14, "polished text")
+						if !staleCorrection && (!delayedCorrection || endCalls > 1) {
+							result = result.s(14, "polished text")
+						}
+					} else if staleCorrection {
+						result = result.s(14, "earlier incomplete correction")
 					}
 					responseBody, _ = aesEncrypt(key, snappyEncode(proto{}.b(1, result)))
 					compression = "2"
@@ -445,7 +453,7 @@ func TestWeTypeEncryptedStreamingProtocol(t *testing.T) {
 	}
 	close(frames)
 	r := <-done
-	if e = <-errs; e != nil || r.Text != "ordinary text" || batches.Load() != 1 {
+	if e = <-errs; e != nil || r.Text != "polished text" || batches.Load() != 1 {
 		t.Fatalf("WeType final %+v %v batches=%d", r, e, batches.Load())
 	}
 	plainOnly := NewWeType(IMEConfig{WSURL: "ws" + strings.TrimPrefix(server.URL, "http") + "?polished_only", Identities: store})
@@ -456,15 +464,27 @@ func TestWeTypeEncryptedStreamingProtocol(t *testing.T) {
 	close(otherFrames)
 	var partials []string
 	outcome, e := plainOnly.Stream(t.Context(), domain.StreamRequest{UserID: 1, SessionID: "plain-policy"}, otherFrames, func(e domain.Event) error { partials = append(partials, e.Text); return nil })
-	if !errors.Is(e, domain.ErrUncertain) || outcome.Final {
-		t.Fatal("polished-only final was presented as literal ASR", outcome, e)
+	if e != nil || !outcome.Final || outcome.Text != "polished text" {
+		t.Fatal("upstream corrected final was discarded", outcome, e)
 	}
 	if len(partials) == 0 {
 		t.Fatal("ordinary partial was not retained")
 	}
 	for _, text := range partials {
 		if text != "ordinary text" {
-			t.Fatal("polished rewrite leaked into ordinary partial", text)
+			t.Fatal("ordinary partial lost", text)
+		}
+	}
+	for _, tc := range []struct{ mode, want string }{{"delayed", "polished text"}, {"stale", "ordinary text"}} {
+		channel := NewWeType(IMEConfig{WSURL: "ws" + strings.TrimPrefix(server.URL, "http") + "?" + tc.mode, Identities: store})
+		input := make(chan []byte, 6)
+		for i := 0; i < 6; i++ {
+			input <- []byte{0x98, 1}
+		}
+		close(input)
+		result, err := channel.Stream(t.Context(), domain.StreamRequest{UserID: 1, SessionID: tc.mode}, input, func(domain.Event) error { return nil })
+		if err != nil || result.Text != tc.want {
+			t.Fatalf("%s final authority: %+v %v", tc.mode, result, err)
 		}
 	}
 }

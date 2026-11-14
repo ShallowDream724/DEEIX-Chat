@@ -40,6 +40,7 @@ export async function startSpeechCapture(options: {
   onError: (error: SpeechCaptureError) => void;
   context?: AudioContext;
   signal?: AbortSignal;
+  keepTrackUntilCancel?: boolean;
 }): Promise<SpeechCapture> {
   if (options.signal?.aborted) throw new DOMException("Aborted", "AbortError");
   const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
@@ -49,12 +50,17 @@ export async function startSpeechCapture(options: {
   let analyser: AnalyserNode | undefined;
   let stopping = false;
   let released = false;
+  let tracksReleased = false;
   let armed = false;
   const lifetime = new AbortController();
   const disposers: (() => void)[] = [];
   let resolveStopped: (() => void) | undefined;
   const stopped = new Promise<void>((resolve) => { resolveStopped = resolve; });
-  const release = () => {
+  const release = (keepTrack = false) => {
+    if (!keepTrack && !tracksReleased) {
+      tracksReleased = true;
+      for (const track of stream.getTracks()) track.stop();
+    }
     if (released) return;
     released = true;
     lifetime.abort();
@@ -63,7 +69,6 @@ export async function startSpeechCapture(options: {
     try { source?.disconnect(); } catch {}
     try { node?.disconnect(); } catch {}
     try { analyser?.disconnect(); } catch {}
-    for (const track of stream.getTracks()) track.stop();
     if (context?.state !== "closed") void context?.close().catch(() => {});
   };
   const interrupted = (error: SpeechCaptureError) => {
@@ -97,8 +102,9 @@ export async function startSpeechCapture(options: {
       if (data.type === "error") interrupted("audioUnavailable");
       if (data.type === "stopped") {
         resolveStopped?.();
-        release();
-        if (!stopping) options.onLimit();
+        // Mark the owning session as stopping before ending any shared recognition track.
+        try { if (!stopping) options.onLimit(); }
+        finally { release(options.keepTrackUntilCancel); }
       }
     };
     const processorError = () => interrupted("audioUnavailable");
@@ -136,13 +142,13 @@ export async function startSpeechCapture(options: {
       track,
       stop: async () => {
         stopping = true;
-        node?.port.postMessage("stop");
+        if (!released) node?.port.postMessage("stop");
         let timer: ReturnType<typeof setTimeout> | undefined;
         try {
           await Promise.race([stopped, new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("capture stop timeout")), 3000); })]);
         } finally {
           clearTimeout(timer);
-          release();
+          release(options.keepTrackUntilCancel);
         }
       },
       cancel: () => {

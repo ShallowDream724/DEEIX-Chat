@@ -20,6 +20,7 @@ var (
 	ErrExpired         = errors.New("speech audio expired")
 	ErrRejected        = errors.New("speech request rejected before audio was returned")
 	ErrProviderChanged = errors.New("administrator selected a different speech input provider")
+	ErrDurationLimit   = errors.New("speech recording exceeds its duration and encoding tail allowance")
 )
 
 type Voice struct {

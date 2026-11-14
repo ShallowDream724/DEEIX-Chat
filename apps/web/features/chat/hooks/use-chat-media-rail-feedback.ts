@@ -17,7 +17,7 @@ export function useChatMediaRailFeedback(ref: React.RefObject<HTMLElement | null
     const recentLevels = new Float32Array(historySize);
     let cursor = 0;
     const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
-    const reset = (line: HTMLElement) => { line.style.removeProperty("transform"); line.style.removeProperty("opacity"); };
+    const reset = (line: HTMLElement) => { line.style.removeProperty("transition"); line.style.removeProperty("transform"); line.style.removeProperty("opacity"); };
     const lines = Array.from(root.querySelectorAll<HTMLElement>("[data-media-rail-line]"));
     const indices = new Map(lines.map((line, index) => [line, index]));
     const observer = new IntersectionObserver((entries) => {
@@ -38,14 +38,21 @@ export function useChatMediaRailFeedback(ref: React.RefObject<HTMLElement | null
         for (const line of ordered) { line.envelope = 0; reset(line.element); }
         return;
       }
-      recentBands.set(frame.bands, cursor * MEDIA_SPECTRUM_BANDS);
+      // Blend nearby frequencies so a changing note moves through adjacent lines.
+      for (let band = 0; band < MEDIA_SPECTRUM_BANDS; band++) {
+        recentBands[cursor * MEDIA_SPECTRUM_BANDS + band] = frame.bands[band] * 0.7 + (frame.bands[Math.max(0, band - 1)] + frame.bands[Math.min(MEDIA_SPECTRUM_BANDS - 1, band + 1)]) * 0.15;
+      }
       recentLevels[cursor] = frame.level;
       const strength = (0.75 + frame.level * 0.5).toFixed(3);
       for (let index = 0; index < ordered.length; index++) {
         const line = ordered[index];
         const distance = ordered.length <= 2 ? 0 : Math.abs(index * 2 / (ordered.length - 1) - 1);
-        const historySlot = (cursor - Math.floor(distance * (historySize - 1)) + historySize) % historySize;
+        const delay = distance * (historySize - 1);
+        const historySlot = (cursor - Math.floor(delay) + historySize) % historySize;
+        const olderSlot = (historySlot - 1 + historySize) % historySize;
+        const delayFraction = delay % 1;
         const offset = historySlot * MEDIA_SPECTRUM_BANDS;
+        const olderOffset = olderSlot * MEDIA_SPECTRUM_BANDS;
         let energy = 0;
         if (ordered.length <= 2) {
           const first = Math.floor(index * frame.bands.length / ordered.length);
@@ -56,12 +63,19 @@ export function useChatMediaRailFeedback(ref: React.RefObject<HTMLElement | null
           const band = distance * (frame.bands.length - 1);
           const lower = Math.floor(band);
           const fraction = band - lower;
-          energy = recentBands[offset + lower] * (1 - fraction) + recentBands[offset + Math.min(lower + 1, frame.bands.length - 1)] * fraction;
+          const upper = Math.min(lower + 1, frame.bands.length - 1);
+          const newerEnergy = recentBands[offset + lower] * (1 - fraction) + recentBands[offset + upper] * fraction;
+          const olderEnergy = recentBands[olderOffset + lower] * (1 - fraction) + recentBands[olderOffset + upper] * fraction;
+          energy = newerEnergy * (1 - delayFraction) + olderEnergy * delayFraction;
         }
-        const combined = energy * 0.7 + recentLevels[historySlot] * 0.3;
+        const delayedLevel = recentLevels[historySlot] * (1 - delayFraction) + recentLevels[olderSlot] * delayFraction;
+        const combined = energy * 0.7 + delayedLevel * 0.3;
         const target = combined <= 0.015 ? 0 : combined;
-        line.envelope += (target - line.envelope) * (target > line.envelope ? 0.85 : 0.2);
+        line.envelope += (target - line.envelope) * (target > line.envelope ? 0.55 : 0.28);
         if (line.envelope < 0.003) { reset(line.element); continue; }
+        // The browser interpolates the 30 Hz measurements at display refresh rate.
+        // No extra analyser, frame loop, React render or permanent compositor layer.
+        line.element.style.transition = "transform 80ms linear, opacity 100ms linear";
         line.element.style.transform = `scaleX(${(1 + line.envelope * 4.3).toFixed(3)})`;
         line.element.style.opacity = `calc(var(--media-rail-base-opacity, 0.35) * ${strength})`;
       }

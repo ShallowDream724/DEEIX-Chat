@@ -14,6 +14,22 @@ async function load(path, names, globals = {}) {
 }
 const { SpeechDraftSegment } = await load("../features/chat/lib/speech-draft.ts", ["SpeechDraftSegment"]);
 const { createMediaSpectrum } = await load("../shared/lib/media-spectrum.ts", ["createMediaSpectrum"]);
+const { isImeComposingKeyEvent } = await load("../shared/lib/platform-shortcuts.ts", ["isImeComposingKeyEvent"]);
+const { speechInputKeyAction } = await load("../features/chat/lib/speech-keyboard.ts", ["speechInputKeyAction"], { isImeComposingKeyEvent });
+
+test("speech keyboard keeps modifiers and IME native, stops on Enter, and interrupts real edits/navigation", () => {
+  const action = (key, extra = {}, composing = false) => speechInputKeyAction({ key, ctrlKey: false, metaKey: false, altKey: false, ...extra }, composing);
+  for (const key of ["Shift", "Control", "Alt", "Meta", "AltGraph"]) assert.equal(action(key), "preserve");
+  for (const extra of [{}, { ctrlKey: true }, { metaKey: true }, { shiftKey: true }]) assert.equal(action("Enter", extra), "stop");
+  assert.equal(action("Enter", {}, true), "preserve");
+  assert.equal(action("Enter", { nativeEvent: { isComposing: true } }), "preserve");
+  assert.equal(action("Enter", { keyCode: 229 }), "preserve");
+  assert.equal(action("ArrowDown", {}, true), "preserve");
+  for (const key of [" ", "a", "ArrowLeft", "Home", "Tab", "Escape", "Backspace", "Delete"]) assert.equal(action(key), "interrupt");
+  for (const key of ["a", "x", "v"]) assert.equal(action(key, { ctrlKey: true }), "interrupt");
+  assert.equal(action("c", { ctrlKey: true }), "default");
+  assert.equal(action(" ", { ctrlKey: true }), "default");
+});
 
 test("recording spectrum taps one existing microphone source and releases it with capture", async () => {
   let requests = 0; let sources = 0; let analysers = 0; let stopped = 0; let disconnected = 0; let worklet;
@@ -54,6 +70,27 @@ test("active speech revisions replace one range; intentional recordings start a 
   assert.equal(second.update("Another sentence."), "Existing draft.\nHello, 世界！\nAnother sentence.");
   assert.equal(second.cancel(), "Existing draft.\nHello, 世界！");
   assert.equal(new SpeechDraftSegment("Draft\n").update("你好。"), "Draft\n你好。");
+});
+
+test("sample limit marks stopping before shared track release and keeps it alive for recognition final", async () => {
+  let stopped = 0; let worklet; let limits = 0;
+  const track = Object.assign(new EventTarget(), { readyState: "live", muted: false, getSettings: () => ({}), stop() { stopped++; } });
+  const devices = Object.assign(new EventTarget(), { getUserMedia: async () => ({ getAudioTracks: () => [track], getTracks: () => [track] }) });
+  class Context extends EventTarget {
+    constructor() { super(); this.state = "running"; this.sampleRate = 48000; this.audioWorklet = { addModule: async () => {} }; }
+    createMediaStreamSource() { return { connect() {}, disconnect() {} }; }
+    createAnalyser() { return { fftSize: 256, disconnect() {} }; }
+    async resume() {}
+    async close() { this.state = "closed"; }
+  }
+  class Worklet extends EventTarget { constructor() { super(); worklet = this; this.port = { onmessage: null, postMessage() {} }; } connect() {} disconnect() {} }
+  const { startSpeechCapture } = await load("../features/chat/lib/speech-capture.ts", ["startSpeechCapture"], { createMediaSpectrum, AudioContext: Context, AudioWorkletNode: Worklet, navigator: { mediaDevices: devices } });
+  const capture = await startSpeechCapture({ maxSamples: 16000, keepTrackUntilCancel: true, onFrame() {}, onLimit() { limits++; assert.equal(stopped, 0); }, onError(error) { assert.fail(error); } });
+  worklet.port.onmessage({ data: { type: "stopped" } });
+  await capture.stop();
+  assert.equal(limits, 1); assert.equal(stopped, 0);
+  capture.cancel(); capture.cancel();
+  assert.equal(stopped, 1);
 });
 test("edits outside speech survive partial revisions and cancellation; edits inside stay authoritative", () => {
   const segment = new SpeechDraftSegment("Draft"); segment.update("hello");
@@ -136,12 +173,12 @@ async function setup(provider = "browser", duration = 120000, sharedTrack = fals
     result(text) { this.onresult?.({ results: { length: 1, item: () => ({ isFinal: true, length: 1, item: () => ({ transcript: text }) }) } }); }
   }
   let selectedProvider = provider;
-  const capabilities = () => ({ selected_input_provider: selectedProvider, max_recording_duration_ms: duration, asr: [{ id: selectedProvider, streaming: selectedProvider === "wetype", max_duration_ms: 120000, max_bytes: 8 * 1024 * 1024 }] });
-  const remote = { capture: null, uploads: [], resolve: null, reject: null, sockets: [] };
+  const capabilities = () => ({ selected_input_provider: selectedProvider, max_recording_duration_ms: duration, asr: [{ id: selectedProvider, streaming: ["wetype", "doubao-ime"].includes(selectedProvider), max_duration_ms: 120000, max_bytes: 8 * 1024 * 1024 }] });
+  const remote = { capture: null, uploads: [], wavFrames: null, resolve: null, reject: null, sockets: [], events: [], flushTail: false, finalDuringFlush: false };
   class Socket {
     constructor() { this.bufferedAmount = 0; remote.sockets.push(this); queueMicrotask(() => this.event("ready", 0)); }
-    event(type, sequence, text = "", sessionID = "remote") { this.onmessage?.({ data: JSON.stringify({ type, sequence, text, session_id: sessionID }) }); }
-    send(data) { if (typeof data === "string") this.sent = JSON.parse(data).type; }
+    event(type, sequence, text = "", sessionID = "remote", code) { this.onmessage?.({ data: JSON.stringify({ type, sequence, text, session_id: sessionID, code }) }); }
+    send(data) { if (typeof data === "string") { this.sent = JSON.parse(data).type; remote.events.push(this.sent); } else remote.events.push("packet"); }
     close() {}
   }
   const api = await load("../features/chat/hooks/use-chat-speech-input.ts", ["useChatSpeechInput"], {
@@ -152,11 +189,11 @@ async function setup(provider = "browser", duration = 120000, sharedTrack = fals
     startSpeechCapture: async (options) => { remote.capture = options; options.onFrame(new Float32Array(320)); return { track: { id: "single-track", kind: "audio", readyState: "live" }, stop: async () => options.onFrame(new Float32Array(80)), cancel() {} }; },
     supportsBrowserRecognitionTrack: () => sharedTrack,
     prepareSpeechCaptureContext: () => undefined,
-    pcm16Frame: (frame) => new Int16Array(frame.length), speechWav: (_frames, samples) => { remote.uploads.push(samples); return new Blob(); },
+    pcm16Frame: (frame) => new Int16Array(frame.length), speechWav: (frames, samples) => { remote.wavFrames = frames; remote.uploads.push(samples); return new Blob(); },
     transcribeSpeech: () => new Promise((resolve, reject) => { remote.resolve = resolve; remote.reject = reject; }),
     createSpeechSession: async () => ({ id: "remote", ws_url: "/speech/ws", max_duration_ms: 120000, max_bytes: 8 * 1024 * 1024 }),
     speechResourceURL: () => "https://example.test/speech/ws", URL, WebSocket: Socket,
-    createSpeechOpusEncoder: async (packet) => ({ encode() { packet(new Uint8Array(10)); }, flush: async () => {}, close() {} }),
+    createSpeechOpusEncoder: async (packet) => ({ encode() { packet(new Uint8Array(10)); }, flush: async () => { remote.events.push("flush"); if (remote.flushTail) packet(new Uint8Array(10)); if (remote.finalDuringFlush) { remote.sockets[0].event("final", 3, "Final while flushing."); throw new Error("encoder closed after final"); } }, close() {} }),
     window: Object.assign(new EventTarget(), { isSecureContext: true, SpeechRecognition: Recognition, AudioWorkletNode: class {} }), navigator: { mediaDevices: {} }, supportsSpeechOpus: () => true,
     requestAnimationFrame: (callback) => { queueMicrotask(callback); },
   });
@@ -180,6 +217,64 @@ test("manual editing ends the current segment immediately, persists partial and 
     assert.deepEqual(state.errors, []);
     await state.render().start(5); state.recognitions.at(-1).result("新😀"); state.render();
     assert.equal(state.draft, "Prior新😀Hello draft");
+  } finally { state.cleanup(); }
+});
+
+test("browser sample and wall clock limits finish normally, retain final tail and allow another segment", async () => {
+  for (const sharedTrack of [true, false]) {
+    const state = await setup("browser", 10, sharedTrack);
+    try {
+      await state.render().start(); const recognition = state.recognitions[0]; recognition.result("Partial"); state.render();
+      if (sharedTrack) { assert.equal(state.remote.capture.keepTrackUntilCancel, true); state.remote.capture.onLimit(); }
+      else await new Promise((resolve) => setTimeout(resolve, 250));
+      assert.equal(state.stopped, 1); assert.equal(state.render().status, "transcribing");
+      recognition.onerror({ error: "aborted" }); recognition.result("Final tail."); recognition.onend(); await Promise.resolve(); state.render();
+      assert.deepEqual(state.errors, []); assert.equal(state.draft, "Prior draft\nFinal tail."); assert.equal(state.render().active, false);
+      await state.render().start(); assert.equal(state.render().active, true);
+    } finally { state.cleanup(); }
+  }
+});
+
+test("both streaming sources flush the extra native Opus tail before finish at the sample limit", async () => {
+  for (const provider of ["doubao-ime", "wetype"]) {
+    const state = await setup(provider, 1000);
+    try {
+      await state.render().start(); state.remote.flushTail = true;
+      const socket = state.remote.sockets[0]; socket.event("transcript", 1, "partial"); state.render();
+      state.remote.capture.onLimit(); await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.deepEqual(state.remote.events.slice(-3), ["flush", "packet", "finish"]);
+      socket.event("final", 2, "Final tail."); await Promise.resolve(); state.render();
+      assert.equal(state.draft, "Prior draft\nFinal tail."); assert.equal(state.render().active, false); assert.deepEqual(state.errors, []);
+    } finally { state.cleanup(); }
+  }
+});
+
+test("real stream service failures keep partial and are not classified as unsupported browser", async () => {
+  const state = await setup("doubao-ime");
+  try {
+    await state.render().start(); const socket = state.remote.sockets[0]; socket.event("transcript", 1, "kept text"); state.render();
+    socket.event("error", 2, "", "remote", "speech.failed"); state.render();
+    assert.deepEqual(state.errors, ["processingFailed"]); assert.equal(state.draft, "Prior draft\nkept text"); assert.equal(state.render().active, false);
+  } finally { state.cleanup(); }
+});
+
+test("a server final racing with encoder flush remains successful and explicit send still happens once", async () => {
+  const state = await setup("doubao-ime");
+  try {
+    await state.render().start(); state.remote.finalDuringFlush = true; let sends = 0;
+    await state.render().finishAndSend((text) => { sends++; assert.equal(text, "Prior draft\nFinal while flushing."); });
+    state.render(); assert.equal(sends, 1); assert.deepEqual(state.errors, []); assert.equal(state.render().active, false);
+  } finally { state.cleanup(); }
+});
+
+test("nonstreaming sample limit uploads the captured tail and completes without capability errors", async () => {
+  const state = await setup("deepseek", 1000);
+  try {
+    await state.render().start(); state.remote.capture.onLimit(); await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(state.remote.uploads, [400]);
+    assert.equal(state.remote.wavFrames.length, 0, "release PCM chunks while transcription is still pending");
+    state.remote.resolve({ text: "Complete WAV tail.", sequence: 1 }); await new Promise((resolve) => setTimeout(resolve, 0)); state.render();
+    assert.equal(state.render().active, false); assert.equal(state.draft, "Prior draft\nComplete WAV tail."); assert.deepEqual(state.errors, []);
   } finally { state.cleanup(); }
 });
 

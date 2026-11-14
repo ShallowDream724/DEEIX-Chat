@@ -24,11 +24,13 @@
 3. WebSocket 每个二进制消息是一个单声道、20 ms 的裸 Opus packet。不能发送 WebM/Ogg 容器碎片或任意长度 PCM。服务端检查 Opus TOC 的真实样本时长，并限制包大小、累计时长、累计字节与队列。
 4. JSON `{type:"finish"}` 停止输入并等待定稿；`{type:"cancel"}` 或断线取消会话并回收连接。发送 finish 后连接保持到终态，以保留最后结果。
 
-服务器事件为 `{type,session_id,sequence,text?,final,code?,message?}`。`type` 为 `ready`、`transcript`、`final`、`error`；`sequence` 在本段内单调递增。`transcript.text` 始终表示**本段完整临时快照**，不是要追加的增量；只有成功协议终态产生 `final`。无结果心跳、空文字与内容相同的 partial 不产生草稿更新，最终事件始终保留。豆包分句结果按分句索引修订，累计结果替换当前段。微信仅使用普通 `text` 字段，后续 `polished` 不覆盖原文；结束与有限轮询均没有普通文字时报告待核对错误，保留先前 partial。上游失败不能因为已有 partial 就伪装成功。
+服务器事件为 `{type,session_id,sequence,text?,final,code?,message?}`。`type` 为 `ready`、`transcript`、`final`、`error`；`sequence` 在本段内单调递增。`transcript.text` 始终表示**本段完整临时快照**，不是要追加的增量；只有成功协议终态产生 `final`。无结果心跳、空文字与内容相同的 partial 不产生草稿更新，最终事件始终保留。豆包分句结果按分句索引修订，累计结果替换当前段。微信普通 `text` 提供录音期间的累计快照；结束确认及其后最多八次、间隔 250 ms 的轮询优先采用上游 `polished` 纠错，没有纠错则保留最新普通文本。录音中途的旧纠错不直接当成整段最终结果。真实上游错误仍然失败，不能因为已有 partial 就伪装成功。
 
 豆包保留输入法上游自带的识别纠错与最小整理，不额外调用本站 AI 改写。无索引协议的 `results[0].text` 是整段累计快照，后面的结果是辅助分句候选；累计文本会包含已纠错的前句与当前新句，按最新累计快照替换本段。空首项、空结果或心跳不回落到某个旧句候选，也不清空文字。不能因为辅助旧句带 `extra.nonstream_result` 就丢弃整批：真实多停顿样本中，第二、第三句正与旧句纠错结果放在同一批。`stream_asr_finish` 是分句状态，接收循环继续处理后续语音；只有成功的 `SessionFinished` 才提交前端 final。带索引协议按索引修订分句，保留活动尾句。保持已实测的 `enable_asr_twopass:true` 和 `enable_asr_threepass:false`，不将这些参数包装成未经验证的整理强度开关。
 
-WS 输入队列 32 包、服务层转交队列 16 包；慢连接队列满时返回 `speech.backpressure`，客户端保留已显示文字。每用户及全站并发有上限，未连接票据到期释放预留；取消、服务关闭、超限和断线均关闭上游连接。录音过程不在服务器保留完整重放副本。
+录音到限时客户端先停止采集，完成编码器 flush 后发送 finish。WebCodecs 对 6000 个 20 ms 输入帧实测产生 6001 个 Opus 包，额外包可能包含编码延迟的末尾语音，不能直接丢弃；服务器允许最多 80 ms、四包的固定编码尾窗，并完整送上游，计量仍不超过所选录音时限。达到有效时限后等待 finish 最多一秒；尾窗用完或等待超时即正常结束上游输入并等待定稿。继续发送超过尾窗返回 `speech.duration_limit`，坏包、字节超限和真实上游失败不被正常到限逻辑吞掉。整会话墙钟兜底为录音上限加 20 秒，独立于正常到限定稿。
+
+WS 输入队列 32 包、服务层转交队列 16 包、微信上传 batch 最多六个 Opus 帧；慢连接队列满时返回 `speech.backpressure`，客户端保留已显示文字。每用户及全站并发有上限，未连接票据到期释放预留；取消、服务关闭、超限和断线均关闭上游连接。流式 ASR 不留完整录音副本，所有 ASR 均不持久化输入音频。DeepSeek 接收完整上传，但 multipart 通过 header、原音频与 footer 的 `MultiReader` 保持 Content-Length，不再复制一份整段音频；3.84 MB 离线基准的附加分配约 38 KB/op，该数字不是进程 RSS 峰值。
 
 ## 朗读与复用
 

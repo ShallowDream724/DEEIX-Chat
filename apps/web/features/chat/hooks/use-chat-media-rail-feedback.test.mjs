@@ -79,10 +79,28 @@ test("one or two existing lines still represent middle frequencies instead of sa
 test("pause, missing spectrum, reduced motion and navigation restore the original lines immediately", () => {
   const state = setup();
   const right = state.mount(2);
-  const expectRestored = () => { for (const line of right.lines) { assert.equal(line.style.transform, undefined); assert.equal(line.style.opacity, undefined); } };
+  const expectRestored = () => { for (const line of right.lines) { assert.equal(line.style.transform, undefined); assert.equal(line.style.opacity, undefined); assert.equal(line.style.transition, undefined); } };
   state.emit(); state.emit(undefined, false); expectRestored();
   state.emit(); state.emit(null); expectRestored();
   state.emit(); state.reducedMotion.matches = true; state.emit(); expectRestored();
   state.reducedMotion.matches = false; state.emit(); right.root.hovered = true; state.emit(); expectRestored();
   right.dispose(); assert.equal(state.listeners.size, 0);
+});
+
+test("brief notes stay bounded and settle without leaving animation styles after unmount", () => {
+  const state = setup(); const rail = state.mount(13);
+  for (let beat = 0; beat < 12; beat++) {
+    const bands = new Array(8).fill(0); bands[beat % 8] = 1;
+    state.emit(bands, true, 0.9);
+    for (const line of rail.lines) {
+      const scale = Number(line.style.transform?.match(/scaleX\((.*)\)/)?.[1] ?? 1);
+      assert.ok(scale >= 1 && scale <= 5.3);
+    }
+  }
+  rail.dispose();
+  for (const line of rail.lines) {
+    assert.equal(line.style.transform, undefined);
+    assert.equal(line.style.opacity, undefined);
+    assert.equal(line.style.transition, undefined);
+  }
 });

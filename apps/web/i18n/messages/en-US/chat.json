@@ -642,12 +642,14 @@
     "voiceErrorTitle": "Voice input stopped",
     "voiceErrors": {
       "audioUnavailable": "No available microphone was found. Check the microphone permission and device.",
+      "durationLimit": "This recording exceeded its time limit. The displayed text has been kept. Please start a new segment.",
       "interrupted": "Speech recognition was repeatedly interrupted. Please try again.",
       "languageUnsupported": "The browser speech service does not support the current language.",
-      "network": "The browser speech service could not be reached. Check the network and try again.",
+      "network": "The speech service could not be reached. Check the network and try again.",
       "noSpeech": "No speech was detected. Please try again and speak closer to the microphone.",
       "permissionDenied": "Microphone permission was denied. Allow microphone access and try again.",
-      "serviceUnavailable": "The browser speech service is unavailable on this device.",
+      "processingFailed": "Speech recognition could not finish. The displayed text has been kept. Please try again.",
+      "serviceUnavailable": "The speech recognition service is temporarily unavailable. Please try again later.",
       "startFailed": "Speech recognition could not be started. Please try again.",
       "unavailable": "Voice input is unavailable in the current browser environment."
     },

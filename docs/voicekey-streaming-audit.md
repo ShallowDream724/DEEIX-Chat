@@ -35,9 +35,24 @@
 - 补查其余七个云端引擎的时限：千问/讯飞有停录后定稿等待，百度有上传/接收任务结束等待，千问 App 有预取 token 缓存 TTL，叭哥说有鉴权/握手等待，Chatterfly 有随出字重置的 30 秒空闲等待。所查实现未给出可作为供应商保证的固定录音总长；token 有效期、空闲超时和定稿等待均不能替代该限制。
 - 本站已采用独立 Go 协议实现，未引入 Rust 服务或客户端模型依赖；前端 Opus 编码优先 WebCodecs，不支持时按需加载 WASM。TTS 首批接入 DeepSeek。
 
-## 标点与原文保留参数复核
+## 标点与识别纠错参数复核
 
 - 豆包的 StartSession 明确发送 `enable_punctuation:true`，同时设置 `enable_asr_twopass:true`、`enable_asr_threepass:false` 和 `input_mode:"stream"`；这些是参考实现固定发送的参数，不能把二遍开关解释为已验证的“关闭智能整理”。本站按用户选择保留上游自带的识别纠错，不额外调用 AI 改写，也不暴露未经验证的整理强度开关。见 [豆包请求参数](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/crates/core/src/doubao.rs#L169-L181)。
 - 无索引豆包返回的首候选是整段累计快照，后续项是辅助候选，参考实现也明确按此处理。2026-11-14 的三段合成音频（共 24.68 秒，间隔 4 秒静音）复现了旧过滤规则的问题：第一句纠错后，每批第二、第三句结果都夹带旧句的 `nonstream_result`，整批过滤会让文字冻结。现改为采用首候选累计快照，保留上游纠错，空首项不采用辅助旧句；同样本最终累计结果由修前 25 字恢复至 61 字。分句 `stream_asr_finish` 不结束会话，只有 `SessionFinished` 提交 final。见 [累计快照与分句逻辑](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/crates/core/src/doubao.rs#L78-L104)。
-- 微信请求固定将 protobuf 字段 22、23、24 设为 1，但所查源码没有为它们提供足以确认“标点”或“禁用整理”的语义说明；不能按编号猜测产品开关。返回普通文本字段 4 与 polished 字段 14 分开，VoiceKey 默认优先 polished。本站按保留原话要求仅采用普通文本，结束后只有 polished 时安全失败并保留已有普通 partial。见 [微信请求字段](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/crates/core/src/wetype.rs#L225-L251)、[返回文本选择](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/crates/core/src/wetype.rs#L113-L124)。
+- 微信请求固定将 protobuf 字段 22、23、24 设为 1，但所查源码没有为它们提供足以确认“标点”或“禁用整理”的语义说明；不能按编号猜测产品开关。返回普通文本字段 4 与 polished 字段 14 分开，VoiceKey 默认优先 polished。本站保留上游纠错，但只把结束确认或结束后轮询得到的纠错作为 final，避免复用录音中途某句的旧纠错；最多八次轮询仍无纠错则保留最新普通累计文本，真实协议/网络错误不伪装成功。见 [微信请求字段](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/crates/core/src/wetype.rs#L225-L251)、[返回文本选择](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/crates/core/src/wetype.rs#L113-L124)。
 - 桌面设置里的静音、流式和实时文字选项控制录音或显示；Jev 是另一个默认关闭的多候选选择器，均不构成两家输入法可验证的自动标点/整理开关。见 [桌面设置](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/app/src-tauri/src/settings.rs#L97-L135)、[Jev 默认配置](https://github.com/J3n5en/voicekey/blob/0f559e35a2efd8cca9023dfd7d4e1c41cbb4448c/crates/core/src/jev.rs#L6-L20)。
+
+## 当前作者版本复核与本站边界
+
+2026-11-14 联网核验作者仓库 main，HEAD 为 [`138d675a`](https://github.com/J3n5en/voicekey/commit/138d675a9a7f55fcf029fe4919856aa856687cc7)。该版本豆包、微信两个源文件与此前固定 `0f559e35` 逐字节相同，本轮没有发现新的协议版本差异。
+
+| 行为 | 作者实现 | 本站处理与依据 |
+| --- | --- | --- |
+| 豆包停顿与候选 | 无索引首项为整段累计，其余为辅助；SessionFinished 结束 | 保留已修累计语义与上游纠错，空首项不回退旧句。60.84 秒、13 次 1.25 倍合成重复且末尾三秒静音，累计首项更新 200 次、最终 325 字；讲话期间相邻更新最长约 1.137 秒。未复现用户连续快说后卡住，不能据此断定更长/真人样本的上游节奏。 |
+| 微信停顿与纠错 | 六帧 batch；普通文本供 partial；最终优先 polished，最多八次轮询 | 首次有效 24.68 秒三段/四秒停顿样本，普通文本在第二、第三段继续变化，结束普通/纠错分别 77/58 字；样本包含重复与编辑指令，不能用长度差断定字段丢句。另以新 UUID、本机 SAPI 合成三句不同事实，18.12 秒含两次四秒停顿；154 次请求，END 普通/纠错均为完整 36 字、三个事实全部保留。本站取消旧的普通文本限定，结束纠错优先，并防止旧纠错成为 final。 |
+| 总时长与尾包 | 所查两适配没有可保证的供应商总长常量 | 本站有效录音时限保持管理员配置；额外最多 80 ms 仅用于编码 flush，送上游但不增加计量。客户端 finish 或有限尾窗结束后定稿，越窗明确报错。 |
+| 会话与错误 | 桌面全局身份/连接复用；豆包有拒绝后换身份重放，已有 partial 时部分错误返回已有字 | 本站用户身份隔离、每会话连接、有界队列，不换身份绕过拒绝，不持久化输入音频，真实失败保留 partial 并报告错误；取消通过 context 主动关闭 WS，打断正在等待的读取。 |
+
+本轮仅使用已有合成录音和本机离线语音合成，未调用 DeepSeek 付费语音、未改变当前用户输入来源。两家请求中的未知参数保持已验证固定值，没有新增本站 AI 整理调用或推测性的整理强度开关。
+
+每次新录音必须使用独立会话 UUID，用户身份可复用而 voice_id 不复用。诊断中重复使用同一测试 voice_id 后换音频，曾收到旧样本识别结果；这类复测已作废，未用于判断纠错字段的整段/分句语义。生产 `CreateSession` 使用新 UUID，并有同用户、同草稿两次录音的供应商及计费身份隔离回归。

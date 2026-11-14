@@ -51,11 +51,12 @@ type wetypeIdentity struct {
 	UIN    string `json:"uin"`
 }
 type wetypeClient struct {
-	ws            *websocket.Conn
-	identity      wetypeIdentity
-	key           []byte
-	server, token string
-	task          uint64
+	ws             *websocket.Conn
+	identity       wetypeIdentity
+	key            []byte
+	server, token  string
+	task           uint64
+	resultObserver func([]byte)
 }
 type wetypeReply struct {
 	status  uint64
@@ -176,7 +177,7 @@ func (w *WeType) open(ctx context.Context, user uint) (*wetypeClient, func(), er
 	if e != nil {
 		return nil, nil, e
 	}
-	c := &wetypeClient{ws: ws, identity: wetypeIdentity{UIN: "0"}}
+	c := &wetypeClient{ws: ws, identity: wetypeIdentity{UIN: "0"}, resultObserver: w.cfg.ResultObserver}
 	ok := false
 	defer func() {
 		if !ok {
@@ -291,7 +292,17 @@ func (c *wetypeClient) voice(id string, audio []byte, seq, total uint64, end boo
 			return "", "", e
 		}
 	}
-	return string(data(f, 4)), string(data(f, 14)), nil
+	text, polished := string(data(f, 4)), string(data(f, 14))
+	if c.resultObserver != nil {
+		observed, _ := json.Marshal(struct {
+			Text     string `json:"text"`
+			Polished string `json:"polished"`
+			Sequence uint64 `json:"sequence"`
+			End      bool   `json:"end"`
+		}{text, polished, seq, end})
+		c.resultObserver(observed)
+	}
+	return text, polished, nil
 }
 func (w *WeType) Stream(ctx context.Context, in domain.StreamRequest, frames <-chan []byte, emit func(domain.Event) error) (domain.Transcript, error) {
 	c, closeWS, e := w.open(ctx, in.UserID)
@@ -301,8 +312,7 @@ func (w *WeType) Stream(ctx context.Context, in domain.StreamRequest, frames <-c
 	defer closeWS()
 	id := strings.ReplaceAll(in.SessionID, "-", "")
 	var seq, total uint64
-	var text string
-	ordinaryFinal := false
+	var text, finalPolished string
 	batch := make([][]byte, 0, 6)
 	upload := func(end bool) error {
 		seq++
@@ -315,18 +325,18 @@ func (w *WeType) Stream(ctx context.Context, in domain.StreamRequest, frames <-c
 			b = append(b, f...)
 		}
 		total += uint64(len(b))
-		current, _, e := c.voice(id, b, seq, total, end)
+		current, polished, e := c.voice(id, b, seq, total, end)
 		if e != nil {
 			return e
 		}
 		if current != "" {
 			text = current
-			if end {
-				ordinaryFinal = true
-			}
 			if e = emit(domain.Event{Type: "transcript", Text: text}); e != nil {
 				return e
 			}
+		}
+		if end {
+			finalPolished = polished
 		}
 		batch = batch[:0]
 		return nil
@@ -340,25 +350,26 @@ func (w *WeType) Stream(ctx context.Context, in domain.StreamRequest, frames <-c
 				if e = upload(true); e != nil {
 					return domain.Transcript{}, e
 				}
-				for i := 0; i < 8 && !ordinaryFinal; i++ {
+				// Polished text can arrive during an earlier utterance. Only an
+				// end acknowledgement/poll can establish the final correction for
+				// the complete recording; never reuse an earlier partial polish.
+				for i := 0; i < 8 && finalPolished == ""; i++ {
 					select {
 					case <-ctx.Done():
 						return domain.Transcript{}, ctx.Err()
 					case <-time.After(250 * time.Millisecond):
 					}
-					current, _, e := c.voice(id, nil, 0, total, true)
+					current, polished, e := c.voice(id, nil, 0, total, true)
 					if e != nil {
 						return domain.Transcript{}, e
 					}
 					if current != "" {
 						text = current
-						ordinaryFinal = true
 					}
+					finalPolished = polished
 				}
-				// A polished-only response cannot prove literal transcription.
-				// Preserve emitted ordinary partials and report an uncertain finish.
-				if !ordinaryFinal {
-					return domain.Transcript{}, domain.ErrUncertain
+				if finalPolished != "" {
+					text = finalPolished
 				}
 				return domain.Transcript{Text: text, Final: true}, nil
 			}

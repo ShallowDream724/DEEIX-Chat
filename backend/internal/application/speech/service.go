@@ -403,33 +403,76 @@ func (s *Service) Stream(ctx context.Context, user uint, id string, frames <-cha
 	stopSession := context.AfterFunc(v.ctx, cancel)
 	defer stopSession()
 	bounded := make(chan []byte, 16)
+	guardCtx, stopGuard := context.WithCancel(ctx)
+	defer stopGuard()
+	guardDone := make(chan struct{})
 	var duration, bytes int64
 	var guardErr error
 	var guardMu sync.Mutex
 	go func() {
-		defer close(bounded)
+		defer close(guardDone)
+		inputClosed := false
+		defer func() {
+			if !inputClosed {
+				close(bounded)
+			}
+		}()
+		var tailTimer *time.Timer
+		var tailDeadline <-chan time.Time
+		defer func() {
+			if tailTimer != nil {
+				tailTimer.Stop()
+			}
+		}()
 		for {
 			select {
-			case <-ctx.Done():
+			case <-guardCtx.Done():
 				return
+			case <-tailDeadline:
+				close(bounded)
+				inputClosed = true
+				tailDeadline = nil
 			case f, ok := <-frames:
 				if !ok {
 					return
 				}
 				guardMu.Lock()
-				duration += 20
-				bytes += int64(len(f))
-				if !validOpus20ms(f) || duration > max || bytes > v.maxBytes {
+				if !validOpus20ms(f) || bytes+int64(len(f)) > v.maxBytes {
 					guardErr = domain.ErrInvalid
 					guardMu.Unlock()
 					cancel()
 					return
 				}
+				// Opus encoders can flush additional packets containing delayed
+				// final samples (WebCodecs emits 6001 packets for 6000 inputs).
+				// Permit a fixed 80ms encoding tail; it never increases billed
+				// recording duration and cannot extend an input indefinitely.
+				if inputClosed || duration+20 > max+80 {
+					guardErr = domain.ErrDurationLimit
+					guardMu.Unlock()
+					cancel()
+					return
+				}
+				duration += 20
+				bytes += int64(len(f))
+				atLimit, tailFull := duration >= max, duration >= max+80
 				guardMu.Unlock()
 				select {
 				case bounded <- f:
-				case <-ctx.Done():
+				case <-guardCtx.Done():
 					return
+				}
+				if atLimit && tailTimer == nil {
+					// Give the client's encoder flush and finish control message a
+					// bounded delivery window, then finish even if it never closes.
+					tailTimer = time.NewTimer(time.Second)
+					tailDeadline = tailTimer.C
+				}
+				if tailFull {
+					close(bounded)
+					inputClosed = true
+					tailDeadline = nil
+					tailTimer.Stop()
 				}
 			}
 		}
@@ -453,11 +496,16 @@ func (s *Service) Stream(ctx context.Context, user uint, id string, frames <-cha
 	}
 	_ = send(domain.Event{Type: "ready"})
 	result, err := p.Stream(ctx, domain.StreamRequest{UserID: user, SessionID: id, Format: v.input.Format, SampleRate: v.input.SampleRate}, bounded, send)
+	stopGuard()
+	<-guardDone
 	if ctx.Err() != nil {
 		err = ctx.Err()
 	}
 	guardMu.Lock()
 	actual := duration
+	if actual > max {
+		actual = max
+	}
 	if guardErr != nil {
 		err = guardErr
 	}

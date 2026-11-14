@@ -17,7 +17,7 @@ type Recognition = {
 };
 type RecognitionWindow = Window & { SpeechRecognition?: new () => Recognition; webkitSpeechRecognition?: new () => Recognition };
 export type SpeechInputStatus = "idle" | "starting" | "listening" | "transcribing";
-export type SpeechInputErrorCode = "audioUnavailable" | "interrupted" | "languageUnsupported" | "network" | "noSpeech" | "permissionDenied" | "serviceUnavailable" | "startFailed" | "unavailable";
+export type SpeechInputErrorCode = "audioUnavailable" | "durationLimit" | "interrupted" | "languageUnsupported" | "network" | "noSpeech" | "permissionDenied" | "processingFailed" | "serviceUnavailable" | "startFailed" | "unavailable";
 type Session = {
   id: string; scope: string; controller: AbortController; segment: SpeechDraftSegment;
   userID: string; accessToken: string; providerID: string;
@@ -31,6 +31,7 @@ type Session = {
   remoteSession?: SpeechSession; remoteFinished?: boolean;
 };
 const browserError: Record<string, SpeechInputErrorCode> = { "audio-capture": "audioUnavailable", "language-not-supported": "languageUnsupported", network: "network", "not-allowed": "permissionDenied", "service-not-allowed": "serviceUnavailable" };
+function serviceError(code?: string): SpeechInputErrorCode { return code === "speech.duration_limit" ? "durationLimit" : code === "speech.unavailable" ? "serviceUnavailable" : "processingFailed"; }
 function release(session: Session) {
   session.activity?.stop();
   for (const dispose of session.disposers.splice(0)) dispose();
@@ -99,7 +100,7 @@ export function useChatSpeechInput(params: {
   };
   const cancel = React.useCallback((restore = true) => {
     const session = sessionRef.current;
-    if (!session) return;
+    if (!session) return latest.current.draft;
     const visible = latest.current.scopeKey === session.scope && userIDRef.current === session.userID;
     if (visible) {
       session.segment.reconcile(latest.current.draft);
@@ -112,6 +113,7 @@ export function useChatSpeechInput(params: {
     session.resolveCompleted(false); release(session); sendPendingRef.current = false; setStatus("idle");
     if (visible && restore) { latest.current = { ...latest.current, draft: session.draft }; latest.current.onDraftChange(session.draft); }
     session.persistDraft?.(session.draft);
+    return session.draft;
   }, []);
 
   const stop = async (): Promise<boolean> => {
@@ -126,13 +128,18 @@ export function useChatSpeechInput(params: {
         if (session.recognition) { session.recognition.stop(); await session.capture?.stop(); session.activity?.stop(); }
         else {
           await session.capture?.stop(); session.activity?.stop();
-          if (!current(session)) return false;
+          if (!current(session)) return session.completed;
           if (session.socket) { await session.encoder?.flush(); session.socket.send(JSON.stringify({ type: "finish" })); }
           else {
             if (session.samples === 0) { fail(session, "noSpeech"); return false; }
             const timeout = setTimeout(() => { if (current(session)) fail(session, "network"); }, 60000);
             let result: Awaited<ReturnType<typeof transcribeSpeech>>;
-            try { result = await transcribeSpeech(session.accessToken, session.providerID, session.scope, session.id, speechWav(session.frames, session.samples), session.controller.signal, session.remoteSession); }
+            try {
+              const audio = speechWav(session.frames, session.samples);
+              // Blob owns its bytes; the PCM chunks are no longer needed while the upload awaits a result.
+              session.frames.length = 0;
+              result = await transcribeSpeech(session.accessToken, session.providerID, session.scope, session.id, audio, session.controller.signal, session.remoteSession);
+            }
             finally { clearTimeout(timeout); }
             session.frames = [];
             if (!current(session)) return false;
@@ -144,7 +151,10 @@ export function useChatSpeechInput(params: {
         let timer: ReturnType<typeof setTimeout> | undefined;
         try { return await Promise.race([session.completed, new Promise<boolean>((resolve) => { timer = setTimeout(() => { fail(session, "network"); resolve(false); }, 20000); })]); }
         finally { clearTimeout(timer); }
-      } catch { if (current(session)) fail(session, "network"); return false; }
+      } catch (error) {
+        const code = error && typeof error === "object" && "errorCode" in error && typeof error.errorCode === "string" ? error.errorCode : undefined;
+        if (current(session)) fail(session, code?.startsWith("speech.") ? serviceError(code) : "network"); return session.completed;
+      }
     })();
     return session.finalize;
   };
@@ -155,7 +165,7 @@ export function useChatSpeechInput(params: {
     setBrowserSupported(window.isSecureContext && Boolean(browser.SpeechRecognition ?? browser.webkitSpeechRecognition));
     setCaptureSupported(window.isSecureContext && Boolean(navigator.mediaDevices && window.AudioWorkletNode));
     setOpusSupported(supportsSpeechOpus());
-    return () => cancel(false);
+    return () => { cancel(false); };
   }, [cancel]);
   React.useEffect(() => { if (sessionRef.current?.scope !== params.scopeKey) cancel(false); }, [params.scopeKey, cancel]);
   React.useEffect(() => { if (sessionRef.current?.userID !== userID) cancel(false); }, [userID, cancel]);
@@ -194,7 +204,7 @@ export function useChatSpeechInput(params: {
         capability?.max_bytes && !capability.streaming ? Math.max(1, capability.max_bytes - 44) / 32 : Infinity);
       setMaxDurationMS(session.maxDuration);
       const capture = () => startSpeechCapture({
-        context: session.captureContext, signal: session.controller.signal, maxSamples: Math.floor(session.maxDuration * 16),
+        context: session.captureContext, signal: session.controller.signal, maxSamples: Math.floor(session.maxDuration * 16), keepTrackUntilCancel: providerID === "browser",
         onFrame: (frame, bands) => {
           if (!current(session)) return;
           session.samples += frame.length;
@@ -239,7 +249,7 @@ export function useChatSpeechInput(params: {
           recognition.onerror = ({ error }) => {
             if (!current(session) || session.recognition !== recognition) return;
             if (error === "aborted" && !session.stopping) fail(session, "interrupted");
-            else if (error !== "no-speech" && error !== "aborted") fail(session, browserError[error] ?? "unavailable");
+            else if (error !== "no-speech" && error !== "aborted") fail(session, browserError[error] ?? "processingFailed");
           };
           recognition.onend = () => {
             if (!current(session) || session.recognition !== recognition) return;
@@ -282,11 +292,11 @@ export function useChatSpeechInput(params: {
             session.controller.signal.addEventListener("abort", abort, { once: true });
             socket.onmessage = ({ data }) => {
               if (!current(session) || typeof data !== "string") return;
-              let event: { type: string; session_id: string; sequence: number; text?: string };
+              let event: { type: string; session_id: string; sequence: number; text?: string; code?: string };
               try { event = JSON.parse(data); } catch { fail(session, "network"); return; }
               if (event.session_id && event.session_id !== remote.id) return;
               if (event.type === "ready") { clearTimeout(timer); session.controller.signal.removeEventListener("abort", abort); resolve(); }
-              if (event.type === "error") { clearTimeout(timer); reject(new Error("ASR failed")); fail(session, "serviceUnavailable"); }
+              if (event.type === "error") { clearTimeout(timer); reject(new Error("ASR failed")); fail(session, serviceError(event.code)); }
               if ((event.type === "transcript" || event.type === "final") && event.sequence > session.sequence) { session.sequence = event.sequence; update(session, event.text ?? ""); }
               if (event.type === "final" && event.sequence >= session.sequence) { session.remoteFinished = true; if (event.text?.trim()) complete(session, true); else fail(session, "noSpeech"); }
             };

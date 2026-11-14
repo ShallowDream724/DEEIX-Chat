@@ -642,12 +642,14 @@
     "voiceErrorTitle": "语音输入已停止",
     "voiceErrors": {
       "audioUnavailable": "未找到可用的麦克风，请检查麦克风权限和设备。",
+      "durationLimit": "本段录音超过允许时长，已显示的文字已保留，请开始新一段。",
       "interrupted": "语音识别连续被中断，请重试。",
       "languageUnsupported": "浏览器语音服务不支持当前语言。",
-      "network": "无法连接浏览器语音服务，请检查网络后重试。",
+      "network": "无法连接语音服务，请检查网络后重试。",
       "noSpeech": "未检测到语音，请靠近麦克风后重试。",
       "permissionDenied": "麦克风权限被拒绝，请允许访问后重试。",
-      "serviceUnavailable": "当前设备无法使用浏览器语音服务。",
+      "processingFailed": "语音识别未能完成，已显示的文字已保留，请重试。",
+      "serviceUnavailable": "语音识别服务暂不可用，请稍后重试。",
       "startFailed": "无法启动语音识别，请重试。",
       "unavailable": "当前浏览器环境无法使用语音输入。"
     },

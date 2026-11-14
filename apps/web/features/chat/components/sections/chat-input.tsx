@@ -66,6 +66,7 @@ import {
   type SpeechInputErrorCode,
   useChatSpeechInput,
 } from "@/features/chat/hooks/use-chat-speech-input";
+import { speechInputKeyAction } from "@/features/chat/lib/speech-keyboard";
 import { useChatPreviewSync } from "@/features/chat/hooks/use-chat-preview-sync";
 import { localAttachmentContentLoader, useChatFilePreview } from "@/features/chat/context/chat-file-preview-context";
 import { isMediaSubmitTask, resolveChatSubmitDecision } from "@/features/chat/model/chat-task";
@@ -95,7 +96,7 @@ import {
   formatBytes,
 } from "@/entities/file";
 import { isModelOptionPathFiltered, type ModelControlValue, type ModelOptionPolicy } from "@/entities/model";
-import { isImeComposingKeyEvent, isSendShortcutEvent } from "@/shared/lib/platform-shortcuts";
+import { isSendShortcutEvent } from "@/shared/lib/platform-shortcuts";
 
 const TEMPORARY_NOTICE_TRANSITION = {
   duration: 0.22,
@@ -349,7 +350,8 @@ function ChatInputComponent({
   const cancelSpeech = () => {
     pendingVoiceFocus.current = null;
     setIsVoiceHovered(false);
-    speechInput.cancel();
+    const preserved = speechInput.cancel();
+    pendingVoiceFocus.current = { scopeKey: autoFocusKey, draft: preserved, selectionEnd: preserved.length, restoreFocus: true };
   };
   const [hoveredTool, setHoveredTool] = React.useState<"upload" | "screenshot" | null>(null);
   const [ragWarnDismissed, setRagWarnDismissed] = React.useState(false);
@@ -378,6 +380,8 @@ function ChatInputComponent({
   const markdownPreviewRef = React.useRef<HTMLDivElement | null>(null);
   const attachmentScrollFadeRef = useScrollFadeFallbackRef<HTMLDivElement>();
   const composingRef = React.useRef(false);
+  const compositionEndedAtRef = React.useRef(-Infinity);
+  const voiceEnterHeldRef = React.useRef(false);
   // Original text of attachments created from a long paste, keyed by fileID, so it can be put back in the draft.
   const [pastedTexts, setPastedTexts] = React.useState<ReadonlyMap<string, string>>(() => new Map());
   const [inputGroupHeight, setInputGroupHeight] = React.useState<number | null>(null);
@@ -1055,14 +1059,15 @@ function ChatInputComponent({
               speechInput.active ? "placeholder:font-normal placeholder:text-muted-foreground" : "",
             )}
             onFocus={handleMentionFocus}
-            onBlur={handleMentionBlur}
+            onBlur={() => { voiceEnterHeldRef.current = false; handleMentionBlur(); }}
             onChange={(event) => { pendingVoiceFocus.current = null; handleMentionChange(event.target.value); }}
             onPointerDown={() => interruptSpeechForEditing()}
             onClick={handleMentionSelectionChange}
-            onKeyUp={handleMentionSelectionChange}
+            onKeyUp={(event) => { if (event.key === "Enter") voiceEnterHeldRef.current = false; handleMentionSelectionChange(); }}
             onSelect={handleMentionSelectionChange}
             onScroll={onSourceScroll}
             onPaste={(event) => {
+              interruptSpeechForEditing();
               const files = clipboardFilesFromPaste(event);
               const markdownPaste = resolveClipboardMarkdownPaste(event.clipboardData);
               if (markdownPaste) {
@@ -1100,14 +1105,30 @@ function ChatInputComponent({
             }}
             onCompositionStart={() => {
               composingRef.current = true;
+              interruptSpeechForEditing();
             }}
             onCompositionEnd={() => {
               composingRef.current = false;
+              compositionEndedAtRef.current = performance.now();
             }}
             onKeyDown={(event) => {
-              if (["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"].includes(event.key) || ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a")) interruptSpeechForEditing();
-              if (isImeComposingKeyEvent(event, composingRef.current)) {
-                return;
+              const speechAction = speechInputKeyAction(event, composingRef.current);
+              if (speechAction === "preserve") return;
+              // Some IMEs dispatch the confirming Enter immediately after compositionend.
+              if (event.key === "Enter" && performance.now() - compositionEndedAtRef.current < 100) { event.preventDefault(); return; }
+              if (event.key === "Enter" && voiceEnterHeldRef.current) {
+                if (event.repeat) { event.preventDefault(); return; }
+                // A fresh press also recovers when keyup happened outside this window.
+                voiceEnterHeldRef.current = false;
+              }
+              if (speechInput.active) {
+                if (speechAction === "stop") {
+                  event.preventDefault();
+                  voiceEnterHeldRef.current = true;
+                  void speechInput.stop();
+                  return;
+                }
+                if (speechAction === "interrupt") interruptSpeechForEditing();
               }
               const shouldSend = isSendShortcutEvent(sendShortcut, event);
 

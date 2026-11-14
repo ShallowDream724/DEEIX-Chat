@@ -36,7 +36,7 @@ func (d *DeepSeek) ASRCapability() *domain.Capability {
 func (d *DeepSeek) TTSCapability() *domain.Capability {
 	return &domain.Capability{ID: "deepseek", Name: "DeepSeek", Formats: []string{"wav", "pcm"}, Voices: []domain.Voice{{ID: "stella", Name: "海星"}, {ID: "tide", Name: "暗潮"}}, MaxWeightedCharacters: 10000, MaxTextBytes: 64 << 10}
 }
-func (d *DeepSeek) request(ctx context.Context, path, ct string, body io.Reader) (*http.Response, error) {
+func (d *DeepSeek) request(ctx context.Context, path, ct string, body io.Reader, length int64) (*http.Response, error) {
 	if d.cfg.APIKey == "" {
 		return nil, domain.ErrUnavailable
 	}
@@ -48,6 +48,7 @@ func (d *DeepSeek) request(ctx context.Context, path, ct string, body io.Reader)
 	}
 	req.Header.Set("Authorization", "Bearer "+d.cfg.APIKey)
 	req.Header.Set("Content-Type", ct)
+	req.ContentLength = length
 	res, e := d.client.Do(req)
 	if e != nil {
 		return nil, domain.ErrUncertain
@@ -65,13 +66,16 @@ func (d *DeepSeek) request(ctx context.Context, path, ct string, body io.Reader)
 func (d *DeepSeek) Transcribe(ctx context.Context, a domain.Audio) (domain.Transcript, error) {
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
-	part, e := w.CreateFormFile("file", "speech."+a.Format)
+	_, e := w.CreateFormFile("file", "speech."+a.Format)
 	if e != nil {
 		return domain.Transcript{}, e
 	}
-	_, _ = part.Write(a.Bytes)
+	headerLength := b.Len()
 	_ = w.Close()
-	res, e := d.request(ctx, "asr", w.FormDataContentType(), &b)
+	// Keep only the small multipart envelope; stream the existing audio bytes.
+	envelope := b.Bytes()
+	body := io.MultiReader(bytes.NewReader(envelope[:headerLength]), bytes.NewReader(a.Bytes), bytes.NewReader(envelope[headerLength:]))
+	res, e := d.request(ctx, "asr", w.FormDataContentType(), body, int64(len(envelope))+int64(len(a.Bytes)))
 	if e != nil {
 		return domain.Transcript{}, e
 	}
@@ -102,7 +106,7 @@ func (d *DeepSeek) Synthesize(ctx context.Context, in domain.Synthesis) (io.Read
 	if e != nil {
 		return nil, "", e
 	}
-	res, e := d.request(ctx, "tts", "application/json", bytes.NewReader(b))
+	res, e := d.request(ctx, "tts", "application/json", bytes.NewReader(b), int64(len(b)))
 	if e != nil {
 		return nil, "", e
 	}

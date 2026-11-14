@@ -56,6 +56,9 @@ func describe(err error) response.Description {
 	case errors.Is(err, domain.ErrInvalid):
 		status = 400
 		public = apperr.New("speech.invalid", "invalid speech request")
+	case errors.Is(err, domain.ErrDurationLimit):
+		status = http.StatusRequestEntityTooLarge
+		public = apperr.New("speech.duration_limit", "speech recording exceeded its duration limit")
 	case errors.Is(err, domain.ErrForbidden):
 		status = 403
 		public = apperr.New("speech.forbidden", "speech access denied")
