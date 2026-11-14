@@ -1,5 +1,9 @@
 # 分支排期
 
+## 2026-11-14 DeepSeek 应用 API 方案
+
+本轮先完成方案讨论，当前尚未实现：Flash 新版搜索/URL 阅读/图文 Files、手机模型计费详情，以及可选 DeepSeek ASR/TTS。语音输入统一增加提前 10 秒提醒、到限结束与跨次追加；DeepSeek ASR 无流式识别，TTS 可流式返回音频。Excel 仅在开发阶段对照两种解析路径，用户发送时不运行双份比较。具体边界、缓存/费用、当前代码证据与验证范围见 [DeepSeek 应用 API 接入方案](deepseek-application-api-plan.md)。
+
 ## 2026-11-14 图片优化与上传草稿修复已发布
 
 镜像 `ghcr.io/shallowdream724/deeix-chat:latest`（linux/amd64）已发布，源码 `422b9d8996f5d91bb7cb9230652c7fcd3bb02357`，包含图片处理与附件修订批次、分支切换修复，以及上传切换修复 `8160079d`。[Image 构建 #43463161355](https://github.com/ShallowDream724/DEEIX-Chat/actions/runs/43463161355) 的构建、容器启动/网页/revision 检查和 Merge 全部成功。
