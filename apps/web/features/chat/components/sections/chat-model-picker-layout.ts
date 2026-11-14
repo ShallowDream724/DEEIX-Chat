@@ -64,3 +64,24 @@ export function createPopoverLayoutRectReader(inside: HTMLElement): (element: El
     );
   };
 }
+
+/**
+ * Top of `element` inside the positioned `container`, from layout offsets.
+ *
+ * It ignores transforms (content sliding in, a card gliding) and accounts for scrolled boxes in
+ * between, so it is where the element ends up rather than where an animation shows it right now.
+ * NaN when `container` is not one of its offset parents.
+ */
+export function layoutOffsetTop(element: HTMLElement, container: HTMLElement): number {
+  let top = 0;
+  let node: HTMLElement | null = element;
+  while (node && node !== container) {
+    const parent: HTMLElement | null = node.offsetParent instanceof HTMLElement ? node.offsetParent : null;
+    top += node.offsetTop;
+    for (let box: HTMLElement | null = node.parentElement; box && box !== parent; box = box.parentElement) {
+      top -= box.scrollTop;
+    }
+    node = parent;
+  }
+  return node === container ? top + container.clientTop : Number.NaN;
+}
